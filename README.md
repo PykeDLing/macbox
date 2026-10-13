@@ -139,3 +139,7 @@ scripts/        打包发布（package-dmg.sh）
 - `Boxes/<uuid>.box`：每个应用一个盒子，包含 `App/`、`Home/`、`Prefs/`、`Source/` 和还原点
 - `VirtualMac/`：虚拟 Mac
 - `RestoreImages/`：macOS 安装镜像缓存（设置完成后可在 设置 › 虚拟 Mac 中删除）
+
+## 许可证
+
+[MIT](LICENSE)
