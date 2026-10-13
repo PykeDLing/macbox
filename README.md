@@ -1,0 +1,141 @@
+<p align="center">
+  <img src="Resources/icon/AppIcon-1024.png" width="160" alt="MacBox 图标">
+</p>
+
+<h1 align="center">MacBox</h1>
+
+<p align="center">
+  把不放心的 Mac 软件装进一个盒子：照常使用，但它写下的文件、设置和钥匙串都不会留在你的 Mac 上。<br>
+  <a href="https://github.com/PykeDLing/macbox/releases/latest"><b>下载最新版</b></a>
+</p>
+
+---
+
+各种网盘、下载器、国产工具软件，装上之后往往在系统里到处留东西：开机自启、后台服务、散落各处的缓存和设置。
+MacBox 让它们在一个隔离的“盒子”里运行——像普通 App 一样有窗口、在程序坞里，但删掉盒子就干干净净。
+
+把下载的 `.dmg` 拖进 MacBox 即可，`.app`、`.pkg`、`.zip` 也支持。在线安装器（只有几 MB、打开后再联网下载的那种）也能处理。
+
+## 下载与安装
+
+**系统要求**：Apple Silicon（M 系列芯片）的 Mac，macOS 26 或更新版本。
+
+1. 从 [Releases](https://github.com/PykeDLing/macbox/releases/latest) 下载 `MacBox-<版本>.dmg`
+2. 打开 dmg，把 **MacBox** 拖到「应用程序」
+3. **第一次打开**：MacBox 没有经过 Apple 公证（需要付费开发者账号），macOS 会提示“无法验证开发者”。点「完成」，然后到
+   **系统设置 › 隐私与安全性**，在页面底部找到 MacBox，点 **仍要打开** 并确认。之后就可以正常打开了。
+
+   也可以在终端里去掉下载标记（效果相同）：
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/MacBox.app
+   ```
+
+可以用同目录下的 `.sha256` 文件校验下载是否完整：`shasum -a 256 -c MacBox-<版本>.dmg.sha256`。
+
+> 关于信任：MacBox 本身不在沙盒里运行（它要替盒子里的 App 准备环境、收回设置），所以需要你信任它。不想直接运行下载的二进制文件，可以按[从源码构建](#从源码构建)的步骤自己构建。
+
+## 使用
+
+- **添加应用**：把 `.dmg` / `.app` / `.pkg` / `.zip` 拖进窗口，或点「添加应用」。MacBox 会取出里面的 App（pkg 的安装脚本不会执行），检查它需不需要驱动、系统服务这类本机隔离容纳不了的东西
+- **打开**：在 MacBox 里双击，或者从启动台、聚焦里打开（MacBox 会放一个同名启动器到 `~/Applications/MacBox`）
+- **详情面板**：查看兼容性检查结果、本次运行被拦截的行为，切换运行环境，管理数据和还原点
+- **还原点**：给盒子拍个快照（APFS 克隆，几乎不占空间），之后可以一键回到那个状态，或者设为每次退出自动还原
+- **删除**：删除盒子即删除应用和它的全部数据（移到废纸篓，可以找回）
+
+## 卸载
+
+1. 在 MacBox 里删除所有应用（会顺带删掉它们的启动器），退出 MacBox
+2. 删除 `/Applications/MacBox.app`
+3. 删除数据：`~/Library/Application Support/MacBox/`，以及 `~/Applications/MacBox/`（如果还在）
+
+## 两种运行环境
+
+| | 本机隔离（默认） | 虚拟 Mac（后备） |
+| --- | --- | --- |
+| 体验 | 原生窗口、程序坞、启动台，和普通 App 一样 | 一整块独立的 macOS 桌面 |
+| 性能 | 原生（沙盒开销约 1.5%） | 接近原生，额外占用约 3–4 GB 内存 |
+| 空间 | 只有应用本身和它的数据 | 约 30 GB，所有需要它的应用共用一台 |
+| 适用 | 绝大多数应用 | 需要驱动、系统服务、系统扩展的应用 |
+
+虚拟 Mac 不会默认安装。添加应用时，静态检查发现它需要驱动、特权辅助程序、系统扩展、网络扩展；或者运行时它被挡住了写系统目录、安装系统服务，MacBox 会建议改用虚拟 Mac。你也可以在详情面板里随时切换。处理方式在 设置 › 通用 里设置。
+
+## 本机隔离是怎么做到的
+
+| 手段 | 作用 |
+| --- | --- |
+| Seatbelt 沙盒（`sandbox-exec`），子进程自动继承 | 写操作默认全部禁止，只放行盒子目录和临时目录（可选放行「下载」）。也禁止读取邮件、信息、Safari、其他 App 数据和 SSH 密钥。禁止注册登录项和后台服务、发送通知、用 Apple 事件控制其他 App |
+| 重定向主目录（`HOME` + `CFFIXED_USER_HOME`） | App 的 Application Support、Caches、Cookies 都落在盒子里 |
+| 每个盒子一个独立钥匙串 | 主目录里的 `login.keychain-db` 指向盒子钥匙串，凭证和设备 ID 不进你的「登录」钥匙串 |
+| 偏好设置“借出再收回” | cfprefsd 代写的 UserDefaults 沙盒挡不住，所以启动前把系统里这些域**整体替换**为盒子的内容，退出后完整收回、再把本机原来的内容整体换回。按事务处理：先写日志 `Prefs/.lease.json` 再动系统，中途失败立即回滚，MacBox 崩溃后下次启动按日志恢复 |
+| 运行时守卫 | 每 50ms 检查新进程：可执行文件位于盒子或盒子挂载的卷上的，必须在沙盒中、且负责进程是 MacBox 登记过的运行会话，否则立即结束（例如被系统直接启动、自带苹果沙盒的 App 从程序坞打开、MacBox 崩溃后遗留的进程） |
+| 在线安装器 | 禁止它挂载磁盘映像，以免它从卷上在沙盒外启动 App。它下载的完整安装包由 MacBox 取出 App 完成安装，然后直接打开 |
+| 启动器 | `~/Applications/MacBox` 里放一个同名同图标的启动器，从启动台、聚焦打开时经由 MacBox 在隔离中启动 |
+
+每次启动时生成的沙盒规则会保存在盒子里的 `sandbox.sb`，方便排查。
+
+**限制**：本机隔离防的是“乱写、乱留、乱读”，不是恶意软件。它与本机共用内核和用户身份，来路可疑的软件请用虚拟 Mac。被挡住的功能包括开机自启、通知、访达扩展、需要驱动的功能。具体还有：
+
+- 「本次已拦截」来自系统日志，是**尽力而为**的提示：内核对沙盒拒绝报告做全局限流和去重，其他进程报告很多时盒子里的会被丢弃。没有记录不代表没有被拦截
+- `/private/tmp` 和 `/private/var/folders` 可写（很多系统框架依赖它们），App 可以在这里留下文件
+- 其他 App 的偏好设置文件挡住了直接读取，但经由 cfprefsd 仍然读得到
+- 用 Data Protection 钥匙串（`kSecUseDataProtectionKeychain`）的 App，钥匙串条目不会进盒子钥匙串
+- App 包内的 XPC 服务由系统直接启动、不在沙盒中，会被守卫结束，依赖它们的功能不可用
+
+## 从源码构建
+
+需要 Apple Silicon Mac、macOS 26 及以上、Swift 6.4 及以上（Xcode 27 或对应的 Command Line Tools；代码用到了 `defer` 中的 `await`）。只装了 Command Line Tools 也能构建：
+
+```bash
+./build.sh
+open build/MacBox.app
+```
+
+`build.sh` 直接调用 `swiftc`，会自动选择与编译器匹配的 SDK，然后用 `com.apple.security.virtualization` entitlement 做 ad-hoc 签名。
+
+测试（Swift Testing，会真实地启动沙盒进程、挂载 dmg、读写偏好设置，但只用临时目录，不碰你的盒子）：
+
+```bash
+swift test
+```
+
+想在不影响真实数据的情况下手动试用，可以把全部数据（含启动器）放到别处：`open -n build/MacBox.app --env MACBOX_DATA_ROOT=/tmp/macbox-test`。
+
+图标：原图是 `Resources/icon/AppIcon-source.png`，`Resources/icon/make_icns.sh` 会去掉白底、裁成 macOS 图标网格并生成 `Resources/AppIcon.icns`。
+
+打包发布用的 dmg（release 构建 + 「应用程序」快捷方式 + 卷图标，输出到 `dist/`，并生成 `.sha256`）：
+
+```bash
+./scripts/package-dmg.sh
+```
+
+版本号在 `Resources/Info.plist` 的 `CFBundleShortVersionString`。
+
+## 架构要点
+
+- **进程**：`ChildProcess` 是启动子进程的唯一入口。子进程只继承 0/1/2（`POSIX_SPAWN_CLOEXEC_DEFAULT`）；输出用 DispatchIO 读取，不在 Swift 并发线程池里阻塞；退出由 kqueue 进程源通知。`Shell` 只是它的薄封装
+- **系统状态是借来的**：偏好设置借出、钥匙串搜索列表、挂载的卷、LaunchServices 登记，都按“先记录、可重做、必归还”处理
+- **会话是结构化的**：`IsolatedSession.run` 从准备到收尾是一个 async 函数，每借一样东西紧接着 `defer` 归还，失败、取消都按相反顺序归还
+- **状态集中**：盒子只有一个 `activity` 状态（空闲 / 启动中 / 运行中 / 收尾中 / 维护中），“能不能做某事”都从它推出
+- **共享的系统事件**：整个 MacBox 只开一个 `log stream`，按盒子分发；守卫只认登记过的会话
+
+## 目录结构
+
+```
+Sources/MacBox/
+  App/          入口、窗口、URL（macbox://open/<id>）与文件打开
+  Core/         路径、文件操作、子进程（ChildProcess）、命令行、进程表
+  Box/          盒子模型、导入（dmg/pkg/zip/app 取出 App）、兼容性检查
+  Isolation/    沙盒规则、盒子钥匙串、偏好设置收回、拦截记录、守卫、运行会话、启动器
+  VirtualMac/   虚拟 Mac（Virtualization.framework）
+  Views/        SwiftUI 界面
+Resources/icon/ 图标原图与生成脚本（AppIcon-source.png → make_icns.sh）
+Tests/          Swift Testing 测试
+scripts/        打包发布（package-dmg.sh）
+```
+
+数据位置：`~/Library/Application Support/MacBox/`
+
+- `Boxes/<uuid>.box`：每个应用一个盒子，包含 `App/`、`Home/`、`Prefs/`、`Source/` 和还原点
+- `VirtualMac/`：虚拟 Mac
+- `RestoreImages/`：macOS 安装镜像缓存（设置完成后可在 设置 › 虚拟 Mac 中删除）

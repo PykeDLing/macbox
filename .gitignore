@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.Spotlight-V100
+.Trashes
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# build.sh / scripts/package-dmg.sh 输出
+build/
+dist/
+
+# 测试或手动试用时放进来的安装包、系统镜像
+*.dmg
+*.pkg
+*.ipsw
+
+# Xcode
+xcuserdata/
+DerivedData/
+*.xcuserstate
+*.xcworkspace/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
