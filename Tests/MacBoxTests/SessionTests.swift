@@ -1,0 +1,225 @@
+import Foundation
+import Testing
+@testable import MacBox
+
+/// 完整的隔离会话（IsolatedSession.run）：盒子在 MACBOX_DATA_ROOT 下，App 是主程序为 shell 脚本的假 App，
+/// 偏好设置前缀只用测试专用的（盒子里没有设置，借出、收回都不会动真实的偏好设置）
+@Suite("隔离会话", .enabled(if: AppPaths.override != nil, "需要 MACBOX_DATA_ROOT"))
+struct SessionTests {
+    final class Holder {
+        var session: IsolatedSession?
+    }
+
+    /// 平时 App 是锁着的（见 AppLock），这里也先锁上
+    func makeBox(script: String, installer: Bool = false, rawExecutable: String? = nil) async throws -> (BoxPaths, BoxConfig) {
+        let id = UUID()
+        let paths = BoxPaths.new(id: id)
+        let prefix = "dev.macboxtest.session-\(id.uuidString.prefix(8).lowercased())"
+        var config = BoxConfig(id: id, name: "Fake", bundleIdentifier: prefix + ".app", appFolderName: "Fake.app")
+        config.preferencePrefixes = [prefix]
+        config.shareDownloads = false
+        config.showInLaunchpad = false
+        config.isInstaller = installer
+        let app = paths.app(config)
+        try makeFakeApp(at: app, identifier: config.bundleIdentifier, script: "#!/bin/sh\n" + script)
+        if let rawExecutable {
+            try rawExecutable.write(to: app.appending(path: "Contents/MacOS/main"), atomically: true, encoding: .utf8)
+        }
+        try paths.save(config)
+        try await TestKeychain.install(into: paths)
+        try AppLock.lock(app)
+        return (paths, config)
+    }
+
+    func start(_ paths: BoxPaths, _ config: BoxConfig) -> (Holder, Task<IsolatedSession.Outcome, Error>) {
+        let holder = Holder()
+        let task = Task {
+            try await IsolatedSession.run(paths: paths, config: config, onStart: { holder.session = $0 }, onBlock: { _ in })
+        }
+        return (holder, task)
+    }
+
+    /// 测试中途失败时不留下还在运行的进程：结束会话进程组里在沙盒中的进程
+    func killLeftovers(_ holder: Holder) {
+        guard let group = holder.session?.mainPID else { return }
+        for pid in ProcessTable.pids(inGroup: group) where ProcessTable.isSandboxed(pid) { kill(pid, SIGKILL) }
+    }
+
+    func lease(_ paths: BoxPaths, _ config: BoxConfig) -> PreferenceLease {
+        PreferenceLease(box: paths, prefixes: config.preferencePrefixes)
+    }
+
+    @Test("主进程退出后它启动的系统程序还在：会话不结束、偏好设置不收回；退出请求能送到它", .timeLimit(.minutes(1)))
+    func leftoverAfterMainExit() async throws {
+        let (paths, config) = try await makeBox(script: """
+        ( trap 'echo got > "$TMPDIR/helper-term"; exit 0' TERM; while :; do sleep 0.1; done ) &
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(at: paths.url) }
+        let (holder, task) = start(paths, config)
+        defer { killLeftovers(holder) }
+        #expect(await eventually(.seconds(10)) { holder.session?.mainHasExited == true })
+        let session = try #require(holder.session)
+        try await Task.sleep(for: .seconds(2.5)) // 旧版此时已认为会话结束、收回了偏好设置
+        #expect(lease(paths, config).isOutstanding, "会话里还有进程在运行，偏好设置就被收回了")
+
+        session.terminate()
+        let outcome = try await task.value
+        #expect(FileManager.default.fileExists(atPath: paths.tmp.appending(path: "helper-term").path), "没收到退出请求")
+        #expect(outcome.mainExitStatus == 0)
+        #expect(outcome.mainRanFor < 2)
+        #expect(!lease(paths, config).isOutstanding)
+        #expect(AppLock.isLocked(paths.app(config)))
+    }
+
+    @Test("退出只是请求：不会到时间就强制结束，可以再次请求；强制结束要单独调用", .timeLimit(.minutes(1)))
+    func terminateIsOnlyARequest() async throws {
+        // 像弹出“是否存储”的 App：收到退出请求后不退出
+        let (paths, config) = try await makeBox(script: """
+        trap 'echo t >> "$TMPDIR/terms"' TERM
+        touch "$TMPDIR/ready"
+        while :; do sleep 0.2; done
+        """)
+        defer { try? FileManager.default.removeItem(at: paths.url) }
+        let (holder, task) = start(paths, config)
+        defer { killLeftovers(holder) }
+        #expect(await eventually(.seconds(10)) {
+            holder.session != nil && FileManager.default.fileExists(atPath: paths.tmp.appending(path: "ready").path)
+        })
+        let session = try #require(holder.session)
+
+        session.terminate()
+        try await Task.sleep(for: .seconds(1))
+        session.terminate()
+        try await Task.sleep(for: .seconds(4.6)) // 第一次请求 5.6 秒后：旧版此时已强制结束
+        #expect(!session.mainHasExited, "退出请求自动变成了强制结束")
+        let terms = (try? String(contentsOf: paths.tmp.appending(path: "terms"), encoding: .utf8)) ?? ""
+        #expect(terms.split(separator: "\n").count == 2, "第二次请求没有发出")
+
+        await session.forceQuit()
+        let outcome = try await task.value
+        #expect(outcome.mainExitStatus == 128 + SIGKILL)
+        #expect(AppLock.isLocked(paths.app(config)))
+    }
+
+    @Test("退出码和运行时长；只有在线安装器才找下载的安装包；偏好设置已收回", .timeLimit(.minutes(1)), arguments: [false, true])
+    func outcome(installer: Bool) async throws {
+        let (paths, config) = try await makeBox(script: """
+        dd if=/dev/zero of="$HOME/Documents/big.dmg" bs=1048576 count=2 2>/dev/null
+        exit 3
+        """, installer: installer)
+        defer { try? FileManager.default.removeItem(at: paths.url) }
+        let outcome = try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onBlock: { _ in })
+        #expect(outcome.mainExitStatus == 3)
+        #expect(outcome.mainRanFor < 3)
+        #expect(outcome.downloadedPackages.map(\.lastPathComponent) == (installer ? ["big.dmg"] : []))
+        #expect(outcome.preferencesReturnError == nil)
+        #expect(!lease(paths, config).isOutstanding)
+        #expect(AppLock.isLocked(paths.app(config)), "运行结束后 App 要重新锁上")
+    }
+
+    @Test("主程序启动不了时给出原因，而不是“点了没反应”", arguments: [
+        ("#!/nonexistent/interp\nexit 0\n", "/nonexistent/interp"),
+        ("not a program", "main"),
+    ])
+    func preflight(executable: String, mentions: String) async throws {
+        let (paths, config) = try await makeBox(script: "", rawExecutable: executable)
+        defer { try? FileManager.default.removeItem(at: paths.url) }
+        let error = await #expect(throws: MacBoxError.self) {
+            try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onBlock: { _ in })
+        }
+        #expect(error?.message.contains(mentions) == true)
+        #expect(!lease(paths, config).isOutstanding)
+    }
+
+    @Test("「共享下载」开了又关：盒子自己的下载收在主目录里，关掉后放回原处")
+    func downloadsRoundTrip() throws {
+        let paths = BoxPaths.new(id: UUID())
+        defer { try? FileManager.default.removeItem(at: paths.url) }
+        var config = BoxConfig(id: UUID(), name: "T", bundleIdentifier: "dev.macboxtest.downloads", appFolderName: "T.app")
+        config.shareDownloads = false
+        try IsolatedSession.prepareHome(paths, config: config)
+        let invoice = paths.downloads.appending(path: "invoice.pdf")
+        try "pdf".write(to: invoice, atomically: true, encoding: .utf8)
+
+        config.shareDownloads = true
+        try IsolatedSession.prepareHome(paths, config: config)
+        #expect(FileOps.isSymlink(paths.downloads))
+        let kept = IsolatedSession.keptDownloadsNames.map { paths.home.appending(path: $0) }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+        #expect(kept.map { FileManager.default.fileExists(atPath: $0.appending(path: "invoice.pdf").path) } == true,
+                "下载文件应该收在主目录里")
+        #expect(!FileOps.contents(of: paths.url).contains { $0.lastPathComponent.hasPrefix("Downloads") })
+
+        config.shareDownloads = false
+        try IsolatedSession.prepareHome(paths, config: config)
+        #expect(!FileOps.isSymlink(paths.downloads))
+        #expect(try String(contentsOf: invoice, encoding: .utf8) == "pdf")
+        #expect(IsolatedSession.keptDownloadsNames.allSatisfy { !FileManager.default.fileExists(atPath: paths.home.appending(path: $0).path) })
+    }
+
+    @Test("旧版移到盒子根目录的下载文件找回到主目录")
+    func legacyDownloadsAreAdopted() throws {
+        let paths = BoxPaths.new(id: UUID())
+        defer { try? FileManager.default.removeItem(at: paths.url) }
+        let legacy = paths.url.appending(path: "Downloads/old.pdf")
+        try AppPaths.ensure(legacy.deletingLastPathComponent())
+        try "old".write(to: legacy, atomically: true, encoding: .utf8)
+        var config = BoxConfig(id: UUID(), name: "T", bundleIdentifier: "dev.macboxtest.downloads", appFolderName: "T.app")
+        config.shareDownloads = false
+        try IsolatedSession.prepareHome(paths, config: config)
+        #expect(try String(contentsOf: paths.downloads.appending(path: "old.pdf"), encoding: .utf8) == "old")
+        #expect(!FileManager.default.fileExists(atPath: paths.url.appending(path: "Downloads").path))
+    }
+}
+
+@Suite("App 上锁")
+struct AppLockTests {
+    let root = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-\(UUID().uuidString)")
+
+    func isExecutable(_ url: URL) -> Bool { access(url.path, X_OK) == 0 }
+
+    @Test("上锁去掉所有包（含嵌套的 App、扩展）的 MacOS 里的执行权限；解锁只给程序加回")
+    func lockAndUnlock() async throws {
+        let app = root.appending(path: "X.app")
+        try makeFakeApp(at: app, identifier: "dev.macboxtest.lock", script: "#!/bin/sh\nexit 0\n")
+        let main = app.appending(path: "Contents/MacOS/main")
+        let helper = app.appending(path: "Contents/Frameworks/F.framework/Versions/A/Helpers/H.app/Contents/MacOS/h")
+        try await TestStub.install(at: helper)
+        let appex = app.appending(path: "Contents/PlugIns/E.appex/Contents/MacOS/e")
+        try AppPaths.ensure(appex.deletingLastPathComponent())
+        try FileManager.default.copyItem(at: main, to: appex)
+        let data = app.appending(path: "Contents/MacOS/data.txt")
+        try "data".write(to: data, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: data.path)
+        let tool = app.appending(path: "Contents/Resources/tool.sh")
+        try AppPaths.ensure(tool.deletingLastPathComponent())
+        try FileManager.default.copyItem(at: main, to: tool)
+        let programs = [main, helper, appex]
+
+        #expect(!AppLock.isLocked(app))
+        try AppLock.lock(app)
+        try AppLock.lock(app) // 可以重复
+        #expect(AppLock.isLocked(app))
+        #expect(programs.allSatisfy { !isExecutable($0) })
+        #expect(isExecutable(tool), "MacOS 以外的不动")
+
+        try AppLock.unlock(app)
+        try AppLock.unlock(app)
+        #expect(!AppLock.isLocked(app))
+        #expect(programs.allSatisfy(isExecutable))
+        let mode = try FileManager.default.attributesOfItem(atPath: data.path)[.posixPermissions] as? Int
+        #expect(mode == 0o644, "数据文件不加执行权限")
+    }
+
+    @Test("上锁的 App 也能通过启动前检查；不是程序的过不了")
+    func preflightOnLockedApp() throws {
+        let app = root.appending(path: "Y.app")
+        try makeFakeApp(at: app, identifier: "dev.macboxtest.lock", script: "#!/bin/sh\nexit 0\n")
+        let main = app.appending(path: "Contents/MacOS/main")
+        try AppLock.lock(app)
+        try IsolatedSession.preflight(main)
+        try "plain text".write(to: main, atomically: true, encoding: .utf8)
+        #expect(throws: MacBoxError.self) { try IsolatedSession.preflight(main) }
+    }
+}
