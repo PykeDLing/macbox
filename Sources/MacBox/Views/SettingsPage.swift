@@ -28,7 +28,7 @@ struct SettingsPage: View {
                     ForEach(CompatibilityPolicy.allCases) { Text($0.title).tag($0.rawValue) }
                 }
                 Text(L("应用需要安装系统组件（驱动、系统服务、系统扩展等）时，本机隔离会挡住这些操作，软件功能可能不完整。开机自启动被挡住不影响使用，不会提示。",
-                       "When an app needs to install system components (drivers, system services, system extensions and so on), Native Isolation blocks them and some features may not work. Blocked launch-at-login items don't affect use and aren't reported."))
+                       "When an app needs to install system components (drivers, system services, system extensions and so on), Native Isolation blocks them and some features may not work. Blocked launch-at-login items don’t affect use and aren’t reported."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
@@ -52,8 +52,9 @@ struct SettingsPage: View {
                                                            "Blocks writing to system folders, registering login items and background services, sending notifications and controlling other apps"))
                 IsolationFact(icon: "eye.slash", text: L("阻止读取邮件、信息、Safari、其他应用的数据和 SSH 密钥",
                                                          "Blocks reading Mail, Messages, Safari, other apps’ data and SSH keys"))
-                IsolationFact(icon: "shield.lefthalf.filled", text: L("运行时守卫：盒子里的程序一旦在沙盒外被启动，立即结束",
-                                                                      "Runtime guard: any program from a box launched outside the sandbox is ended immediately"))
+                // 守卫随 MacBox 进程存在：MacBox 没开时绕过它直接打开盒子里的 App 拦不住，不能写成无条件的
+                IsolationFact(icon: "shield.lefthalf.filled", text: L("运行时守卫：MacBox 打开期间，盒子里的程序一旦在沙盒外被启动，立即结束",
+                                                                      "Runtime guard: while MacBox is open, any program from a box launched outside the sandbox is ended immediately"))
             }
 
             Section(L("存储", "Storage")) {

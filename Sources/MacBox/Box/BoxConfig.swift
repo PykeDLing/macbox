@@ -51,20 +51,20 @@ nonisolated struct CompatibilityIssue: Codable, Hashable, Identifiable, Sendable
     /// 以中文标题为键的英文版本。AppInspector、PackageExtractor 里新增问题时要在这里补上
     private static let english: [String: (title: String, detail: String)] = [
         "需要管理员权限的辅助程序": ("Privileged helper tool",
-                             "Installs a resident service that runs as root, which Native Isolation can't contain."),
+                             "Installs a resident service that runs as root, which Native Isolation can’t contain."),
         "系统级后台服务": ("System-wide background service", "Registers a system service that runs at startup."),
         "系统扩展或内核扩展": ("System or kernel extension",
                       "Needs to be loaded into the kernel or the system extensions framework."),
         "硬件或音频驱动": ("Hardware or audio driver", "Drivers must be installed into system folders."),
         "开机自启动": ("Launch at login", "Login items are blocked; it only runs when you open it."),
-        "访达集成": ("Finder integration", "Finder extensions such as sync status badges and context menu items won't work."),
+        "访达集成": ("Finder integration", "Finder extensions such as sync status badges and context menu items won’t work."),
         "网络扩展": ("Network extension", "Network extensions such as VPNs and proxies require a system-wide install."),
         "自带苹果沙盒": ("Uses the App Sandbox",
-                   "In MacBox it's confined by MacBox's sandbox instead and its data goes into the box. Always open it through MacBox."),
+                   "In MacBox it’s confined by MacBox’s sandbox instead and its data goes into the box. Always open it through MacBox."),
         "已通过 Apple 公证检查": ("Passed Apple notarization check", ""),
         "未通过 Apple 公证检查": ("Failed Apple notarization check", ""),
         "安装脚本已跳过": ("Installer scripts skipped",
-                     "The package contains installer scripts (usually for installing background services or drivers), which MacBox didn't run. If something doesn't work, switch to Virtual Mac."),
+                     "The package contains installer scripts (usually for installing background services or drivers), which MacBox didn’t run. If something doesn’t work, switch to Virtual Mac."),
     ]
 }
 
@@ -88,6 +88,16 @@ nonisolated struct BoxConfig: Codable, Equatable, Sendable {
     /// 拖进来的是在线安装器：运行后会下载完整安装包，MacBox 负责接管
     var isInstaller = false
     var createdAt = Date()
+    /// 运行时被挡住、问过要不要改用虚拟 Mac，用户选了“继续使用本机隔离”的拦截（BlockEvent.id）。
+    /// 同样的拦截以后不再问：每次运行都写系统目录的 App，否则每次退出都会弹一次。
+    /// 只记具体的拦截而不是一个“别再问”：出现新的一类拦截时仍然要问。换了运行环境、换了 App 时清空
+    var acknowledgedBlocks: [String]?
+}
+
+extension BoxConfig {
+    /// 要不要在聚焦里放启动器。在线安装器在本机隔离里运行时没有：安装由 MacBox 接手，完成后换成真正的 App 才有。
+    /// 在虚拟 Mac 里运行时 MacBox 不接手安装，“在线安装器”不起作用，照常按设置放
+    var wantsLauncher: Bool { showInLaunchpad && !(isInstaller && runtime == .isolated) }
 }
 
 /// 盒子在磁盘上的布局：
@@ -114,6 +124,13 @@ nonisolated struct BoxPaths: Hashable, Sendable {
     var restorePoint: URL { url.appending(path: "RestorePoint", directoryHint: .isDirectory) }
     var tmp: URL { url.appending(path: "tmp", directoryHint: .isDirectory) }
     var keychainPassword: URL { url.appending(path: ".keychain-password") }
+    /// 正在用还原点替换数据、正在清除数据（见 Box.rollBack、Box.clear）：开始前放下（内容写着是哪一种）、全部做完才删除。
+    /// 做到一半失败、MacBox 中途崩溃或被强制退出时，下次打开应用前、下次启动 MacBox 时看到它就重做一遍
+    var unfinishedMarker: URL { url.appending(path: ".unfinished") }
+    /// 正在创建的还原点：克隆完整之后才整体换上去（见 FileOps.replace(_:withStaged:)）
+    var restorePointStaging: URL { url.appending(path: "RestorePoint.tmp", directoryHint: .isDirectory) }
+    /// 安装器下载的安装包里取出的 App：取出、检查完才整体换上去
+    var appStaging: URL { url.appending(path: "App.new", directoryHint: .isDirectory) }
 
     var keychains: URL { home.appending(path: "Library/Keychains", directoryHint: .isDirectory) }
     var boxKeychain: URL { keychains.appending(path: "box.keychain-db") }
@@ -126,10 +143,19 @@ nonisolated struct BoxPaths: Hashable, Sendable {
 
     /// 还原点包含的内容。钥匙串在 Home 里，它的密码必须一起保存、一起还原，否则还原后钥匙串打不开
     var restorableItems: [String] { ["Home", "Prefs", keychainPassword.lastPathComponent] }
+    /// 会被整体替换、删除的项目（FileOps.replace）。启动时按这些名字收拾中途崩溃留下的残局
+    var replaceableItems: [String] { ["App", "Home", "Prefs", "tmp", keychainPassword.lastPathComponent, "RestorePoint"] }
 
     static func new(id: UUID) -> BoxPaths {
         BoxPaths(url: AppPaths.boxes.appending(path: "\(id.uuidString).box", directoryHint: .isDirectory))
     }
+
+    /// 导入中的盒子：先在这个名字下建好（复制、取出 App、检查、准备钥匙串），box.json 写好之后才改名为正式的 .box。
+    /// 读取盒子时只认 .box，导入到一半退出、崩溃时留下的不会变成一张「无法读取」的卡片，启动时删除
+    static func importing(id: UUID) -> BoxPaths {
+        BoxPaths(url: AppPaths.boxes.appending(path: "\(id.uuidString).box.\(importingSuffix)", directoryHint: .isDirectory))
+    }
+    static let importingSuffix = "partial"
 
     func loadConfig() throws -> BoxConfig {
         let decoder = JSONDecoder()

@@ -45,6 +45,8 @@ nonisolated final class ChildProcess: Sendable {
     }
 
     private let exitState = Mutex(ExitState())
+    /// 已经回收（waitpid 成功）
+    private let reaped = Mutex(false)
     /// 进程源要一直持有到进程退出
     private let source = Mutex<DispatchSourceProcess?>(nil)
     private static let queue = DispatchQueue(label: "MacBox.ChildProcess", attributes: .concurrent)
@@ -149,27 +151,43 @@ nonisolated final class ChildProcess: Sendable {
 
     var hasExited: Bool { exitState.withLock { $0.status != nil } }
 
-    /// 发信号；建了进程组时发给整组
+    /// 发信号；建了进程组时发给整组。
+    /// 组长（这个进程）退出后组里可能还有它派生的进程，仍然发给整组：组里还有进程时，
+    /// 内核不会把这个号码分给新进程，所以不会误伤。只有号码已被新进程占用（说明整组早已结束）时才不发
     func signal(_ signal: Int32) {
-        guard !hasExited else { return }
-        if let processGroup { killpg(processGroup, signal) } else { kill(pid, signal) }
+        if let processGroup {
+            if hasExited, kill(processGroup, 0) == 0 || errno != ESRCH { return }
+            killpg(processGroup, signal)
+        } else if !hasExited {
+            kill(pid, signal)
+        }
     }
 
     private func watchExit() {
         let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: Self.queue)
-        source.setEventHandler { [self] in reap() }
+        // 内核在进程变成僵尸之前就发出 NOTE_EXIT（proc_exit 先通知、后置 SZOMB），
+        // 这时 WNOHANG 的 waitpid 可能返回 0，而退出事件只有一次，进程就永远没人回收、等待方永远等不到。
+        // 收到退出事件说明进程正在退出，阻塞等待只需几微秒（在并发队列上，不影响其他读取）
+        source.setEventHandler { [self] in reap(blocking: true) }
         self.source.withLock { $0 = source }
         source.activate()
         // 进程在挂上进程源之前就已退出时不会有事件，补查一次
-        reap()
+        reap(blocking: false)
     }
 
-    /// 回收僵尸进程并唤醒等待方；只有第一次成功的 waitpid 会生效
-    private func reap() {
-        var raw: Int32 = 0
-        var result: pid_t
-        repeat { result = waitpid(pid, &raw, WNOHANG) } while result == -1 && errno == EINTR
-        guard result == pid else { return }
+    /// 回收僵尸进程并唤醒等待方；只有第一次成功的 waitpid 会生效。
+    /// 两处回收（补查和退出事件）由锁串行：阻塞的那次必须知道对方是否已经回收，否则可能等到同号的其他进程
+    private func reap(blocking: Bool) {
+        let raw = reaped.withLock { reaped -> Int32? in
+            guard !reaped else { return nil }
+            var raw: Int32 = 0
+            var result: pid_t
+            repeat { result = waitpid(pid, &raw, blocking ? 0 : WNOHANG) } while result == -1 && errno == EINTR
+            guard result == pid else { return nil }
+            reaped = true
+            return raw
+        }
+        guard let raw else { return }
         let status = Self.exitCode(raw)
         let waiters = exitState.withLock { state -> [CheckedContinuation<Int32, Never>] in
             state.status = status

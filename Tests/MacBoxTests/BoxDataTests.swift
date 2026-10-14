@@ -34,7 +34,9 @@ struct BoxDataTests {
 
         try await box.createRestorePoint()
         try await box.clearData()
-        #expect(read(file) == nil && read(paths.keychainPassword) == nil)
+        #expect(read(file) == nil)
+        // 盒子一辈子只用一个密码：清除数据不删它，之后新建的钥匙串沿用它（见 BoxKeychain）
+        #expect(read(paths.keychainPassword) == "password-1")
 
         try await box.restoreRestorePoint()
         #expect(read(file) == "before")

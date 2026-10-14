@@ -39,6 +39,9 @@ nonisolated struct PreferenceLease: Sendable {
         var nativeDomains: [String]
         /// 放进系统的盒子域
         var lentDomains: [String]
+        /// 借出时的前缀（旧版的日志没有）。收回时只认这个范围里的域：借出没收回期间前缀变宽了（安装器接手后加上真正的 App），
+        /// 用新前缀收回会把本机从没借出、也没备份过的域当成盒子的收进去，再当成“本机原本没有”清空
+        var prefixes: [String]?
     }
 
     private var journalURL: URL { box.leaseJournal }
@@ -59,18 +62,22 @@ nonisolated struct PreferenceLease: Sendable {
 
         let native = systemDomains()
         let lent = boxDomains()
-        var journal = Journal(phase: .lending, nativeDomains: native, lentDomains: lent)
+        var journal = Journal(phase: .lending, nativeDomains: native, lentDomains: lent, prefixes: prefixes)
         do {
             // 先记日志再动任何东西；本机的域全部备份完之后才开始替换
             try write(journal)
             try FileOps.removeIfExists(box.nativePrefsBackup)
             try AppPaths.ensure(box.nativePrefsBackup)
             for domain in native {
-                try savePlist(read(domain), to: box.nativePrefsBackup.appending(path: "\(domain).plist"))
+                try step(L("无法备份这台 Mac 上「\(domain)」的设置", "Couldn’t back up this Mac’s settings for “\(domain)”")) {
+                    try savePlist(read(domain), to: box.nativePrefsBackup.appending(path: "\(domain).plist"))
+                }
             }
             // 本机有、盒子里没有的域也要清空：否则 App 会读到本机的登录状态、设备 ID
             for domain in Set(native).union(lent) {
-                try await replace(domain, with: loadPlist(box.prefs.appending(path: "\(domain).plist")) ?? [:])
+                try await step(L("无法把盒子里「\(domain)」的设置放进系统", "Couldn’t put the box’s settings for “\(domain)” in place")) {
+                    try await replace(domain, with: loadPlist(box.prefs.appending(path: "\(domain).plist")) ?? [:])
+                }
             }
             journal.phase = .lent
             try write(journal)
@@ -80,33 +87,69 @@ nonisolated struct PreferenceLease: Sendable {
         }
     }
 
-    /// 收回：系统里的内容存回盒子，再恢复本机原来的内容。可重复调用
+    /// 收回：系统里的内容存回盒子，再恢复本机原来的内容。可重复调用。
+    ///
+    /// 失败时日志和本机设置的备份原样留着（isOutstanding 仍为 true），下次调用从中断处继续；
+    /// 抛出的错误写明卡在哪一步、哪个域、为什么，调用方可以直接拿去告诉用户——这时本机这个应用的设置
+    /// 可能还是盒子里的内容，悄悄吞掉的话，之后的清除数据、还原会把唯一的备份一起删掉
     @concurrent
     func checkOut() async throws {
-        guard var journal = readJournal() else { return }
-        let domains = Set(systemDomains()).union(journal.nativeDomains).union(journal.lentDomains)
+        guard var journal = readJournal() else {
+            // 读不出日志、也没有 .native：没有要恢复的东西（.native 在替换任何域之前就建好，全部恢复之后才删除）。
+            // 这时日志的位置上要是还有东西——盒子里的 App 把它换成了符号链接、FIFO、乱码——也删掉（链接只删链接本身）：
+            // 留着的话 isOutstanding 一直为真，清除数据、还原、删除都会被它挡住，直到下次启动借出时覆盖它。
+            // 按 lstat 判断有没有：什么都没有时（平常收回的情形）不多做任何事
+            var info = stat()
+            if lstat(journalURL.path, &info) == 0 {
+                try step(L("无法删除读不出来的借出日志", "Couldn’t remove the unreadable lease journal")) {
+                    try FileOps.removeTree(journalURL)
+                }
+            }
+            return
+        }
+        // 只收借出时那组前缀里的（见 Journal.prefixes）。日志在盒子里，只能用来缩小范围，owns 照样按现在的前缀把关
+        let lentScope = journal.prefixes ?? prefixes
+        let domains = Set(systemDomains().filter { Self.domain($0, isCoveredBy: lentScope) })
+            .union(journal.nativeDomains).union(journal.lentDomains)
 
         if journal.phase == .lent {
             for domain in domains {
-                let content = read(domain)
-                let file = box.prefs.appending(path: "\(domain).plist")
-                if content.isEmpty { try FileOps.removeIfExists(file) } else { try savePlist(content, to: file) }
+                try step(L("无法把「\(domain)」的设置存回盒子", "Couldn’t save the settings for “\(domain)” back to the box")) {
+                    let content = read(domain)
+                    let file = box.prefs.appending(path: "\(domain).plist")
+                    if content.isEmpty { try FileOps.removeIfExists(file) } else { try savePlist(content, to: file) }
+                }
             }
         }
         if journal.phase != .returning {
             journal.phase = .returning
-            try write(journal)
+            try step(L("无法记录偏好设置的收回进度", "Couldn’t record the progress of returning preferences")) {
+                try write(journal)
+            }
         }
         for domain in domains {
-            if let original = loadPlist(box.nativePrefsBackup.appending(path: "\(domain).plist")) {
-                try await replace(domain, with: original)
-            } else if !journal.nativeDomains.contains(domain) {
-                try await replace(domain, with: [:]) // 本机原本没有这个域
+            try await step(L("无法恢复这台 Mac 上「\(domain)」原来的设置", "Couldn’t restore this Mac’s original settings for “\(domain)”")) {
+                if let original = loadPlist(box.nativePrefsBackup.appending(path: "\(domain).plist")) {
+                    try await replace(domain, with: original)
+                } else if !journal.nativeDomains.contains(domain) {
+                    try await replace(domain, with: [:]) // 本机原本没有这个域
+                }
+                // 本机原有、却还没有备份的域：借出在备份阶段中断，它从未被改动过，保持原样
             }
-            // 本机原有、却还没有备份的域：借出在备份阶段中断，它从未被改动过，保持原样
         }
-        try FileOps.removeIfExists(box.nativePrefsBackup)
-        try FileOps.removeIfExists(journalURL)
+        try step(L("偏好设置已经收回，但无法删除借出日志", "Preferences were returned, but the lease journal couldn’t be removed")) {
+            try FileOps.removeIfExists(box.nativePrefsBackup)
+            try FileOps.removeIfExists(journalURL)
+        }
+    }
+
+    /// 给出错的一步加上说明：「哪一步：原因」
+    private func step<T>(_ what: String, _ work: () throws -> T) throws -> T {
+        do { return try work() } catch { throw MacBoxError(L("\(what)：\(error.localizedDescription)", "\(what): \(error.localizedDescription)")) }
+    }
+
+    private func step<T>(_ what: String, _ work: () async throws -> T) async throws -> T {
+        do { return try await work() } catch { throw MacBoxError(L("\(what)：\(error.localizedDescription)", "\(what): \(error.localizedDescription)")) }
     }
 
     // MARK: - 域
@@ -116,6 +159,17 @@ nonisolated struct PreferenceLease: Sendable {
         prefixes.contains { domain == $0 || domain.hasPrefix($0 + ".") }
     }
 
+    /// 能不能当作这个盒子的域来读写。
+    ///
+    /// 域名会直接拼进路径：系统偏好设置目录、Prefs、Prefs/.native。而日志 .lease.json 和 Prefs 都在盒子目录里，
+    /// 盒子里的 App 改得到——不检查的话，它往日志里写一个 "../../Documents/x"，收回时不在沙盒里的 MacBox
+    /// 就会替它删除、覆盖、读出盒子外的任意 .plist，或者借出、清空别的应用的偏好设置。
+    /// 所以只认单个文件名（没有 /、不含 ..、不以 . 开头），并且属于这个盒子的前缀；其余一律当作不存在
+    private func owns(_ domain: String) -> Bool {
+        !domain.isEmpty && !domain.hasPrefix(".") && !domain.contains("/") && !domain.contains("..")
+            && !domain.contains("\0") && Self.domain(domain, isCoveredBy: prefixes)
+    }
+
     /// 两组前缀会不会借出同一个域。会的话两个盒子不能同时运行：
     /// 后借出的一方会把前一方借出的内容当成本机设置备份起来，收回时互相覆盖，最后连本机设置都换成了盒子的
     static func overlaps(_ a: [String], _ b: [String]) -> Bool {
@@ -123,11 +177,10 @@ nonisolated struct PreferenceLease: Sendable {
     }
 
     /// 系统里属于这个 App 的域（App、安装器和各种 helper）
-    private func systemDomains() -> [String] {
-        plistNames(in: systemPrefs).filter { Self.domain($0, isCoveredBy: prefixes) }
-    }
+    private func systemDomains() -> [String] { plistNames(in: systemPrefs).filter(owns) }
 
-    private func boxDomains() -> [String] { plistNames(in: box.prefs) }
+    /// 盒子保存的域。Prefs 里的文件 App 也放得进去，不属于这个盒子的不借出
+    private func boxDomains() -> [String] { plistNames(in: box.prefs).filter(owns) }
 
     private func plistNames(in directory: URL) -> [String] {
         FileOps.contents(of: directory)
@@ -155,7 +208,8 @@ nonisolated struct PreferenceLease: Sendable {
         let removed = existing.filter { content[$0] == nil }
         CFPreferencesSetMultiple(content as CFDictionary, removed as CFArray, ref, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
         guard CFPreferencesSynchronize(ref, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) else {
-            throw MacBoxError(L("无法写入偏好设置 \(domain)", "Couldn’t write preferences \(domain)"))
+            // 调用方会加上是哪个域、哪一步
+            throw MacBoxError(L("偏好设置服务（cfprefsd）没有接受修改", "The preferences service (cfprefsd) didn’t accept the change"))
         }
         if content.isEmpty {
             // 只删文件不够：cfprefsd 稍后会把缓存里的空域重新写成一个空 plist。让它自己删除整个域
@@ -166,8 +220,10 @@ nonisolated struct PreferenceLease: Sendable {
 
     // MARK: - 文件
 
+    /// 只读盒子里的文件（Prefs、Prefs/.native），App 改得到：是指向盒子外的符号链接时当作没有，
+    /// 否则 MacBox 会把链接指向的任意 .plist 借给 App 读
     private func loadPlist(_ url: URL) -> [String: Any]? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard let data = FileOps.regularFileContents(url) else { return nil }
         return try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
     }
 
@@ -179,12 +235,16 @@ nonisolated struct PreferenceLease: Sendable {
         try JSONEncoder().encode(journal).write(to: journalURL, options: .atomic)
     }
 
+    /// 日志和备份目录都在盒子里，App 改得到：里面的域名逐个检查（见 owns），不属于这个盒子的当作没有
     private func readJournal() -> Journal? {
-        if let data = try? Data(contentsOf: journalURL), let journal = try? JSONDecoder().decode(Journal.self, from: data) {
+        if let data = FileOps.regularFileContents(journalURL), var journal = try? JSONDecoder().decode(Journal.self, from: data) {
+            journal.nativeDomains = journal.nativeDomains.filter(owns)
+            journal.lentDomains = journal.lentDomains.filter(owns)
             return journal
         }
         // 旧版 MacBox 崩溃后只留下备份目录：视为已借出
         guard FileManager.default.fileExists(atPath: box.nativePrefsBackup.path) else { return nil }
-        return Journal(phase: .lent, nativeDomains: plistNames(in: box.nativePrefsBackup), lentDomains: boxDomains())
+        return Journal(phase: .lent, nativeDomains: plistNames(in: box.nativePrefsBackup).filter(owns), lentDomains: boxDomains(),
+                       prefixes: nil)
     }
 }
