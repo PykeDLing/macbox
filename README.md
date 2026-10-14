@@ -99,17 +99,14 @@ open build/MacBox.app
 
 `build.sh` 直接调用 `swiftc`，会自动选择与编译器匹配的 SDK，然后用 `com.apple.security.virtualization` entitlement 做 ad-hoc 签名。
 
-测试（Swift Testing，会真实地启动沙盒进程、挂载 dmg、读写偏好设置，但只用临时目录和 `dev.macboxtest.` 开头的测试域，不碰你的盒子）：
+测试（Swift Testing，会真实地启动沙盒进程、创建钥匙串、读系统日志、挂载 dmg、读写偏好设置，但只用临时目录和 `dev.macboxtest.` 开头的测试域，不碰你的盒子）：
 
 ```bash
-swift test
+MACBOX_DATA_ROOT=$(mktemp -d) swift test --no-parallel
 ```
 
-打开盒子、运行时守卫、启动器这类生命周期测试要用到 MacBox 的数据目录，只在设置了 `MACBOX_DATA_ROOT` 时运行，否则跳过：
-
-```bash
-MACBOX_DATA_ROOT=$(mktemp -d) swift test
-```
+- 打开盒子、运行时守卫、启动器这类生命周期测试要用到 MacBox 的数据目录，只在设置了 `MACBOX_DATA_ROOT` 时运行，否则跳过
+- 要加 `--no-parallel`（全部跑完约两分钟）：这些测试用的都是真实的系统服务，并行时互相拖慢，按时间判断的测试（会话、守卫、子进程）会因为等不到而失败
 
 想在不影响真实数据的情况下手动试用，可以把全部数据（含启动器）放到别处：`open -n build/MacBox.app --env MACBOX_DATA_ROOT=/tmp/macbox-test`。
 

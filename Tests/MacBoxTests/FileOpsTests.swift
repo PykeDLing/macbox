@@ -1,11 +1,14 @@
 import Darwin
 import Foundation
+import Synchronization
 import Testing
 @testable import MacBox
 
 /// 删除、替换盒子里的数据：App 留下的只读目录、chflags 标志、拒绝删除的 ACL、很深的目录树、指向盒子外的符号链接，
 /// 以及替换中途崩溃后的收拾。全部在临时目录里进行；“盒子外”的东西也放在同一个临时目录里，用来确认没有被碰到
-@Suite("删除与替换盒子数据")
+// 串行：清理和加 ACL 用同步的 Process.waitUntilExit，会占住并发线程池的线程；并行跑时整个测试进程会卡住好几秒，
+// 其他按时间判断的测试（子进程、守卫）因此失败
+@Suite("删除与替换盒子数据", .serialized)
 struct FileOpsTests {
     let root: URL
     /// 代表盒子外面（~/Downloads、~/Documents）的目录，里面放着不能被碰的文件
@@ -133,17 +136,19 @@ struct FileOpsTests {
         outsideUntouched()
     }
 
-    @Test("上千层深的目录树：描述符上限只有 256（GUI App 的默认值）时也删得掉")
+    @Test("几百层深、路径超过 PATH_MAX 的目录树也删得掉，同时开着的描述符不随深度增长（GUI App 的默认上限只有 256）")
     func removeDeepTree() throws {
         defer { cleanUp() }
         let tree = root.appending(path: "Home")
         try AppPaths.ensure(tree)
         // 用 mkdirat 逐层往下建，同时只开着一个目录：完整路径早就超过了 PATH_MAX，按路径建不出来
-        let depth = 1000
+        // 300 层 × 10 字节的名字，完整路径约 3000 字节，超过 PATH_MAX（1024）。不用上千层：建、删上千层目录会让
+        // 文件系统忙上好几秒，并行运行的其他测试启动进程跟着变慢，按时间判断的测试就失败了
+        let depth = 300, name = "level-dir"
         var directory = open(tree.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         try #require(directory >= 0)
         for level in 0..<depth {
-            let next = mkdirat(directory, "d", 0o755) == 0 ? openat(directory, "d", O_RDONLY | O_DIRECTORY | O_CLOEXEC) : -1
+            let next = mkdirat(directory, name, 0o755) == 0 ? openat(directory, name, O_RDONLY | O_DIRECTORY | O_CLOEXEC) : -1
             close(directory)
             directory = next
             try #require(directory >= 0, "第 \(level) 层")
@@ -154,16 +159,14 @@ struct FileOpsTests {
         #expect(fchmod(directory, 0o555) == 0) // 最深处还是只读目录
         close(directory)
 
-        // 每层占一个描述符的话，删到第 250 层左右就 EMFILE。上限是整个测试进程的，只在删除期间调低、马上恢复
-        // （并行运行的其他测试平时一共只开着二十来个描述符，256 绰绰有余）
-        var limit = rlimit()
-        try #require(getrlimit(RLIMIT_NOFILE, &limit) == 0)
-        var saved = limit
-        limit.rlim_cur = min(limit.rlim_cur, 256)
-        try #require(setrlimit(RLIMIT_NOFILE, &limit) == 0)
+        // 每层占一个描述符的话会同时开着几百个（GUI App 的默认上限只有 256）。不调低整个测试进程的上限：
+        // 那会让并行的其他测试打不开管道、启动不了进程。改为删除期间在另一个线程里采样打开的描述符数
+        let before = Self.openDescriptors()
+        let sampler = DescriptorSampler(start: before)
+        Thread { sampler.run() }.start()
         let result = Result { try FileOps.removeTree(tree) }
-        #expect(setrlimit(RLIMIT_NOFILE, &saved) == 0)
-
+        sampler.stop()
+        #expect(sampler.peak - before < 150, "删除时同时开着的描述符随目录深度增长")
         try result.get()
         #expect(!exists(tree))
     }
@@ -301,5 +304,31 @@ struct FileOpsTests {
 
         #expect(FileOps.regularFileContents(outside) == nil)
         #expect(FileOps.regularFileContents(root.appending(path: "missing")) == nil)
+    }
+}
+
+extension FileOpsTests {
+    /// 测试进程当前打开的描述符个数
+    nonisolated static func openDescriptors() -> Int {
+        Int(proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, nil, 0)) / MemoryLayout<proc_fdinfo>.stride
+    }
+}
+
+/// 在另一个线程里反复采样打开的描述符数，记下最大值
+nonisolated final class DescriptorSampler: Sendable {
+    private let state: Mutex<(peak: Int, done: Bool)>
+    init(start: Int) { state = Mutex((start, false)) }
+    var peak: Int { state.withLock { $0.peak } }
+    func stop() { state.withLock { $0.done = true } }
+    func run() {
+        while true {
+            let count = FileOpsTests.openDescriptors()
+            let done = state.withLock { state in
+                state.peak = max(state.peak, count)
+                return state.done
+            }
+            if done { return }
+            usleep(200)
+        }
     }
 }
