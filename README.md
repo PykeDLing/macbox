@@ -5,14 +5,14 @@
 <h1 align="center">MacBox</h1>
 
 <p align="center">
-  把不放心的 Mac 软件装进一个盒子：照常使用，但它写下的文件、设置和钥匙串都不会留在你的 Mac 上。<br>
+  把不放心的 Mac 软件装进一个盒子：照常使用，它写下的文件、设置和钥匙串都留在盒子里（「下载」文件夹默认共享，其他例外见下文“限制”）。<br>
   <a href="https://github.com/PykeDLing/macbox/releases/latest"><b>下载最新版</b></a>
 </p>
 
 ---
 
 各种网盘、下载器、国产工具软件，装上之后往往在系统里到处留东西：开机自启、后台服务、散落各处的缓存和设置。
-MacBox 让它们在一个隔离的“盒子”里运行——像普通 App 一样有窗口、在程序坞里，但删掉盒子就干干净净。
+MacBox 让它们在一个隔离的“盒子”里运行——像普通 App 一样有窗口、在程序坞里，但删掉盒子就干干净净（存进「下载」的文件除外，其他例外见下文“限制”）。
 
 把下载的 `.dmg` 拖进 MacBox 即可，`.app`、`.pkg`、`.zip` 也支持。在线安装器（只有几 MB、打开后再联网下载的那种）也能处理。
 
@@ -65,12 +65,11 @@ MacBox 让它们在一个隔离的“盒子”里运行——像普通 App 一�
 
 | 手段 | 作用 |
 | --- | --- |
-| Seatbelt 沙盒（`sandbox-exec`），子进程自动继承 | 写操作默认全部禁止，只放行盒子目录、临时目录和你的「下载」文件夹（默认共享，App 能在里面新建、修改、删除文件；可在详情面板里按应用关闭）。也禁止读取邮件、信息、Safari、其他 App 的数据（Application Support 和容器）和 SSH 等密钥。禁止注册登录项和后台服务、发送通知、用 Apple 事件控制其他 App |
+| Seatbelt 沙盒（`sandbox-exec`），子进程自动继承 | 写操作默认全部禁止，只放行盒子目录、临时目录和你的「下载」文件夹（默认共享，App 能在里面新建、修改、删除文件；可在详情面板里按应用关闭）。也禁止读取邮件、信息、Safari、Cookie、iCloud 云盘、其他 App 的数据（Application Support 和容器），以及 SSH、GPG、AWS、Kubernetes 的密钥。禁止注册登录项和后台服务、发送通知、用 Apple 事件控制其他 App |
 | 重定向主目录（`HOME` + `CFFIXED_USER_HOME`） | App 的 Application Support、Caches、Cookies 都落在盒子里 |
 | 每个盒子一个独立钥匙串 | 主目录里的 `login.keychain-db` 指向盒子钥匙串，凭证和设备 ID 不进你的「登录」钥匙串 |
 | 偏好设置“借出再收回” | cfprefsd 代写的 UserDefaults 沙盒挡不住，所以启动前把系统里这些域**整体替换**为盒子的内容，退出后完整收回、再把本机原来的内容整体换回。按事务处理：先写日志 `Prefs/.lease.json` 再动系统，中途失败立即回滚，MacBox 崩溃后下次启动按日志恢复 |
 | 运行时守卫 | MacBox 打开期间，每 50ms 检查新进程：可执行文件位于盒子或盒子挂载的卷上的，必须在沙盒中、且负责进程是 MacBox 登记过的运行会话，否则立即结束（例如被系统直接启动、自带苹果沙盒的 App 从程序坞打开、MacBox 崩溃后遗留的进程） |
-| 平时锁住 App | 盒子里的 App 不在 MacBox 里运行时，它的可执行文件被去掉执行权限，由 MacBox 在沙盒中打开时才恢复。所以即使 MacBox 没开、守卫不在，绕过 MacBox 直接打开它（例如程序坞里保留的图标、登录时自动重新打开）也会失败 |
 | 在线安装器 | 禁止它挂载磁盘映像，以免它从卷上在沙盒外启动 App。它下载的完整安装包由 MacBox 取出 App 完成安装，然后直接打开 |
 | 启动器 | `~/Applications/MacBox` 里放一个同名同图标的启动器，从聚焦打开时经由 MacBox 在隔离中启动 |
 
@@ -78,10 +77,12 @@ MacBox 让它们在一个隔离的“盒子”里运行——像普通 App 一�
 
 **限制**：本机隔离防的是“乱写、乱留、乱读”，不是恶意软件。它与本机共用内核和用户身份，来路可疑的软件请用虚拟 Mac。被挡住的功能包括开机自启、通知、访达扩展、需要驱动的功能。具体还有：
 
+- MacBox 没开时没有守卫：绕过 MacBox 直接打开盒子里的 App（例如程序坞里保留的图标、登录时自动重新打开）拦不住，它会在沙盒外、用你真实的主目录、偏好设置和钥匙串运行。请从 MacBox 或聚焦里的启动器打开
 - 「本次已拦截」来自系统日志，是**尽力而为**的提示：内核对沙盒拒绝报告做全局限流和去重，其他进程报告很多时盒子里的会被丢弃。没有记录不代表没有被拦截
 - `/private/tmp` 和 `/private/var/folders` 可写（很多系统框架依赖它们），App 可以在这里留下文件
-- 其他 App 的偏好设置读得到：经由 cfprefsd 读取不受沙盒约束
-- 偏好设置只借出、收回以 App 的 bundle ID 前三段开头的域（App 是 `com.example.app.mac` 时，就是 `com.example.app` 和 `com.example.app.*`），而且不含 ByHost 设置。“仅限本机”的 ByHost 设置（`~/Library/Preferences/ByHost`，App 自己的也算），以及前缀以外的域（厂商的更新程序、第三方 SDK、App Group 共享设置等），App 读到的是本机的内容，写入也直接落在你真实的 `~/Library/Preferences`，不会收进盒子，删除盒子后仍然留着
+- 读取只挡住上面列出的这几类私人数据，别处沙盒都不挡，例如文稿、桌面，`~/.config`、`~/.netrc`、`~/.git-credentials`、`~/.docker` 等处命令行工具的配置和令牌，`~/Library/Caches`、WebKit 网站数据
+- 其他 App 的偏好设置读得到：`~/Library/Preferences` 里的文件沙盒不挡，经由 cfprefsd 读取也不受沙盒约束
+- 偏好设置只借出、收回按 bundle ID 认定属于这个 App 的域，而且不含 ByHost 设置。“仅限本机”的 ByHost 设置（`~/Library/Preferences/ByHost`，App 自己的也算），以及认定范围以外的域（厂商的更新程序、第三方 SDK、App Group 共享设置等），App 读到的是本机的内容，写入也直接落在你真实的 `~/Library/Preferences`，不会收进盒子，删除盒子后仍然留着
 - 同一个应用的两份（两个盒子，或者盒子和直接装在这台 Mac 上的那份）共用一组偏好设置，不能同时运行：打开盒子时另一份正在运行，MacBox 会拒绝并告诉你先退出哪一个。盒子运行期间再去打开本机的那份拦不住，请避免。自带苹果沙盒的版本（例如 App Store 版）用自己的设置，不受影响
 - 用 Data Protection 钥匙串（`kSecUseDataProtectionKeychain`）的 App，钥匙串条目不会进盒子钥匙串
 - App 包内的 XPC 服务由系统直接启动、不在沙盒中，会被守卫结束，依赖它们的功能不可用
