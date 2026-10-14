@@ -11,11 +11,10 @@ struct BoxInspector: View {
     @State private var confirmRestore = false
     @State private var confirmDeleteRestorePoint = false
     @State private var confirmClear = false
+    @State private var forceQuitTarget: Box?
     @State private var showAllBlocks = false
     @State private var nameDraft = ""
     @State private var dataSize: Int64?
-    /// 清除数据、还原后递增，触发重新统计占用空间
-    @State private var dataRevision = 0
 
     var body: some View {
         Form {
@@ -26,25 +25,27 @@ struct BoxInspector: View {
                 filesSection
                 restoreSection
             }
+            installerSection
             Section {
-                Toggle(L("在聚焦中显示", "Show in Spotlight"), isOn: $box.config.showInLaunchpad)
-                    .help(L("在 ~/Applications/MacBox 放一个启动器，像普通 App 一样打开",
-                            "Put a launcher in ~/Applications/MacBox so you can open it like any other app"))
                 Button(L("删除应用…", "Delete App…"), role: .destructive, action: onDelete)
                     .disabled(box.isRunning || box.isBusy)
             }
         }
         .formStyle(.grouped)
-        // 统计占用空间要遍历整个主目录，放到后台，运行状态变化或数据变动后重新统计
-        .task(id: "\(box.isRunning)-\(dataRevision)") {
-            dataSize = await box.measureDataSize()
+        // 统计占用空间要遍历整个主目录，放到后台。运行开始、结束，以及每次维护（还原、清除数据、完成安装）之后重新统计：
+        // 维护都以回到空闲结束。启动、收尾、维护期间 MacBox 自己正在删除、克隆主目录，量出来的数不对，保留上次的
+        .task(id: "\(box.isRunning)-\(box.activity == .idle)") {
+            guard box.isRunning || box.activity == .idle else { return }
+            let size = await box.measureDataSize()
+            guard !Task.isCancelled else { return } // 状态又变了：以新的一次为准，旧的结果不再覆盖它
+            dataSize = size
         }
-        .confirmationDialog(L("还原到还原点？", "Restore to Restore Point?"), isPresented: $confirmRestore) {
+        .forceQuitConfirmation($forceQuitTarget)
+        .confirmationDialog(L("还原到还原点？", "Restore to the restore point?"), isPresented: $confirmRestore) {
             Button(L("还原", "Restore"), role: .destructive) {
                 perform {
                     try await box.restoreRestorePoint()
                     box.notice = L("已还原。", "Restored.")
-                    dataRevision += 1
                 }
             }
             Button(L("取消", "Cancel"), role: .cancel) {}
@@ -52,7 +53,7 @@ struct BoxInspector: View {
             Text(L("还原点之后的登录状态、设置和缓存都会丢弃。",
                    "Sign-ins, settings and caches since the restore point will be discarded."))
         }
-        .confirmationDialog(L("删除还原点？", "Delete Restore Point?"), isPresented: $confirmDeleteRestorePoint) {
+        .confirmationDialog(L("删除还原点？", "Delete the restore point?"), isPresented: $confirmDeleteRestorePoint) {
             Button(L("删除", "Delete"), role: .destructive) {
                 perform {
                     try await box.deleteRestorePoint()
@@ -66,21 +67,33 @@ struct BoxInspector: View {
                      "You won’t be able to return to this state, and “Restore Automatically After Quitting” will be turned off.")
                  : L("删除后无法再回到这个状态。", "You won’t be able to return to this state."))
         }
-        .confirmationDialog(L("清除「\(box.config.name)」的数据？", "Clear Data for “\(box.config.name)”?"),
+        .confirmationDialog(L("清除「\(box.config.name)」的数据？", "Clear data for “\(box.config.name)”?"),
                             isPresented: $confirmClear) {
             Button(L("清除", "Clear"), role: .destructive) {
                 perform {
                     try await box.clearData()
                     box.notice = L("数据已清除，下次打开就像刚安装一样。",
                                    "Data cleared. Next time it opens as if freshly installed.")
-                    dataRevision += 1
                 }
             }
             Button(L("取消", "Cancel"), role: .cancel) {}
         } message: {
-            Text(L("登录状态、设置、缓存和钥匙串都会被清空。应用本身保留。",
-                   "Sign-ins, settings, caches and the keychain will be erased. The app itself is kept."))
+            Text(clearDataMessage)
         }
+    }
+
+    /// 清除数据不动还原点：还原点里同样有登录状态和钥匙串，之后还能还原回来，要说清楚
+    private var clearDataMessage: String {
+        var lines = [L("登录状态、设置、缓存和钥匙串都会被清空。应用本身保留。",
+                       "Sign-ins, settings, caches and the keychain will be erased. The app itself is kept.")]
+        if box.restorePointDate != nil {
+            lines.append(box.config.resetOnQuit
+                         ? L("还原点不受影响。「每次退出后自动还原」开着，下次退出应用时数据会还原成还原点里的样子。",
+                             "The restore point isn’t affected. “Restore Automatically After Quitting” is on, so the data will be restored from it the next time the app quits.")
+                         : L("还原点不受影响，之后仍可还原到它。要连同还原点一起删除，请另外删除还原点。",
+                             "The restore point isn’t affected; you can still restore to it later. To remove it too, delete the restore point separately."))
+        }
+        return lines.joined(separator: "\n\n")
     }
 
     // MARK: - 头部
@@ -118,11 +131,21 @@ struct BoxInspector: View {
                 }
                 HStack(spacing: 8) {
                     if box.isRunning {
-                        Button { box.session?.activate() } label: {
+                        // 经由 open()：主程序已退出、只剩后台程序时，它会让它们退出再重新打开，而不是什么也不做
+                        Button { Task { await box.open() } } label: {
                             Label(L("切换过去", "Switch to App"), systemImage: "arrow.up.forward").frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
-                        Button { box.quit() } label: { Text(L("退出", "Quit")).frame(maxWidth: .infinity) }
+                        if box.offersForceQuit {
+                            // 请求退出几秒后还在运行：可能在等你存储，也可能没有响应
+                            Button(role: .destructive) { forceQuitTarget = box } label: {
+                                Text(L("强制退出…", "Force Quit…")).frame(maxWidth: .infinity)
+                            }
+                            .help(L("应用没有响应退出请求。强制退出会丢失没有存储的内容",
+                                    "The app hasn’t responded to the request to quit. Forcing it to quit loses any unsaved changes"))
+                        } else {
+                            Button { box.quit() } label: { Text(L("退出", "Quit")).frame(maxWidth: .infinity) }
+                        }
                     } else {
                         Button { Task { await box.open() } } label: {
                             Label(box.config.isInstaller ? L("运行安装器", "Run Installer") : L("打开", "Open"), systemImage: "play.fill")
@@ -227,6 +250,33 @@ struct BoxInspector: View {
         }
     }
 
+    // MARK: - 安装器、聚焦
+
+    /// 是不是在线安装器由文件名、大小猜出来，会猜错（下载器、卸载工具……）：让用户自己改
+    private var installerSection: some View {
+        Section {
+            Toggle(L("在线安装器", "Online Installer"), isOn: $box.config.isInstaller)
+                .disabled(box.isRunning || box.isBusy)
+            Text(box.config.isInstaller
+                 ? L("运行后会下载完整的安装包，MacBox 取出里面的 App 完成安装。如果这就是应用本身，请关掉。",
+                     "When it runs, it downloads the full installer package, and MacBox finishes the installation with the app inside. If this is the app itself, turn this off.")
+                 : L("如果这是一个运行后才下载完整安装包的小安装器，请打开，由 MacBox 接手安装。",
+                     "If this is a small installer that downloads the full package when it runs, turn this on so MacBox can take over the installation."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle(L("在聚焦中显示", "Show in Spotlight"), isOn: $box.config.showInLaunchpad)
+                .disabled(box.config.isInstaller)
+                .help(L("在 ~/Applications/MacBox 放一个启动器，像普通 App 一样打开",
+                        "Put a launcher in ~/Applications/MacBox so you can open it like any other app"))
+            if box.config.isInstaller {
+                Text(L("安装器没有启动器。安装完成后，启动器会按这里的设置创建。",
+                       "Installers don’t get a launcher. Once the installation finishes, one is created according to this setting."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     // MARK: - 文件
 
     private var filesSection: some View {
@@ -234,8 +284,8 @@ struct BoxInspector: View {
             Toggle(L("共享「下载」文件夹", "Share Downloads Folder"), isOn: $box.config.shareDownloads)
                 .disabled(box.isRunning || box.isBusy)
             Text(box.config.shareDownloads
-                 ? L("应用下载的文件直接保存到你的「下载」文件夹。",
-                     "Files the app downloads are saved directly to your Downloads folder.")
+                 ? L("应用下载的文件直接保存到你的「下载」文件夹，删除应用后仍然保留；它也能修改、删除那里的文件。",
+                     "Files the app downloads are saved directly to your Downloads folder and stay there after you delete the app. The app can also change or delete files there.")
                  : L("应用只能看到盒子里自己的「下载」文件夹。",
                      "The app can only see its own Downloads folder inside the box."))
                 .font(.caption)

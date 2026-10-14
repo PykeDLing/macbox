@@ -9,6 +9,7 @@ struct LibraryView: View {
     @Environment(\.importApps) private var importApps
     @SceneStorage("library.showInspector") private var showInspector = true
     @State private var pendingDelete: DeleteTarget?
+    @State private var forceQuitTarget: Box?
     @State private var actionError: String?
     @State private var gridWidth: CGFloat = 0
     @FocusState private var gridFocused: Bool
@@ -66,6 +67,7 @@ struct LibraryView: View {
             } message: { target in
                 Text(target.message)
             }
+            .forceQuitConfirmation($forceQuitTarget)
             .alert(L("无法删除", "Couldn’t Delete"), isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } }),
                    presenting: actionError) { _ in
                 Button(L("好", "OK")) {}
@@ -158,12 +160,19 @@ struct LibraryView: View {
         Button(box.isRunning ? L("切换到「\(box.config.name)」", "Switch to “\(box.config.name)”") : L("打开", "Open")) {
             Task { await box.open() }
         }
-        if box.isRunning { Button(L("退出", "Quit")) { box.quit() } }
+        if box.isRunning {
+            // 请求退出几秒后还在运行：提供强制退出（先确认）
+            if box.offersForceQuit {
+                Button(L("强制退出…", "Force Quit…")) { forceQuitTarget = box }
+            } else {
+                Button(L("退出", "Quit")) { box.quit() }
+            }
+        }
         Divider()
         Picker(L("运行环境", "Runtime"), selection: Binding(get: { box.config.runtime }, set: { box.config.runtime = $0 })) {
             ForEach(Runtime.allCases) { Text($0.title).tag($0) }
         }
-        .disabled(box.isRunning)
+        .disabled(box.isRunning || box.isBusy)
         Button(L("在访达中显示应用数据", "Show App Data in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([box.paths.home]) }
         Divider()
         Button(L("删除…", "Delete…"), role: .destructive) {
@@ -188,13 +197,15 @@ struct LibraryView: View {
     }
 
     private func delete(_ target: DeleteTarget) {
-        do {
-            switch target {
-            case .box(let box): try store.delete(box)
-            case .broken(let broken): try store.deleteBroken(broken)
+        Task {
+            do {
+                switch target {
+                case .box(let box): try await store.delete(box) // 先收回没收回的偏好设置，期间卡片显示“处理中”
+                case .broken(let broken): try store.deleteBroken(broken)
+                }
+            } catch {
+                actionError = error.localizedDescription
             }
-        } catch {
-            actionError = error.localizedDescription
         }
     }
 }
@@ -212,8 +223,12 @@ private enum DeleteTarget {
 
     var message: String {
         switch self {
-        case .box: L("应用和它的全部数据（设置、缓存、钥匙串）会一起移到废纸篓，你的 Mac 上不会留下任何东西。",
-                      "The app and all its data (settings, caches, keychain) will be moved to the Trash. Nothing will be left behind on your Mac.")
+        // 共享「下载」时（默认），它存进你「下载」里的文件不在盒子里，不会跟着删除
+        case .box(let box) where box.config.shareDownloads:
+            L("应用和它的全部数据（设置、缓存、钥匙串）会一起移到废纸篓。它存进你「下载」文件夹的文件不在盒子里，会保留。",
+              "The app and all its data (settings, caches, keychain) will be moved to the Trash. Files it saved to your Downloads folder aren’t in the box and will stay.")
+        case .box: L("应用和它的全部数据（设置、缓存、钥匙串）会一起移到废纸篓。",
+                      "The app and all its data (settings, caches, keychain) will be moved to the Trash.")
         case .broken: L("它的文件夹会移到废纸篓，需要时可以从废纸篓里找回。",
                         "Its folder will be moved to the Trash, where you can recover it if needed.")
         }

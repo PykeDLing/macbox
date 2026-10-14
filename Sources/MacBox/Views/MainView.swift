@@ -44,15 +44,35 @@ struct MainView: View {
             Task { await store.importItems(urls) }
             return !urls.isEmpty
         } isTargeted: { dropTargeted = $0 }
+        // 下面几种提示都排队，一次显示一条。按钮只做选择对应的事，移出队列统一在关闭时做（isPresented 被置为 false）：
+        // 按钮里就移出的话，关闭时 SwiftUI 再置一次 false，会把排在后面的那条也当成已关闭
         .alert(L("「\(store.prompt?.appName ?? "")」在本机隔离中可能无法正常使用",
                  "“\(store.prompt?.appName ?? "")” may not work properly in Native Isolation"),
-               isPresented: Binding(get: { store.prompt != nil }, set: { if !$0 { store.prompt = nil } }),
+               isPresented: Binding(get: { store.prompt != nil }, set: { if !$0 { store.dismissPrompt() } }),
                presenting: store.prompt) { prompt in
             Button(L("改用虚拟 Mac", "Use Virtual Mac")) { store.box(id: prompt.boxID)?.config.runtime = .virtualMac }
-            Button(L("继续使用本机隔离", "Keep Native Isolation"), role: .cancel) {}
+            // 记下这次的拦截：同样的拦截以后不再问，每次退出都弹一次没有意义
+            Button(L("继续使用本机隔离", "Keep Native Isolation"), role: .cancel) { store.keepNativeIsolation(prompt) }
         } message: { prompt in
             Text(prompt.reasons.prefix(4).joined(separator: "\n") + "\n\n"
                  + L("改用虚拟 Mac 运行可以获得完整功能。", "Run it in a Virtual Mac to get full functionality."))
+        }
+        .alert(L("「\(store.virtualMacOffers.first?.file.lastPathComponent ?? "")」需要在虚拟 Mac 里安装",
+                 "“\(store.virtualMacOffers.first?.file.lastPathComponent ?? "")” needs the Virtual Mac"),
+               isPresented: Binding(get: { !store.virtualMacOffers.isEmpty }, set: { if !$0 { store.dismissVirtualMacOffer() } }),
+               presenting: store.virtualMacOffers.first) { offer in
+            Button(L("放进虚拟 Mac", "Put in Virtual Mac")) { Task { await store.sendToVirtualMac(offer) } }
+            Button(L("取消", "Cancel"), role: .cancel) {}
+        } message: { offer in
+            Text(offer.message + "\n\n" + L("可以把它放进虚拟 Mac 的「传入」文件夹，在虚拟 Mac 里安装。",
+                                             "You can put it in the Virtual Mac’s “传入” (Incoming) folder and install it there."))
+        }
+        .alert(store.alerts.first?.title ?? "",
+               isPresented: Binding(get: { !store.alerts.isEmpty }, set: { if !$0 { store.dismissAlert() } }),
+               presenting: store.alerts.first) { _ in
+            Button(L("好", "OK")) {}
+        } message: { alert in
+            Text(alert.message)
         }
         .alert(L("无法添加", "Couldn’t Add App"),
                isPresented: Binding(get: { store.importError != nil }, set: { if !$0 { store.importError = nil } }),
@@ -115,8 +135,9 @@ private struct Sidebar: View {
         switch virtualMac.status {
         case .notSetUp: Text(L("未设置", "Not Set Up"))
         case .unreadable: Text(L("无法读取", "Unreadable"))
-        case .stopped: virtualMac.isAsleep ? Text(L("睡眠", "Asleep")) : nil
-        default: Text(virtualMac.status.title)
+        // 和「虚拟 Mac」页、窗口标题用同一套说法（关机但留有睡眠状态时是「睡眠中」）
+        case .stopped: virtualMac.isAsleep ? Text(virtualMac.displayStatus) : nil
+        default: Text(virtualMac.displayStatus)
         }
     }
 }
