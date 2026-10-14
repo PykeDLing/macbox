@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Virtualization
 
@@ -47,6 +48,7 @@ nonisolated struct VirtualMacConfig: Codable, Hashable, Sendable {
 ///       HardwareModel / MachineIdentifier
 ///       SaveState.vzvmsave   睡眠时保存的内存状态
 ///       RestorePoint/        还原点（APFS 克隆）
+///       QuarantineKey        给「传出」里的隔离标记签名的密钥
 ///       传入/                 主机 → 虚拟 Mac（只读）
 ///       传出/                 虚拟 Mac → 主机
 nonisolated struct VirtualMacBundle: Sendable {
@@ -63,6 +65,7 @@ nonisolated struct VirtualMacBundle: Sendable {
     var restorePointURL: URL { url.appending(path: "RestorePoint", directoryHint: .isDirectory) }
     var incomingURL: URL { url.appending(path: VMConfigurationFactory.incomingShareName, directoryHint: .isDirectory) }
     var outgoingURL: URL { url.appending(path: VMConfigurationFactory.outgoingShareName, directoryHint: .isDirectory) }
+    var quarantineKeyURL: URL { url.appending(path: "QuarantineKey") }
 
     var restorableFiles: [URL] { [diskURL, auxiliaryStorageURL, saveStateURL] }
     /// 设置过程中创建的虚拟硬件（config.json 和交换文件夹不算）
@@ -102,6 +105,21 @@ nonisolated struct VirtualMacBundle: Sendable {
     /// 设置失败或取消时清掉已经创建的虚拟硬件。设置只会从「未设置」开始，这些文件里没有值得保留的东西
     func removeSetupArtifacts() {
         for file in setupArtifacts { try? FileOps.removeIfExists(file) }
+    }
+
+    /// 给「传出」里的隔离标记签名的密钥（见 OutgoingQuarantine.isValidMark），第一次用到时生成。
+    /// 放在包的根目录：虚拟 Mac 只能看到「传入」「传出」，读不到它，也就伪造不了签名
+    func quarantineKey() throws -> SymmetricKey {
+        if let data = try? Data(contentsOf: quarantineKeyURL), data.count == 32 { return SymmetricKey(data: data) }
+        let key = SymmetricKey(size: .bits256)
+        try AppPaths.ensure(url)
+        try? FileManager.default.removeItem(at: quarantineKeyURL)
+        let data = key.withUnsafeBytes { Data($0) }
+        guard FileManager.default.createFile(atPath: quarantineKeyURL.path, contents: data,
+                                             attributes: [.posixPermissions: 0o600]) else {
+            throw MacBoxError(L("无法保存隔离标记的密钥", "Couldn’t save the quarantine key"))
+        }
+        return key
     }
 
     func ensureExchangeFolders() throws {

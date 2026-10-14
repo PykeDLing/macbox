@@ -22,6 +22,7 @@ struct VirtualMacWindow: View {
                             }
                         }
                     }
+                    .overlay(alignment: .top) { messages }
             } else if vm.status == .starting {
                 ProgressView(L("正在启动…", "Starting…"))
             } else {
@@ -53,6 +54,12 @@ struct VirtualMacWindow: View {
         }
         .toolbar {
             ToolbarItemGroup {
+                // 拖放和「放入文件」都在后台复制，跨卷时可能要很久：这里给个进行中的提示
+                if vm.isSending {
+                    ProgressView()
+                        .controlSize(.small)
+                        .help(L("正在复制到虚拟 Mac…", "Copying to the Virtual Mac…"))
+                }
                 Button { choosingFiles = true } label: {
                     Label(L("放入文件", "Add Files"), systemImage: "tray.and.arrow.down")
                 }
@@ -76,6 +83,25 @@ struct VirtualMacWindow: View {
                     shutDownMenu
                 }
             }
+        }
+    }
+
+    /// 虚拟机画面显示时，下面的 ContentUnavailableView 看不到：放入的结果、出错信息浮在画面上方，可以关掉
+    @ViewBuilder
+    private var messages: some View {
+        if vm.lastError != nil || vm.notice != nil {
+            VStack(spacing: 8) {
+                if let error = vm.lastError {
+                    Banner(text: error, systemImage: "exclamationmark.triangle.fill", tint: .red) { vm.lastError = nil }
+                }
+                if let notice = vm.notice {
+                    Banner(text: notice, systemImage: "info.circle.fill", tint: .blue) { vm.notice = nil }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: 560)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .padding(12)
         }
     }
 

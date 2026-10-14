@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 import Virtualization
@@ -11,7 +12,8 @@ final class VirtualMacTests {
     let root = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-VM-\(UUID().uuidString)")
 
     deinit {
-        try? FileManager.default.removeItem(at: root)
+        // 有的测试会留下只读的文件夹（0555、0311），普通删除删不掉
+        try? VirtualMac.removeTree(root)
     }
 
     func makeBundle() throws -> VirtualMacBundle {
@@ -53,14 +55,44 @@ final class VirtualMacTests {
         ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).sorted()
     }
 
+    func lstatInfo(_ url: URL) -> stat? {
+        var info = stat()
+        return lstat(url.path, &info) == 0 ? info : nil
+    }
+
+    func mode(_ url: URL) -> mode_t? { lstatInfo(url).map { $0.st_mode & 0o7777 } }
+
+    /// 读隔离标记。属主没有读权限（0111、0311）时读不了扩展属性：临时补上读权限再读
     func quarantine(_ url: URL) -> String? {
+        guard let info = lstatInfo(url) else { return nil }
+        let original = info.st_mode & 0o7777
+        let grant = info.st_mode & S_IFMT != S_IFLNK && original & S_IRUSR == 0
+        if grant { chmod(url.path, original | S_IRUSR) }
+        defer { if grant { chmod(url.path, original) } }
         var buffer = [UInt8](repeating: 0, count: 256)
         let length = getxattr(url.path, OutgoingQuarantine.attribute, &buffer, buffer.count, 0, XATTR_NOFOLLOW)
         return length > 0 ? String(decoding: buffer.prefix(length), as: UTF8.self) : nil
     }
 
-    func isMarkedByMacBox(_ url: URL) -> Bool {
-        quarantine(url)?.split(separator: ";", omittingEmptySubsequences: false).dropFirst(2).first == "MacBox"
+    func setQuarantine(_ url: URL, _ value: String) {
+        #expect(setxattr(url.path, OutgoingQuarantine.attribute, value, value.utf8.count, 0, XATTR_NOFOLLOW) == 0)
+    }
+
+    /// 带着用 key 签的、对得上这个文件的 MacBox 标记
+    func hasValidMark(_ url: URL, key: SymmetricKey) -> Bool {
+        guard let value = quarantine(url), let info = lstatInfo(url) else { return false }
+        return OutgoingQuarantine.isValidMark(value, inode: UInt64(info.st_ino), key: key)
+    }
+
+    /// 用另一个进程执行 shell 命令（$1 = argument）。监视器不理会 MacBox 自己（这里就是测试进程）的改动，
+    /// 客体的写入来自虚拟机进程
+    func runShell(_ script: String, _ argument: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script, "sh", argument]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
     }
 
     // MARK: - 读取配置
@@ -128,6 +160,34 @@ final class VirtualMacTests {
         #expect(try savedConfig(bundle)?.installed == false)
         #expect(exists(bundle.incomingURL) && exists(bundle.outgoingURL))
         #expect(VirtualMac(bundle: bundle).status == .notSetUp)
+    }
+
+    @Test("设置的最后一步写不了 config.json：不在内存里标记为已安装，装好的虚拟硬件删掉；写成了才改成「已关机」")
+    func completeSetupSavesBeforeMarkingInstalled() async throws {
+        let bundle = try makeBundle()
+        let vm = VirtualMac(bundle: bundle)
+        await #expect(throws: (any Error).self) {
+            try await vm.buildMachine {
+                for file in bundle.setupArtifacts { try self.write("installed", to: file) }
+                // 模拟写盘失败：config.json 的位置被一个文件夹占着，原子写入换不过去
+                try FileManager.default.removeItem(at: bundle.configURL)
+                try AppPaths.ensure(bundle.configURL)
+                try vm.completeSetup(osVersion: "macOS 26.0 (25A1)")
+            }
+        }
+        #expect(vm.status == .notSetUp && !vm.config.installed && vm.config.osVersion == nil)
+        for file in bundle.setupArtifacts { #expect(!exists(file), "\(file.lastPathComponent) 应已删除") }
+
+        try FileManager.default.removeItem(at: bundle.configURL)
+        try await vm.buildMachine {
+            try self.write("installed", to: bundle.diskURL)
+            try vm.completeSetup(osVersion: "macOS 26.0 (25A1)")
+        }
+        #expect(vm.status == .stopped && vm.config.installed)
+        #expect(try savedConfig(bundle)?.installed == true)
+        #expect(try savedConfig(bundle)?.osVersion == "macOS 26.0 (25A1)")
+        #expect(exists(bundle.diskURL))
+        #expect(VirtualMac(bundle: bundle).status == .stopped)
     }
 
     @Test("取消设置并等待：回到「未设置」，提示「已取消」而不是「设置失败」")
@@ -416,6 +476,38 @@ final class VirtualMacTests {
         #expect(allItems(bundle.incomingURL) == ["Tool.app"])
     }
 
+    @Test("反复替换含只读文件夹（0555 的 Contents/MacOS）的 .app：每次都成功，不留隐藏的临时项；这样的旧临时项也清得掉")
+    func sendReplacesReadOnlyDirectories() async throws {
+        let bundle = try makeBundle()
+        let vm = VirtualMac(bundle: bundle)
+        let app = root.appending(path: "src/X.app")
+        let macOS = app.appending(path: "Contents/MacOS")
+        let binary = macOS.appending(path: "X")
+        try write("v1", to: binary)
+        #expect(chmod(macOS.path, 0o555) == 0)
+        let copied = bundle.incomingURL.appending(path: "X.app/Contents/MacOS/X")
+
+        await vm.sendToGuest([app])
+        #expect(read(copied) == "v1" && mode(copied.deletingLastPathComponent()) == 0o555)
+        for version in ["v2 longer", "v3 even longer"] {
+            try write(version, to: binary)
+            await vm.sendToGuest([app])
+            #expect(vm.lastError == nil)
+            #expect(vm.notice == VirtualMac.sendNotice(.init(replaced: ["X.app"])))
+            #expect(read(copied) == version)
+            #expect(allItems(bundle.incomingURL) == ["X.app"])
+        }
+
+        // 旧版本删不掉的临时项（里面有只读文件夹）：下次放入时清掉，也不妨碍这次放入
+        let stale = bundle.incomingURL.appending(path: ".X.app\(VirtualMac.partialSuffix)/Contents/MacOS")
+        try write("old", to: stale.appending(path: "X"))
+        #expect(chmod(stale.path, 0o555) == 0)
+        try write("v4", to: binary)
+        await vm.sendToGuest([app])
+        #expect(vm.lastError == nil && read(copied) == "v4")
+        #expect(allItems(bundle.incomingURL) == ["X.app"])
+    }
+
     @Test("放入失败：报告失败的项目，不留下同名项目或临时文件；上次中断留下的临时文件会被清理")
     func sendFailureLeavesNothing() async throws {
         let bundle = try makeBundle()
@@ -456,76 +548,176 @@ final class VirtualMacTests {
     func outgoingQuarantineIsRecursive() throws {
         let outgoing = root.appending(path: "传出", directoryHint: .isDirectory)
         let outside = root.appending(path: "outside", directoryHint: .isDirectory)
+        let key = SymmetricKey(size: .bits256)
         let binary = outgoing.appending(path: "Report.app/Contents/MacOS/Report")
         let plist = outgoing.appending(path: "Report.app/Contents/Info.plist")
         let script = outgoing.appending(path: "run.command")
         let nested = outgoing.appending(path: "folder/sub/.hidden.sh")
         for file in [binary, plist, script, nested] { try write("x", to: file) }
         let secret = outside.appending(path: "secret.txt")
+        let deeper = outside.appending(path: "sub/deeper.txt")
         try write("host file", to: secret)
+        try write("host file", to: deeper)
         try FileManager.default.createSymbolicLink(at: outgoing.appending(path: "link.txt"), withDestinationURL: secret)
         try FileManager.default.createSymbolicLink(at: outgoing.appending(path: "linkdir"), withDestinationURL: outside)
 
-        OutgoingQuarantine.markTree(outgoing, root: outgoing)
+        #expect(OutgoingQuarantine.markTree(outgoing, root: outgoing, key: key).isEmpty)
         for item in [binary, plist, script, nested, outgoing.appending(path: "Report.app"),
                      outgoing.appending(path: "folder/sub")] {
-            #expect(isMarkedByMacBox(item), "\(item.path) 没有隔离标记")
+            #expect(hasValidMark(item, key: key), "\(item.path) 没有隔离标记")
         }
         #expect(quarantine(outgoing) == nil) // 共享目录本身不标
-        #expect(quarantine(secret) == nil && quarantine(outside) == nil)
+        #expect(quarantine(secret) == nil && quarantine(outside) == nil && quarantine(deeper) == nil)
 
-        // 路径中间一级是指向外面的符号链接：按路径标记会标到本机文件上，必须拒绝
-        let rootPath = try #require(OutgoingQuarantine.canonicalPath(of: outgoing))
-        OutgoingQuarantine.mark(outgoing.appending(path: "linkdir/secret.txt").path, rootPath: rootPath)
-        #expect(quarantine(secret) == nil)
+        // 路径中间一级是指向外面的符号链接（FSEvents 报来的、或者客体刚换掉的）：按路径标记会标到本机文件上，必须拒绝
+        OutgoingQuarantine.markTree(outgoing.appending(path: "linkdir/secret.txt"), root: outgoing, key: key)
+        OutgoingQuarantine.markTree(outgoing.appending(path: "linkdir/sub/deeper.txt"), root: outgoing, key: key)
+        OutgoingQuarantine.markTree(outgoing.appending(path: "linkdir/sub"), root: outgoing, key: key)
+        #expect(quarantine(secret) == nil && quarantine(deeper) == nil && quarantine(outside.appending(path: "sub")) == nil)
+
+        // 单独标记里面的一项（监视器就是这样调用的）
+        let later = outgoing.appending(path: "folder/later.command")
+        try write("x", to: later)
+        #expect(OutgoingQuarantine.markTree(later, root: outgoing, key: key).isEmpty)
+        #expect(hasValidMark(later, key: key))
     }
 
-    @Test("客体自带的隔离标记换成 MacBox 的；MacBox 打过的（含用户放行后的）保持不变")
+    @Test("只读、读不了、锁定的项目也标上，并恢复原来的权限和标志：0555 的脚本和 .app 里的可执行文件、0311 的 .app、0111/0200 的文件、uchg")
+    func outgoingQuarantineHandlesPermissions() throws {
+        let outgoing = root.appending(path: "传出", directoryHint: .isDirectory)
+        let key = SymmetricKey(size: .bits256)
+        let normal = outgoing.appending(path: "normal.command")
+        let readOnly = outgoing.appending(path: "readonly.command")
+        let reportMacOS = outgoing.appending(path: "Report.app/Contents/MacOS")
+        let report = reportMacOS.appending(path: "Report")
+        let locked = outgoing.appending(path: "Locked.app")
+        let lockedBinary = locked.appending(path: "Contents/MacOS/Locked")
+        let executeOnly = outgoing.appending(path: "execute-only.command")
+        let writeOnly = outgoing.appending(path: "write-only.bin")
+        let immutable = outgoing.appending(path: "immutable.command")
+        for file in [normal, readOnly, report, lockedBinary, executeOnly, writeOnly, immutable] {
+            try write("#!/bin/sh\necho hi\n", to: file)
+        }
+        let modes: [(URL, mode_t)] = [
+            (normal, 0o755), (readOnly, 0o555), (report, 0o555), (reportMacOS, 0o555), (lockedBinary, 0o755),
+            (locked, 0o311), (executeOnly, 0o111), (writeOnly, 0o200), (immutable, 0o755),
+        ]
+        for (url, mode) in modes { #expect(chmod(url.path, mode) == 0) }
+        #expect(chflags(immutable.path, UInt32(UF_IMMUTABLE)) == 0)
+        defer { chflags(immutable.path, 0) } // 不然删不掉
+
+        #expect(OutgoingQuarantine.markTree(outgoing, root: outgoing, key: key).isEmpty)
+        for (url, mode) in modes {
+            #expect(hasValidMark(url, key: key), "\(url.lastPathComponent) 没有隔离标记")
+            #expect(self.mode(url) == mode, "\(url.lastPathComponent) 的权限没有恢复")
+        }
+        #expect((lstatInfo(immutable)?.st_flags ?? 0) & UInt32(UF_IMMUTABLE) != 0)
+
+        // 再检查一遍：签名对得上的原样保留，权限照样恢复
+        let values = modes.map { quarantine($0.0) }
+        #expect(OutgoingQuarantine.markTree(outgoing, root: outgoing, key: key).isEmpty)
+        #expect(modes.map { quarantine($0.0) } == values)
+        for (url, mode) in modes { #expect(self.mode(url) == mode) }
+    }
+
+    @Test("只认带本机签名的 MacBox 标记：伪造来源的、照抄别的文件的、在 MacBox 标记上加「已批准」的、别的密钥签的都重写；原样的保留")
     func outgoingQuarantineValues() throws {
         let outgoing = root.appending(path: "传出", directoryHint: .isDirectory)
-        let forged = outgoing.appending(path: "forged.command")
+        let key = SymmetricKey(size: .bits256)
+        let genuine = outgoing.appending(path: "genuine.command")
+        let copied = outgoing.appending(path: "copied.command")
         let approved = outgoing.appending(path: "approved.app")
-        try write("x", to: forged)
+        let forged = outgoing.appending(path: "forged.command")
+        let safari = outgoing.appending(path: "safari.command")
+        let otherKey = outgoing.appending(path: "other-key.command")
+        for file in [genuine, copied, forged, safari, otherKey] { try write("x", to: file) }
         try AppPaths.ensure(approved)
-        let forgedValue = "00c1;00000000;Safari;", approvedValue = "00c1;12345678;MacBox;"
-        #expect(setxattr(forged.path, OutgoingQuarantine.attribute, forgedValue, forgedValue.utf8.count, 0, 0) == 0)
-        #expect(setxattr(approved.path, OutgoingQuarantine.attribute, approvedValue, approvedValue.utf8.count, 0, 0) == 0)
+        #expect(OutgoingQuarantine.markTree(outgoing, root: outgoing, key: key).isEmpty)
+        let genuineValue = try #require(quarantine(genuine))
+        let approvedValue = try #require(quarantine(approved))
+        #expect(genuineValue.hasPrefix("0081;") && genuineValue.split(separator: ";")[2] == "MacBox")
 
-        OutgoingQuarantine.markTree(outgoing, root: outgoing)
-        #expect(isMarkedByMacBox(forged) && quarantine(forged)?.hasPrefix("0081;") == true)
-        #expect(quarantine(approved) == approvedValue)
+        // 客体经 virtiofs 改写扩展属性
+        setQuarantine(copied, genuineValue)
+        setQuarantine(approved, "00c1" + approvedValue.dropFirst(4))
+        setQuarantine(forged, "00c1;00000000;MacBox;")
+        setQuarantine(safari, "00c1;00000000;Safari;")
+        let otherInode = UInt64(try #require(lstatInfo(otherKey)).st_ino)
+        setQuarantine(otherKey, OutgoingQuarantine.markValue(inode: otherInode, key: SymmetricKey(size: .bits256)))
+
+        #expect(OutgoingQuarantine.markTree(outgoing, root: outgoing, key: key).isEmpty)
+        #expect(quarantine(genuine) == genuineValue)
+        for item in [copied, approved, forged, safari, otherKey] {
+            #expect(hasValidMark(item, key: key), "\(item.lastPathComponent) 没有改成有效的标记")
+            #expect(quarantine(item)?.hasPrefix("0081;") == true, "\(item.lastPathComponent)：\(quarantine(item) ?? "nil")")
+        }
+        #expect(quarantine(copied) != genuineValue)
     }
 
-    @Test("打开「传出」前先给已有的内容打标记")
+    @Test("打开「传出」前先给已有的内容打标记；签名密钥存在包里（只有属主能读），下次还是同一个")
     func quarantineOutgoingBeforeOpening() async throws {
         let bundle = try makeBundle()
         try bundle.ensureExchangeFolders()
         let tool = bundle.outgoingURL.appending(path: "Tool.app/Contents/MacOS/Tool")
         try write("x", to: tool)
-        await VirtualMac(bundle: bundle).quarantineOutgoing()
-        #expect(isMarkedByMacBox(tool) && isMarkedByMacBox(bundle.outgoingURL.appending(path: "Tool.app")))
+        #expect(await VirtualMac(bundle: bundle).quarantineOutgoing().isEmpty)
+        let key = try bundle.quarantineKey()
+        #expect(hasValidMark(tool, key: key) && hasValidMark(bundle.outgoingURL.appending(path: "Tool.app"), key: key))
+        #expect(mode(bundle.quarantineKeyURL) == 0o600)
+        let again = try bundle.quarantineKey()
+        #expect(key.withUnsafeBytes { Data($0) } == again.withUnsafeBytes { Data($0) })
     }
 
-    @Test("虚拟 Mac 运行期间写进「传出」的新文件随即被标记")
+    @Test("启动时开了监视器就完整检查一遍「传出」：旧版本留下的也带上标记（这里虚拟硬件是占位文件，启动本身会失败）")
+    func startQuarantinesExistingOutgoingItems() async throws {
+        let bundle = try installedBundle()
+        try bundle.ensureExchangeFolders()
+        let left = bundle.outgoingURL.appending(path: "Left.app/Contents/MacOS/Left")
+        try write("x", to: left)
+        let vm = VirtualMac(bundle: bundle)
+        await vm.start()
+        #expect(vm.status == .stopped && vm.virtualMachine == nil && vm.lastError != nil)
+        let key = try bundle.quarantineKey()
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline, !hasValidMark(left, key: key) { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(hasValidMark(left, key: key))
+        #expect(hasValidMark(bundle.outgoingURL.appending(path: "Left.app"), key: key))
+    }
+
+    @Test("标不上的项目会告诉用户是哪些")
+    func quarantineFailureMessage() {
+        let one = VirtualMac.quarantineFailureMessage(["a.command"])
+        let many = VirtualMac.quarantineFailureMessage(["a", "b", "c", "d"])
+        #expect(one.contains("a.command"))
+        #expect(many.contains("4") && many.contains("c") && !many.contains("d"))
+    }
+
+    @Test("虚拟 Mac 运行期间别的进程写进「传出」的新文件随即被标记，0555 的也一样，并保持原来的权限")
     func outgoingWatcherMarksNewItems() async throws {
         let outgoing = root.appending(path: "传出", directoryHint: .isDirectory)
         try AppPaths.ensure(outgoing)
+        let key = SymmetricKey(size: .bits256)
         let watcher = OutgoingQuarantine.Watcher()
-        watcher.start(outgoing)
+        watcher.start(outgoing, key: key)
         defer { watcher.stop() }
         #expect(watcher.isRunning)
         try await Task.sleep(for: .milliseconds(300))
 
         let file = outgoing.appending(path: "new.command")
         let inner = outgoing.appending(path: "Dropped.app/Contents/MacOS/Dropped")
-        try write("x", to: file)
-        try write("x", to: inner)
+        let readOnly = outgoing.appending(path: "readonly.command")
+        try runShell("""
+            mkdir -p "$1/Dropped.app/Contents/MacOS" && printf x > "$1/new.command" \
+              && printf x > "$1/Dropped.app/Contents/MacOS/Dropped" \
+              && printf x > "$1/readonly.command" && chmod 555 "$1/readonly.command"
+            """, outgoing.path)
+        let items = [file, inner, readOnly]
         let deadline = Date().addingTimeInterval(10)
-        while Date() < deadline, !(isMarkedByMacBox(file) && isMarkedByMacBox(inner)) {
+        while Date() < deadline, !items.allSatisfy({ hasValidMark($0, key: key) }) {
             try await Task.sleep(for: .milliseconds(50))
         }
-        #expect(isMarkedByMacBox(file))
-        #expect(isMarkedByMacBox(inner))
+        for item in items { #expect(hasValidMark(item, key: key), "\(item.lastPathComponent) 没有隔离标记") }
+        #expect(mode(readOnly) == 0o555)
         watcher.stop()
         #expect(!watcher.isRunning)
     }

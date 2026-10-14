@@ -236,8 +236,9 @@ struct VirtualMacPage: View {
         } header: {
             Text(L("文件交换", "File Exchange"))
         } footer: {
-            Text(L("在虚拟 Mac 里，这两个文件夹位于 访达 › 位置 › My Shared Files。「传出」里的文件来自虚拟 Mac，会像下载的文件一样加上隔离标记，第一次打开时由 macOS 检查。",
-                   "In the Virtual Mac, these folders appear as “传入” and “传出” under Finder › Locations › My Shared Files. Files in “传出” come from the Virtual Mac, so they’re quarantined like downloads and checked by macOS the first time they’re opened."))
+            // 放行不会在「传出」里保留：系统放行只是改隔离标记的标志位，和客体伪造分不出来，见 OutgoingQuarantine.isValidMark
+            Text(L("在虚拟 Mac 里，这两个文件夹位于 访达 › 位置 › My Shared Files。「传出」里的文件来自虚拟 Mac，会像下载的文件一样加上隔离标记，打开时由 macOS 检查。在「传出」里放行过的应用之后还会再被检查，要长期使用请先把它移出来。",
+                   "In the Virtual Mac, these folders appear as “传入” and “传出” under Finder › Locations › My Shared Files. Files in “传出” come from the Virtual Mac, so they’re quarantined like downloads and checked by macOS when they’re opened. An app you allow to open from “传出” will be checked again later, so move it out of “传出” before using it regularly."))
         }
     }
 

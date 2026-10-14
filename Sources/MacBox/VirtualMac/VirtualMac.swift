@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Observation
 import Virtualization
@@ -60,6 +61,8 @@ final class VirtualMac: NSObject {
     /// 最后一批排队的「放入」，见 sendToGuest(_:)
     @ObservationIgnored private var sendTask: Task<Void, Never>?
     @ObservationIgnored private let outgoingWatcher = OutgoingQuarantine.Watcher()
+    /// QuarantineKey 读不出来、也存不下时用的一次性密钥：只是下次启动 MacBox 时会把标记重写一遍
+    @ObservationIgnored private let fallbackQuarantineKey = SymmetricKey(size: .bits256)
 
     /// 只读取 config.json，不写任何东西。测试可以传入临时目录里的 bundle
     init(bundle: VirtualMacBundle) {
@@ -196,11 +199,9 @@ final class VirtualMac: NSObject {
                 installPhase = L("正在安装 macOS \(version)…", "Installing macOS \(version)…")
                 // 检查取消和开始安装之间不能有 await：安装开始前就取消它的进度，框架会抛出异常
                 try await install(installer)
+                // 放在 buildMachine 里：最后这次写盘失败也算设置失败，装好的虚拟硬件随之删掉。之后不能再有会抛错的步骤
+                try completeSetup(osVersion: "macOS \(version) (\(image.buildVersion))")
             }
-
-            config.osVersion = "macOS \(version) (\(image.buildVersion))"
-            config.installed = true
-            status = .stopped
             notice = Self.setupCompleteNotice(imageIsCached: source == .latest || Self.isCachedImage(ipsw))
         } catch {
             status = .notSetUp
@@ -224,6 +225,20 @@ final class VirtualMac: NSObject {
             bundle.removeSetupArtifacts()
             throw error
         }
+    }
+
+    /// 设置的最后一步：先把 installed = true 的配置写盘，写成了才在内存里改成「已关机」。
+    /// 反过来的话写盘失败（装完 30 GB 后磁盘满了很常见）只会在界面上报个错，这次看着已经装好，
+    /// 重开 MacBox 却读成「未设置」，用户再点「开始设置」就会把可能已经用过的虚拟硬盘覆盖掉
+    func completeSetup(osVersion: String) throws {
+        var done = config
+        done.osVersion = osVersion
+        done.installed = true
+        try bundle.save(done)
+        persistsConfig = false
+        config = done
+        persistsConfig = true
+        status = .stopped
     }
 
     /// 运行安装器并跟踪进度；任务取消时取消安装。进度更新全部在返回前处理完
@@ -320,7 +335,10 @@ final class VirtualMac: NSObject {
         status = .starting
         do {
             try bundle.ensureExchangeFolders()
-            outgoingWatcher.start(bundle.outgoingURL)
+            outgoingWatcher.start(bundle.outgoingURL, key: quarantineKey())
+            // 监视器先开、再完整检查一遍，中间不会漏：旧版本留下的、上次退出或崩溃前监视器没来得及处理的都补上标记。
+            // 用户不一定经由 MacBox 的按钮打开「传出」（访达侧边栏、最近使用、早就开着的窗口）
+            Task { await quarantineOutgoing() }
             if isAsleep, try await wakeFromSavedState() { return }
             let vm = try makeVirtualMachine()
             virtualMachine = vm
@@ -624,10 +642,10 @@ final class VirtualMac: NSObject {
     nonisolated static func copyIntoIncoming(_ urls: [URL], incoming: URL) -> SendResult {
         let fm = FileManager.default
         var result = SendResult()
-        // 调用是串行的，开始时还在的临时项都是上次被打断（退出、崩溃）留下的
+        // 调用是串行的，开始时还在的临时项都是上次被打断（退出、崩溃）留下的。删不掉也不要紧：临时项每次都用新名字
         for item in (try? fm.contentsOfDirectory(at: incoming, includingPropertiesForKeys: nil)) ?? []
         where item.lastPathComponent.hasSuffix(partialSuffix) {
-            try? fm.removeItem(at: item)
+            try? removeTree(item)
         }
         for url in urls {
             let name = url.lastPathComponent
@@ -638,18 +656,18 @@ final class VirtualMac: NSObject {
                     result.unchanged.append(name)
                     continue
                 }
-                let temp = incoming.appending(path: ".\(name)\(partialSuffix)")
-                try FileOps.removeIfExists(temp)
+                // 名字里不带原名：原名接近 255 字节的上限时再加后缀会超长
+                let temp = incoming.appending(path: ".\(UUID().uuidString)\(partialSuffix)")
                 do {
                     try FileOps.clone(url, to: temp)
                     if exists {
                         try swapItems(temp, destination)
-                        try? FileOps.removeIfExists(temp) // 交换之后这里是旧的那份
+                        try? removeTree(temp) // 交换之后这里是旧的那份
                     } else {
                         try fm.moveItem(at: temp, to: destination)
                     }
                 } catch {
-                    try? FileOps.removeIfExists(temp)
+                    try? removeTree(temp)
                     throw error
                 }
                 if exists { result.replaced.append(name) } else { result.added.append(name) }
@@ -664,8 +682,30 @@ final class VirtualMac: NSObject {
     /// 原子交换两个位置上的项目（APFS 支持）；不支持时退化为先删后移
     nonisolated private static func swapItems(_ new: URL, _ old: URL) throws {
         if renamex_np(new.path, old.path, UInt32(RENAME_SWAP)) == 0 { return }
-        try FileManager.default.removeItem(at: old)
+        try removeTree(old)
         try FileManager.default.moveItem(at: new, to: old)
+    }
+
+    /// 删除「传入」里的一项。普通删除遇到只读的文件夹（例如 .app 里 0555 的 Contents/MacOS）会删到一半失败，
+    /// 留下删不掉、用户在访达里又看不见的隐藏项：这时先把里面的文件夹逐个加上属主的读写执行权限，再删一次。
+    /// 「传入」对虚拟 Mac 只读，没有别人会在中途改动它
+    nonisolated static func removeTree(_ url: URL) throws {
+        do {
+            try FileOps.removeIfExists(url)
+        } catch {
+            makeDirectoriesWritable(url)
+            try FileOps.removeIfExists(url)
+        }
+    }
+
+    /// 不跟随符号链接：先 lstat 确认是真的文件夹，再改它、进去
+    nonisolated private static func makeDirectoriesWritable(_ url: URL) {
+        var info = stat()
+        guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return }
+        if info.st_mode & S_IRWXU != S_IRWXU { chmod(url.path, (info.st_mode & 0o7777) | S_IRWXU) }
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: url.path)) ?? [] {
+            makeDirectoriesWritable(url.appending(path: name))
+        }
     }
 
     /// 粗略判断两个项目内容是否相同：结构一致，每个文件的大小和修改时间（精确到秒）一致。
@@ -722,10 +762,27 @@ final class VirtualMac: NSObject {
     static func chineseList(_ names: [String]) -> String { names.map { "「\($0)」" }.joined(separator: "、") }
     static func englishList(_ names: [String]) -> String { names.map { "“\($0)”" }.joined(separator: ", ") }
 
-    /// 给「传出」里现有的全部内容打上隔离标记（后台线程）
-    func quarantineOutgoing() async {
+    /// 给「传出」里现有的全部内容打上隔离标记（后台线程）。有标不上的项目时提醒用户，并返回它们（相对「传出」的路径）
+    @discardableResult
+    func quarantineOutgoing() async -> [String] {
         let outgoing = bundle.outgoingURL
-        await Background.run { OutgoingQuarantine.markTree(outgoing, root: outgoing) }
+        let key = quarantineKey()
+        let failed = await Background.run { OutgoingQuarantine.markTree(outgoing, root: outgoing, key: key) }
+        if !failed.isEmpty { lastError = Self.quarantineFailureMessage(failed) }
+        return failed
+    }
+
+    static func quarantineFailureMessage(_ failed: [String]) -> String {
+        let shown = Array(failed.prefix(3))
+        let more = failed.count > shown.count
+        return L("「传出」里有 \(failed.count) 项无法加上隔离标记：\(chineseList(shown))\(more ? "等" : "")。打开之前请确认它们可信。",
+                 failed.count == 1
+                     ? "An item in “传出” (Outgoing) couldn’t be quarantined: \(englishList(shown)). Make sure you trust it before opening it."
+                     : "\(failed.count) items in “传出” (Outgoing) couldn’t be quarantined: \(englishList(shown))\(more ? ", and others" : ""). Make sure you trust them before opening them.")
+    }
+
+    private func quarantineKey() -> SymmetricKey {
+        (try? bundle.quarantineKey()) ?? fallbackQuarantineKey
     }
 
     /// 打开「传出」文件夹：先把里面的东西全部打上隔离标记，再交给访达。
