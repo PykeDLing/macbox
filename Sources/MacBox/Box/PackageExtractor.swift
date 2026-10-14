@@ -10,6 +10,20 @@ nonisolated enum PackageExtractor {
 
     static let supportedExtensions: Set<String> = ["dmg", "app", "pkg", "mpkg", "zip"]
 
+    /// 只看扩展名，不读文件：导入前先检查，不支持的东西不必先复制进盒子
+    static func checkSupported(_ package: URL) throws {
+        guard supportedExtensions.contains(package.pathExtension.lowercased()) else { throw unsupported(package) }
+    }
+
+    private static func unsupported(_ package: URL) -> MacBoxError {
+        let ext = package.pathExtension
+        return MacBoxError(ext.isEmpty
+            ? L("不支持这种文件。请拖入 .dmg、.app、.pkg 或 .zip。",
+                "This kind of file isn’t supported. Drag in a .dmg, .app, .pkg or .zip file.")
+            : L("不支持的文件类型：.\(ext)。请拖入 .dmg、.app、.pkg 或 .zip。",
+                "Unsupported file type: .\(ext). Drag in a .dmg, .app, .pkg or .zip file."))
+    }
+
     /// 复制、展开都很耗时，整个过程在后台执行
     @concurrent
     static func extractApp(from package: URL, into destination: URL) async throws -> Extracted {
@@ -24,8 +38,7 @@ nonisolated enum PackageExtractor {
         case "zip":
             return try await fromZip(package, into: destination)
         default:
-            throw MacBoxError(L("不支持的文件类型：.\(package.pathExtension)。请拖入 .dmg、.app、.pkg 或 .zip。",
-                                 "Unsupported file type: .\(package.pathExtension). Drag in a .dmg, .app, .pkg or .zip file."))
+            throw unsupported(package)
         }
     }
 

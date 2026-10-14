@@ -52,7 +52,8 @@ final class IsolatedSession {
         defer { await returnPreferences(lease) }
 
         // 先订阅拦截记录、等日志流就绪，再启动 App：很多 App 一启动就注册自启动、写系统目录
-        let events = await ViolationMonitor.events(boxPrefix: FileOps.realPath(paths.url), processNames: plan.processNames)
+        let events = await ViolationMonitor.events(boxPrefix: FileOps.realPath(paths.url), processNames: plan.processNames,
+                                                  installer: config.isInstaller)
         let monitor = Task {
             for await event in events { onBlock(event) }
         }
@@ -147,7 +148,9 @@ final class IsolatedSession {
         environment["HOME"] = home
         environment["CFFIXED_USER_HOME"] = home
         environment["TMPDIR"] = paths.tmp.path + "/"
-        environment.removeValue(forKey: "__CFBundleIdentifier")
+        // MacBox 自己的启动信息不传下去：XPC_SERVICE_NAME 是 launchd 给 MacBox 的服务名，
+        // 盒子里的 App 带着它会被当成 MacBox 的一部分；MACBOX_DATA_ROOT 只给 MacBox 自己用
+        for key in ["__CFBundleIdentifier", "XPC_SERVICE_NAME", "MACBOX_DATA_ROOT"] { environment.removeValue(forKey: key) }
         return environment
     }
 

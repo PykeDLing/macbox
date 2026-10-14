@@ -108,6 +108,8 @@ nonisolated struct BoxPaths: Hashable, Sendable {
     var sourceDirectory: URL { url.appending(path: "Source", directoryHint: .isDirectory) }
     var home: URL { url.appending(path: "Home", directoryHint: .isDirectory) }
     var prefs: URL { url.appending(path: "Prefs", directoryHint: .isDirectory) }
+    /// 偏好设置借出的日志和本机设置的备份（见 PreferenceLease）：借出期间放在 Prefs 里，收回后删除
+    var leaseJournal: URL { url.appending(path: "Prefs/.lease.json") }
     var nativePrefsBackup: URL { url.appending(path: "Prefs/.native", directoryHint: .isDirectory) }
     var restorePoint: URL { url.appending(path: "RestorePoint", directoryHint: .isDirectory) }
     var tmp: URL { url.appending(path: "tmp", directoryHint: .isDirectory) }
@@ -122,8 +124,8 @@ nonisolated struct BoxPaths: Hashable, Sendable {
     func app(_ config: BoxConfig) -> URL { appDirectory.appending(path: config.appFolderName) }
     func source(_ config: BoxConfig) -> URL? { config.sourceName.map { sourceDirectory.appending(path: $0) } }
 
-    /// 还原点包含的内容
-    var restorableItems: [String] { ["Home", "Prefs"] }
+    /// 还原点包含的内容。钥匙串在 Home 里，它的密码必须一起保存、一起还原，否则还原后钥匙串打不开
+    var restorableItems: [String] { ["Home", "Prefs", keychainPassword.lastPathComponent] }
 
     static func new(id: UUID) -> BoxPaths {
         BoxPaths(url: AppPaths.boxes.appending(path: "\(id.uuidString).box", directoryHint: .isDirectory))

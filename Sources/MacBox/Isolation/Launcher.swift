@@ -27,11 +27,24 @@ actor Launcher {
         }
     }
 
+    /// 应用名称（可以在详情里随意改）转成能直接作为文件名的样子：
+    /// - “/”在访达里显示的名字对应文件系统里的“:”，换过去显示出来仍是原名；否则会建出一层子文件夹
+    /// - 去掉开头的“.”，否则成了隐藏文件。两种情况 all() 都找不到它，启动器会越积越多
+    /// - 留出“ 99.app”的位置，不超过文件名长度上限（255 字节），不截断半个字
+    nonisolated static func fileName(for name: String) -> String {
+        var result = name.replacingOccurrences(of: "/", with: ":")
+        while result.hasPrefix(".") { result.removeFirst() }
+        result = result.trimmingCharacters(in: .whitespaces)
+        while result.utf8.count > 200 { result.removeLast() }
+        return result.isEmpty ? "App" : result
+    }
+
     /// 同名应用装了多份（比如两个网盘账号）时，启动器依次叫「夸克网盘」「夸克网盘 2」
     private func freeURL(for config: BoxConfig) -> URL {
+        let base = Self.fileName(for: config.name)
         var index = 1
         while true {
-            let name = index == 1 ? config.name : "\(config.name) \(index)"
+            let name = index == 1 ? base : "\(base) \(index)"
             let candidate = AppPaths.launchers.appending(path: "\(name).app", directoryHint: .isDirectory)
             if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
             index += 1

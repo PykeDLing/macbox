@@ -42,14 +42,29 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Sendable {
 nonisolated enum ViolationMonitor {
     /// 本盒子进程的拦截记录；停止迭代（任务取消）时退订。
     /// 返回前等日志流真正开始输出（最多 3 秒），App 启动时的拦截不会因为日志进程还没就绪而漏掉
-    static func events(boxPrefix: String, processNames: Set<String>) async -> AsyncStream<BlockEvent> {
+    /// - installer：盒子里是在线安装器（它的规则禁止挂载磁盘映像，见 SandboxProfile）
+    static func events(boxPrefix: String, processNames: Set<String>, installer: Bool = false) async -> AsyncStream<BlockEvent> {
         let (stream, continuation) = AsyncStream.makeStream(of: BlockEvent.self)
-        let parser = Parser(boxPrefix: boxPrefix, processNames: processNames, home: FileOps.realPath(AppPaths.realHome))
+        let parser = Parser(boxPrefix: boxPrefix, processNames: processNames, installer: installer,
+                            home: FileOps.realPath(AppPaths.realHome))
         let id = UUID()
         continuation.onTermination = { _ in Task { await hub.unsubscribe(id) } }
         await hub.subscribe(id, parser: parser, continuation: continuation)
         await hub.waitUntilStreaming(timeout: .seconds(3))
         return stream
+    }
+
+    /// 日志里的进程名是否就是这个可执行文件。内核只记进程名的前 32 个字节
+    /// （"Some Long App Name Helper (Renderer)" 记成 "Some Long App Name Helper (Rende"），
+    /// 截断处可能落在一个汉字中间，所以比较 UTF-8 字节、允许末尾少 3 个字节。
+    /// 不用前缀匹配：短名字（比如 "main"）会把其他程序的拦截记录算到盒子头上
+    static func loggedName(_ logged: String, matches executable: String) -> Bool {
+        if logged == executable { return true }
+        var cut = Substring(logged)
+        while cut.hasSuffix("\u{FFFD}") { cut.removeLast() } // 被截断的半个字
+        let limit = 32
+        return executable.utf8.count > limit && (limit - 3...limit).contains(cut.utf8.count)
+            && executable.utf8.starts(with: cut.utf8)
     }
 
     private static let hub = Hub()
@@ -145,6 +160,7 @@ nonisolated enum ViolationMonitor {
     private struct Parser: Sendable {
         let boxPrefix: String
         let processNames: Set<String>
+        let installer: Bool
         let home: String
 
         /// 一行日志解析出的拒绝记录
@@ -166,9 +182,12 @@ nonisolated enum ViolationMonitor {
 
         func event(from message: Message) -> BlockEvent? {
             let name = message.process, target = message.target
-            // 安装器调用 hdiutil 挂载被挡（实际由它拉起的 diskimages-helper 报告）：只有盒子的规则会拒绝 DiskArbitration
-            let mountByHelper = (name == "hdiutil" || name.hasPrefix("diskimages")) && target.contains("DiskArbitration")
-            let belongs = processNames.contains { name.hasPrefix($0) }
+            // 安装器调用 hdiutil 挂载被挡（实际由它拉起的 diskimages-helper 报告，进程不在盒子里）。
+            // 只算到安装器头上：其他沙盒里的 hdiutil 也可能被拒绝，算给每个盒子的话，普通应用会冒出
+            // “挂载磁盘映像”，正在运行的安装器还会被误判为下载完成、被提前结束
+            let mountByHelper = installer && (name == "hdiutil" || name.hasPrefix("diskimages"))
+                && target.contains("DiskArbitration")
+            let belongs = processNames.contains { ViolationMonitor.loggedName(name, matches: $0) }
                 || ProcessTable.path(of: message.pid)?.hasPrefix(boxPrefix) == true || mountByHelper
             guard belongs else { return nil }
             return categorize(operation: message.operation, target: target)

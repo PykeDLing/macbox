@@ -11,22 +11,38 @@ nonisolated enum BoxKeychain {
     @concurrent
     static func prepare(_ box: BoxPaths) async throws {
         try AppPaths.ensure(box.keychains)
-        if !FileManager.default.fileExists(atPath: box.boxKeychain.path) {
+        if !(await unlock(box)) {
+            // 钥匙串不存在，或者和密码对不上（比如旧版的还原点只还原了钥匙串、没有还原密码）：
+            // 换一个新的，否则应用再也打不开。旧的改名留在原处，不直接删除
+            if FileManager.default.fileExists(atPath: box.boxKeychain.path) {
+                try FileManager.default.moveItem(at: box.boxKeychain,
+                                                 to: FileOps.uniqueURL(in: box.keychains, name: "box-unusable.keychain-db"))
+            }
             try await create(box)
+            guard await unlock(box) else {
+                throw MacBoxError(L("无法解锁盒子的钥匙串", "Couldn’t unlock the box’s keychain"))
+            }
         }
         if !FileOps.isSymlink(box.loginKeychainLink) {
             try FileOps.removeIfExists(box.loginKeychainLink)
             try FileManager.default.createSymbolicLink(atPath: box.loginKeychainLink.path,
                                                        withDestinationPath: box.boxKeychain.lastPathComponent)
         }
-        let password = try String(contentsOf: box.keychainPassword, encoding: .utf8)
-        try await Shell.run(security, ["unlock-keychain", "-p", password, box.boxKeychain.path])
+    }
+
+    /// 用保存的密码解锁；钥匙串或密码不存在、密码不对时返回 false
+    private static func unlock(_ box: BoxPaths) async -> Bool {
+        guard FileManager.default.fileExists(atPath: box.boxKeychain.path),
+              let password = try? String(contentsOf: box.keychainPassword, encoding: .utf8) else { return false }
+        return (try? await Shell.run(security, ["unlock-keychain", "-p", password, box.boxKeychain.path])) != nil
     }
 
     private static func create(_ box: BoxPaths) async throws {
         let password = UUID().uuidString + UUID().uuidString
-        FileManager.default.createFile(atPath: box.keychainPassword.path, contents: Data(password.utf8),
-                                       attributes: [.posixPermissions: 0o600])
+        guard FileManager.default.createFile(atPath: box.keychainPassword.path, contents: Data(password.utf8),
+                                             attributes: [.posixPermissions: 0o600]) else {
+            throw MacBoxError(L("无法保存钥匙串密码", "Couldn’t save the keychain password"))
+        }
         // create-keychain 会把新钥匙串加进你的搜索列表，创建后立即恢复原列表
         let searchList = try await currentSearchList()
         let restore = ["list-keychains", "-d", "user", "-s"] + searchList

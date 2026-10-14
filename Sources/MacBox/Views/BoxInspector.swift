@@ -9,6 +9,7 @@ struct BoxInspector: View {
     @Environment(BoxStore.self) private var store
     @Environment(VirtualMac.self) private var virtualMac
     @State private var confirmRestore = false
+    @State private var confirmDeleteRestorePoint = false
     @State private var confirmClear = false
     @State private var showAllBlocks = false
     @State private var nameDraft = ""
@@ -50,6 +51,20 @@ struct BoxInspector: View {
         } message: {
             Text(L("还原点之后的登录状态、设置和缓存都会丢弃。",
                    "Sign-ins, settings and caches since the restore point will be discarded."))
+        }
+        .confirmationDialog(L("删除还原点？", "Delete Restore Point?"), isPresented: $confirmDeleteRestorePoint) {
+            Button(L("删除", "Delete"), role: .destructive) {
+                perform {
+                    try await box.deleteRestorePoint()
+                    box.notice = L("还原点已删除。", "Restore point deleted.")
+                }
+            }
+            Button(L("取消", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(box.config.resetOnQuit
+                 ? L("删除后无法再回到这个状态，「每次退出后自动还原」也会关闭。",
+                     "You won’t be able to return to this state, and “Restore Automatically After Quitting” will be turned off.")
+                 : L("删除后无法再回到这个状态。", "You won’t be able to return to this state."))
         }
         .confirmationDialog(L("清除「\(box.config.name)」的数据？", "Clear Data for “\(box.config.name)”?"),
                             isPresented: $confirmClear) {
@@ -242,7 +257,19 @@ struct BoxInspector: View {
     private var restoreSection: some View {
         Section(L("还原点", "Restore Point")) {
             if let date = box.restorePointDate {
-                LabeledContent(L("创建于", "Created"), value: date.formatted(date: .abbreviated, time: .shortened))
+                LabeledContent(L("创建于", "Created")) {
+                    HStack(spacing: 6) {
+                        Text(date.formatted(date: .abbreviated, time: .shortened))
+                        // 放在这一行而不是下面的按钮行：英文的按钮名较长，三个按钮并排放不下
+                        Button(role: .destructive) { confirmDeleteRestorePoint = true } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .help(L("删除还原点…", "Delete Restore Point…"))
+                        .accessibilityLabel(L("删除还原点", "Delete Restore Point"))
+                        .disabled(box.isRunning || box.isBusy)
+                    }
+                }
             } else {
                 Text(L("创建一个还原点，之后可以随时回到这个状态（比如刚登录好的时候）。",
                         "Create a restore point to return to this state at any time (for example, right after signing in)."))

@@ -92,11 +92,42 @@ final class Box: Identifiable {
             return
         }
         guard activity == .idle else { return }
+        if let conflict = preferenceConflict() {
+            lastError = conflict
+            store?.reveal(self)
+            return
+        }
         activity = .launching
         blocks.removeAll()
         handingOver = false
         quitRequested = false
         Task { await runIsolated() }
+    }
+
+    /// 和正在运行的其他程序共用偏好设置时不能打开（见 PreferenceLease.overlaps）：另一个盒子里的同一应用，
+    /// 或者本机直接安装的同一应用——它会读到盒子的登录状态，它写的设置也会被收进盒子。
+    /// 自带苹果沙盒的本机 App 用的是自己容器里的设置，不冲突
+    private func preferenceConflict() -> String? {
+        let prefixes = config.preferencePrefixes
+        if let other = store?.boxes.first(where: {
+            $0 !== self && $0.isLive && PreferenceLease.overlaps($0.config.preferencePrefixes, prefixes)
+        }) {
+            let name = other.config.name
+            return L("「\(name)」正在运行，它和这个应用使用同一组偏好设置，不能同时打开。请先退出「\(name)」。",
+                     "“\(name)” is running and shares preferences with this app, so they can’t be open at the same time. Quit “\(name)” first.")
+        }
+        let boxes = FileOps.realPath(AppPaths.boxes) + "/"
+        let native = NSWorkspace.shared.runningApplications.first { app in
+            guard let id = app.bundleIdentifier, PreferenceLease.domain(id, isCoveredBy: prefixes) else { return false }
+            let inBox = app.bundleURL.map { FileOps.realPath($0).hasPrefix(boxes) } ?? false
+            return !inBox && !ProcessTable.isSandboxed(app.processIdentifier)
+        }
+        if let native {
+            let name = native.localizedName ?? native.bundleIdentifier ?? ""
+            return L("这台 Mac 上直接安装的「\(name)」正在运行，它和盒子里的应用使用同一组偏好设置。请先退出它（没有窗口的后台程序可以在「活动监视器」里退出），再打开盒子里的应用。",
+                     "“\(name)”, installed directly on this Mac, is running and shares preferences with the app in the box. Quit it first (background processes without a window can be quit in Activity Monitor), then open the app in the box.")
+        }
+        return nil
     }
 
     /// 一次完整的运行：启动 → 运行 → 收尾。状态只在这里推进
@@ -113,6 +144,7 @@ final class Box: Identifiable {
         } catch {
             activity = .idle
             lastError = L("启动失败：\(error.localizedDescription)", "Couldn’t open the app: \(error.localizedDescription)")
+            store?.reveal(self) // 从聚焦打开时主窗口可能关着，失败了要让人看到
             return
         }
         activity = .finishing
@@ -200,7 +232,7 @@ final class Box: Identifiable {
             }
 
             var updated = config
-            updated.name = info.name
+            updated.name = store?.uniqueName(info.name, excluding: self) ?? info.name
             updated.bundleIdentifier = info.bundleIdentifier
             updated.version = info.version
             updated.appFolderName = extracted.app.lastPathComponent
@@ -212,7 +244,7 @@ final class Box: Identifiable {
             icon = NSWorkspace.shared.icon(forFile: appURL.path)
             // 安装器尝试写入「应用程序」被拦截是预期内的，安装已由 MacBox 完成
             blocks.removeAll { [.systemInstall, .escapedLaunch, .diskMount].contains($0.kind) }
-            notice = L("「\(info.name)」已安装到 MacBox。", "“\(info.name)” was installed in MacBox.")
+            notice = L("「\(config.name)」已安装到 MacBox。", "“\(config.name)” was installed in MacBox.")
             activity = .idle
             await open()
         } catch {
@@ -226,6 +258,7 @@ final class Box: Identifiable {
     func createRestorePoint() async throws {
         try beginMaintenance()
         defer { activity = .idle }
+        try await settlePreferences() // 借出的日志和本机设置的备份不能进还原点
         let paths = paths
         try await Background.run {
             let temp = paths.url.appending(path: "RestorePoint.tmp", directoryHint: .isDirectory)
@@ -251,6 +284,8 @@ final class Box: Identifiable {
     }
 
     func deleteRestorePoint() async throws {
+        try beginMaintenance()
+        defer { activity = .idle }
         let restorePoint = paths.restorePoint
         try await Background.run { try FileOps.removeIfExists(restorePoint) }
         config.resetOnQuit = false
@@ -261,6 +296,7 @@ final class Box: Identifiable {
     func clearData() async throws {
         try beginMaintenance()
         defer { activity = .idle }
+        try await settlePreferences()
         let paths = paths
         try await Background.run {
             try FileOps.removeIfExists(paths.home)
@@ -287,17 +323,32 @@ final class Box: Identifiable {
 
     /// 用还原点替换当前数据（调用方负责确认应用未在运行）
     private func rollBack() async throws {
+        try await settlePreferences()
         let paths = paths
         try await Background.run {
+            let password = paths.keychainPassword.lastPathComponent
             for item in paths.restorableItems {
                 let target = paths.url.appending(path: item)
-                try FileOps.removeIfExists(target)
                 let source = paths.restorePoint.appending(path: item)
-                if FileManager.default.fileExists(atPath: source.path) {
-                    try FileOps.clone(source, to: target)
-                }
+                let saved = FileManager.default.fileExists(atPath: source.path)
+                // 旧版的还原点没有保存钥匙串密码：保留现有的（和钥匙串对不上时 BoxKeychain 会换一个新钥匙串）
+                if !saved && item == password { continue }
+                try FileOps.removeIfExists(target)
+                if saved { try FileOps.clone(source, to: target) }
             }
+            // 旧版可能在借出没收回时创建过还原点：那时的日志和本机设置备份已经过时，不能跟着还原回来
+            try FileOps.removeIfExists(paths.leaseJournal)
+            try FileOps.removeIfExists(paths.nativePrefsBackup)
         }
+    }
+
+    /// 上次异常结束时没收回的偏好设置，先收回再动 Prefs：还原、清除数据都会整个替换 Prefs，
+    /// 借出的日志和本机设置的备份也在里面，跟着删掉的话本机原来的设置就再也恢复不了。
+    /// 先等启动时的收尾完成，免得和它同时收回
+    private func settlePreferences() async throws {
+        await store?.ready()
+        let lease = PreferenceLease(box: paths, prefixes: config.preferencePrefixes)
+        if lease.isOutstanding { try await lease.checkOut() }
     }
 
     private func refreshRestorePoint() {

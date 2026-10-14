@@ -21,7 +21,10 @@ extension FocusedValues {
 
 extension UTType {
     /// 可以放进 MacBox 的安装包
-    static let installers: [UTType] = ["dmg", "app", "pkg", "mpkg", "zip"].compactMap { UTType(filenameExtension: $0) }
+    /// 和 Info.plist 的 LSItemContentTypes 一致。.app 不能按扩展名查：查到的是 com.apple.application-file
+    /// （单个文件的 App），App 包是 application-bundle，文件选择框里会是灰的、选不了
+    static let installers: [UTType] = [.applicationBundle, .zip]
+        + ["dmg", "pkg", "mpkg"].compactMap { UTType(filenameExtension: $0) }
 }
 
 extension View {

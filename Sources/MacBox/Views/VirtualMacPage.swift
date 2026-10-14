@@ -12,6 +12,7 @@ struct VirtualMacPage: View {
     @State private var confirmDeleteCache = false
     @State private var confirmRemove = false
     @State private var confirmRestore = false
+    @State private var confirmDeleteRestorePoint = false
 
     var body: some View {
         Form {
@@ -66,6 +67,12 @@ struct VirtualMacPage: View {
         } message: {
             Text(L("虚拟 Mac 里安装的应用和文件会一起移到废纸篓。",
                    "Apps and files installed in the Virtual Mac will be moved to the Trash along with it."))
+        }
+        .confirmationDialog(L("删除虚拟 Mac 的还原点？", "Delete the Virtual Mac’s Restore Point?"), isPresented: $confirmDeleteRestorePoint) {
+            Button(L("删除", "Delete"), role: .destructive) { perform { try vm.deleteRestorePoint() } }
+            Button(L("取消", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(L("删除后无法再回到这个状态。", "You won’t be able to return to this state."))
         }
         .confirmationDialog(L("还原到还原点？", "Restore the Virtual Mac to the Restore Point?"), isPresented: $confirmRestore) {
             Button(L("还原", "Restore"), role: .destructive) { perform { try vm.restoreRestorePoint() } }
@@ -218,7 +225,8 @@ struct VirtualMacPage: View {
                 }
                 Button(L("还原…", "Restore…")) { confirmRestore = true }.disabled(vm.restorePointDate == nil)
                 if vm.restorePointDate != nil {
-                    Button(L("删除还原点", "Delete Restore Point")) { perform { try vm.deleteRestorePoint() } }
+                    Spacer()
+                    Button(L("删除…", "Delete…")) { confirmDeleteRestorePoint = true }
                 }
             }
             .disabled(vm.status != .stopped)

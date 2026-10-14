@@ -132,6 +132,18 @@ final class BoxStore {
 
     func box(id: UUID) -> Box? { boxes.first { $0.id == id } }
 
+    /// 同一个应用装了多份（比如两个网盘账号）时依次叫「夸克网盘」「夸克网盘 2」，和聚焦里的启动器同名；
+    /// 否则卡片、提示（“「夸克网盘」正在运行”）里分不清是哪一个
+    func uniqueName(_ name: String, excluding box: Box? = nil) -> String {
+        let taken = Set(boxes.filter { $0 !== box }.map(\.config.name))
+        var candidate = name, index = 2
+        while taken.contains(candidate) {
+            candidate = "\(name) \(index)"
+            index += 1
+        }
+        return candidate
+    }
+
     /// 上次 MacBox 异常退出时，可能有借出去的偏好设置没收回、盒子里的映像还挂着、
     /// 盒子里的程序还在运行（已不受管理，守卫也会结束它们）。先结束程序再收回设置，
     /// 否则它们会继续往刚恢复的本机设置里写
@@ -159,13 +171,17 @@ final class BoxStore {
         for url in urls {
             importStatus = L("正在读取「\(url.lastPathComponent)」…", "Reading “\(url.lastPathComponent)”…")
             do {
+                // 先看类型再复制：不支持的大文件、文件夹不必整个复制进来才报错
+                try PackageExtractor.checkSupported(url)
                 let box = try await makeBox(from: url)
                 selection = box.id
                 importStatus = nil
                 await afterImport(box)
             } catch {
-                importError = L("无法添加「\(url.lastPathComponent)」：\(error.localizedDescription)",
+                let message = L("无法添加「\(url.lastPathComponent)」：\(error.localizedDescription)",
                                 "Couldn’t add “\(url.lastPathComponent)”: \(error.localizedDescription)")
+                // 一次添加多个时，每个失败的都要列出来
+                importError = importError.map { "\($0)\n\n\(message)" } ?? message
             }
         }
         importStatus = nil
@@ -187,7 +203,7 @@ final class BoxStore {
             importStatus = L("正在检查兼容性…", "Checking compatibility…")
             var issues = extracted.issues + (await AppInspector.scan(extracted.app))
             issues.insert(await AppInspector.verifyAndTrust(extracted.app), at: 0)
-            var config = BoxConfig(id: id, name: info.name, bundleIdentifier: info.bundleIdentifier,
+            var config = BoxConfig(id: id, name: uniqueName(info.name), bundleIdentifier: info.bundleIdentifier,
                                    version: info.version, appFolderName: extracted.app.lastPathComponent,
                                    sourceName: source.lastPathComponent)
             config.issues = issues
@@ -242,6 +258,9 @@ final class BoxStore {
         guard vm.config.installed else {
             box.notice = L("需要先在「虚拟 Mac」页完成一次性设置，之后这个应用就会在虚拟 Mac 中运行。",
                            "Finish the one-time setup on the “Virtual Mac” page first. After that, this app will run in Virtual Mac.")
+            // 接下来显示的是虚拟 Mac 页，说明也要放在那里，否则只是突然换了一页
+            vm.notice = L("「\(box.config.name)」设为在虚拟 Mac 中运行，需要先完成下面的一次性设置。",
+                          "“\(box.config.name)” is set to run in Virtual Mac. Finish the one-time setup below first.")
             show(.virtualMac)
             return
         }
@@ -250,10 +269,16 @@ final class BoxStore {
         if vm.status == .stopped { await vm.start() }
     }
 
+    /// 需要用户看到的情况（打不开等）：切到应用页并选中它。从聚焦打开时主窗口可能关着
+    func reveal(_ box: Box) {
+        selection = box.id
+        show(.allApps)
+    }
+
     /// 打开主窗口并切到指定页面
     func show(_ destination: Destination) {
         self.destination = destination
-        NSApp.activate()
+        NSApp?.activate() // 测试进程里没有 NSApp
         windowRequest = WindowRequest(window: .library)
     }
 

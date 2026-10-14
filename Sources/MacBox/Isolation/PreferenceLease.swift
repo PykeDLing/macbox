@@ -41,7 +41,7 @@ nonisolated struct PreferenceLease: Sendable {
         var lentDomains: [String]
     }
 
-    private var journalURL: URL { box.prefs.appending(path: ".lease.json") }
+    private var journalURL: URL { box.leaseJournal }
 
     /// 是否有未完成的借出（上次运行异常结束）
     var isOutstanding: Bool {
@@ -111,9 +111,20 @@ nonisolated struct PreferenceLease: Sendable {
 
     // MARK: - 域
 
+    /// 域是否属于这组前缀（前缀本身，或以“前缀.”开头）
+    static func domain(_ domain: String, isCoveredBy prefixes: [String]) -> Bool {
+        prefixes.contains { domain == $0 || domain.hasPrefix($0 + ".") }
+    }
+
+    /// 两组前缀会不会借出同一个域。会的话两个盒子不能同时运行：
+    /// 后借出的一方会把前一方借出的内容当成本机设置备份起来，收回时互相覆盖，最后连本机设置都换成了盒子的
+    static func overlaps(_ a: [String], _ b: [String]) -> Bool {
+        a.contains { domain($0, isCoveredBy: b) } || b.contains { domain($0, isCoveredBy: a) }
+    }
+
     /// 系统里属于这个 App 的域（App、安装器和各种 helper）
     private func systemDomains() -> [String] {
-        plistNames(in: systemPrefs).filter { domain in prefixes.contains { domain == $0 || domain.hasPrefix($0 + ".") } }
+        plistNames(in: systemPrefs).filter { Self.domain($0, isCoveredBy: prefixes) }
     }
 
     private func boxDomains() -> [String] { plistNames(in: box.prefs) }
