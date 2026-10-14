@@ -5,12 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MacBox — 把不放心的 Mac 软件装进盒子里</title>
 <meta name="description" content="MacBox 让不放心的 Mac 软件在隔离的盒子里运行：照常使用，它写下的文件、设置和钥匙串都留在盒子里。免费开源。 / MacBox runs the Mac apps you’re wary of in an isolated box: use them as usual while their files, settings and keychain items stay in the box. Free and open source.">
+<meta name="color-scheme" content="light dark">
+<meta property="og:site_name" content="MacBox">
 <meta property="og:title" content="MacBox">
 <meta property="og:description" content="把不放心的 Mac 软件装进盒子里：照常使用，删掉就干干净净。 / Run the Mac apps you don't trust inside a box.">
 <!-- 绑定自定义域名后，把下面几处 https://pykedling.github.io/macbox/ 换成新域名 -->
 <meta property="og:image" content="https://pykedling.github.io/macbox/icon.png">
 <meta property="og:image:width" content="512">
 <meta property="og:image:height" content="512">
+<meta property="og:image:alt" content="MacBox 图标 / MacBox icon">
 <meta property="og:url" content="https://pykedling.github.io/macbox/">
 <meta name="twitter:card" content="summary">
 <link rel="canonical" href="https://pykedling.github.io/macbox/">
@@ -19,6 +22,22 @@
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="icon.png">
+<link rel="preconnect" href="https://api.github.com" crossorigin>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "MacBox",
+  "url": "https://pykedling.github.io/macbox/",
+  "image": "https://pykedling.github.io/macbox/icon.png",
+  "description": "Run the Mac apps you don’t trust in an isolated box. Their files, settings and keychain items stay in the box.",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "macOS 26 or later (Apple silicon)",
+  "downloadUrl": "https://github.com/PykeDLing/macbox/releases/latest",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
 <script>
   // 语言：记住的选择 > 浏览器语言（中文用中文，其他用英文）。在绘制前设置，避免闪一下
   (function () {
@@ -32,6 +51,7 @@
 </script>
 <style>
   :root {
+    color-scheme: light dark;
     --bg: #f5f5f7;
     --surface: #ffffff;
     --surface-2: #fbfbfd;
@@ -47,15 +67,22 @@
     --red: #ff5f57;
     --yellow: #febc2e;
     --green: #28c840;
+    /* “运行中”这类小字用的绿，浅色背景上要深一点才看得清 */
+    --run: #1f9d3a;
+    /* 示意窗口里控件的底色：叠在面板上，两种模式下都比面板深一点 / 亮一点 */
+    --fill: rgba(0, 0, 0, 0.055);
+    --seg-on: #ffffff;
+    --glow: rgba(0, 113, 227, 0.2);
     --metal-1: #f2f2f4;
     --metal-2: #d9dadf;
-    --metal-3: #b9bbc2;
     --shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 40px rgba(0,0,0,.08);
     --shadow-lg: 0 2px 6px rgba(0,0,0,.05), 0 40px 100px rgba(0,0,0,.14);
     --code-bg: #f0f0f3;
     --radius: 22px;
     --gutter: 22px;
     --max: 1080px;
+    --nav-h: 52px;
+    --sec-pad: 120px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -68,9 +95,12 @@
       --line: rgba(255, 255, 255, 0.1);
       --accent: #0a84ff;
       --link: #2997ff;
-      --metal-1: #3a3a3e;
-      --metal-2: #2a2a2d;
-      --metal-3: #1c1c1e;
+      --run: #30d158;
+      --fill: rgba(255, 255, 255, 0.08);
+      --seg-on: #5a5a5e;
+      --glow: rgba(10, 132, 255, 0.38);
+      --metal-1: #2c2c2e;
+      --metal-2: #1c1c1e;
       --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 40px rgba(0,0,0,.5);
       --shadow-lg: 0 2px 6px rgba(0,0,0,.5), 0 40px 100px rgba(0,0,0,.7);
       --code-bg: #1d1d1f;
@@ -91,8 +121,17 @@
   html[data-lang="zh"] body [lang="en"],
   html[data-lang="en"] body [lang="zh-CN"] { display: none !important; }
 
+  /* 断行：标题两行尽量等长，正文避免最后一行只剩一个字 */
+  h1, h2, h3, .verdict, .lede, .center .intro { text-wrap: balance; }
+  p, li, dd { text-wrap: pretty; }
+  /* 中文标题只在标点和空格处断行，不把一个词拆到两行；实在放不下再随处断 */
+  html[data-lang="zh"] :is(h1, h2, h3, .verdict) { word-break: keep-all; overflow-wrap: anywhere; }
+
+  ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
   a { color: var(--link); text-decoration: none; }
   a:hover { text-decoration: underline; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  a:not(.btn):focus-visible { border-radius: 4px; }
   code, pre { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: .86em; }
   :not(pre) > code { background: var(--code-bg); padding: .12em .4em; border-radius: 6px; }
   .wrap { max-width: var(--max); margin: 0 auto; padding: 0 var(--gutter); }
@@ -101,6 +140,12 @@
   .dots i:nth-child(1) { background: var(--red); }
   .dots i:nth-child(2) { background: var(--yellow); }
   .dots i:nth-child(3) { background: var(--green); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .skip {
+    position: absolute; left: 12px; top: -60px; z-index: 20; padding: 8px 14px; border-radius: 10px;
+    background: var(--surface); color: var(--ink); box-shadow: var(--shadow); font-size: 14px;
+  }
+  .skip:focus { top: 10px; }
 
   /* 导航 */
   .nav {
@@ -108,23 +153,27 @@
     backdrop-filter: saturate(180%) blur(20px);
     -webkit-backdrop-filter: saturate(180%) blur(20px);
     background: color-mix(in srgb, var(--bg) 78%, transparent);
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid transparent;
+    transition: border-color .3s ease;
   }
-  .nav .wrap { display: flex; align-items: center; gap: 24px; height: 52px; }
+  /* 页面顶部时不画分隔线，滚动后才出现；没有脚本时一直显示 */
+  .nav.scrolled, html:not(.js) .nav { border-bottom-color: var(--line); }
+  .nav .wrap { display: flex; align-items: center; gap: 24px; height: var(--nav-h); }
   .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; color: var(--ink); font-size: 17px; }
   .brand:hover { text-decoration: none; }
   .brand img { width: 26px; height: 26px; }
   .nav-links { display: flex; gap: 22px; margin-left: auto; font-size: 14px; }
-  .nav-links a { color: var(--ink-2); }
-  .nav-links a:hover { color: var(--ink); text-decoration: none; }
+  .nav-links a { color: var(--ink-2); transition: color .2s ease; }
+  .nav-links a:hover, .nav-links a[aria-current] { color: var(--ink); text-decoration: none; }
   .lang {
     display: inline-flex; padding: 2px; border-radius: 9px; background: var(--code-bg);
     border: 1px solid var(--line); font-size: 13px;
   }
   .lang button {
     border: 0; background: transparent; color: var(--ink-2); font: inherit; padding: 3px 10px;
-    border-radius: 7px; cursor: pointer;
+    border-radius: 7px; cursor: pointer; transition: background-color .2s ease, color .2s ease;
   }
+  .lang button:hover { color: var(--ink); }
   html[data-lang="zh"] .lang button[data-set="zh"],
   html[data-lang="en"] .lang button[data-set="en"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
   @media (prefers-color-scheme: dark) {
@@ -149,37 +198,50 @@
   .btn {
     display: inline-flex; align-items: center; gap: 8px; padding: 13px 24px; border-radius: 999px;
     font-size: 17px; font-weight: 500; border: 0; cursor: pointer;
+    transition: filter .2s ease, transform .15s ease;
   }
   .btn:hover { text-decoration: none; }
+  .btn:active { transform: scale(.97); }
   .btn-primary { background: var(--accent-fill); color: var(--accent-ink); }
   .btn-primary:hover { filter: brightness(1.08); }
   .btn-ghost { color: var(--link); }
   .btn-ghost:hover { text-decoration: underline; }
+  .btn-link { padding-left: 0; padding-right: 0; }
   .btn svg { width: 18px; height: 18px; }
   .meta { color: var(--ink-2); font-size: 13px; margin-top: 14px; }
 
   /* 产品窗口示意（纯 CSS，跟随语言和深色模式） */
-  .stage { margin: 64px auto 0; max-width: 1000px; padding: 0 var(--gutter); perspective: 1600px; }
+  .stage { margin: 64px auto 0; max-width: 1000px; padding: 0 var(--gutter); perspective: 1600px; position: relative; isolation: isolate; }
+  /* 窗口后面一圈淡淡的光，深色模式下窗口不至于沉进黑色背景里 */
+  .stage::before {
+    content: ""; position: absolute; z-index: -1; left: 0; right: 0; top: 35%; bottom: -14%;
+    background: radial-gradient(closest-side, var(--glow), transparent);
+    filter: blur(40px); pointer-events: none;
+  }
   .window {
     border-radius: 14px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow-lg);
     border: 1px solid var(--line); display: grid; grid-template-columns: 200px 1fr 250px; min-height: 420px;
     text-align: left; font-size: 13px;
+    transform-origin: 50% 0; transition: transform 1.1s cubic-bezier(.2, .75, .25, 1);
   }
+  /* 滚到时窗口从微微后仰的角度立起来 */
+  .js .stage:not(.in) .window { transform: rotateX(12deg) scale(.96); }
   .sidebar { background: var(--surface-2); border-right: 1px solid var(--line); padding: 14px 10px; }
   .sidebar .dots { margin: 0 4px 16px; }
-  .sidebar .search { background: var(--code-bg); border-radius: 7px; padding: 5px 9px; color: var(--ink-3); margin-bottom: 14px; }
+  .sidebar .search { display: flex; align-items: center; gap: 6px; background: var(--fill); border-radius: 7px; padding: 5px 9px; color: var(--ink-3); margin-bottom: 14px; }
+  .sidebar .search svg { width: 12px; height: 12px; flex: none; }
   .sb-h { color: var(--ink-3); font-size: 11px; font-weight: 600; margin: 12px 8px 4px; }
   .sb-i { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; color: var(--ink); }
   .sb-i.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
   .sb-i svg { width: 14px; height: 14px; color: var(--accent); flex: none; }
-  .sb-n { margin-left: auto; color: var(--ink-3); font-size: 12px; }
+  .sb-n { margin-left: auto; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
   .library { padding: 18px 20px; }
   .library h4 { margin: 0; font-size: 15px; }
   .library .sub { color: var(--ink-3); font-size: 12px; margin-bottom: 16px; }
   .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
   .card {
     border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); padding: 16px 8px 12px;
-    text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px;
+    text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0;
   }
   .card.sel { outline: 2.5px solid var(--accent); outline-offset: -1px; }
   .card .ic {
@@ -188,9 +250,11 @@
   }
   .card .ic svg { width: 26px; height: 26px; }
   .card .nm { font-weight: 500; font-size: 12.5px; }
-  .tag { font-size: 10.5px; color: var(--ink-3); display: inline-flex; align-items: center; gap: 4px; }
-  .tag svg { width: 9px; height: 9px; }
-  .tag.run { color: var(--green); }
+  .tag { font-size: 10.5px; color: var(--ink-3); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .tag svg { width: 9px; height: 9px; flex: none; }
+  .tag.run { color: var(--run); }
+  .tag.run svg { animation: blink 2.4s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
   .card.add { border-style: dashed; background: transparent; color: var(--ink-3); justify-content: center; }
   .card.add .plus { width: 34px; height: 34px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); display: grid; place-items: center; font-size: 22px; line-height: 1; }
   .inspector { border-left: 1px solid var(--line); padding: 20px 16px; background: var(--surface-2); }
@@ -198,14 +262,20 @@
   .inspector .ic { width: 54px; height: 54px; border-radius: 13px; margin: 0 auto 8px; display: grid; place-items: center; color: #fff; }
   .inspector .ic svg { width: 30px; height: 30px; }
   .inspector .ttl { font-weight: 600; font-size: 14px; }
-  .open { margin: 12px 0 16px; background: var(--code-bg); border-radius: 7px; padding: 6px; text-align: center; font-weight: 500; }
+  .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 12px 0 16px; }
+  .act {
+    display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 4px; border-radius: 7px;
+    background: var(--fill); font-weight: 500; font-size: 12px; white-space: nowrap;
+  }
+  .act.pri { background: var(--accent-fill); color: #fff; }
+  .act svg { width: 10px; height: 10px; flex: none; }
   .ins-h { color: var(--ink-3); font-size: 11px; font-weight: 600; margin: 14px 0 6px; }
-  .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--code-bg); border-radius: 7px; padding: 2px; font-size: 11.5px; text-align: center; }
-  .seg span { padding: 4px 2px; border-radius: 5px; }
-  .seg span.on { background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--fill); border-radius: 7px; padding: 2px; font-size: 11.5px; text-align: center; }
+  .seg > span { padding: 4px 2px; border-radius: 5px; }
+  .seg > span.on { background: var(--seg-on); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
   .row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
   .row:last-child { border-bottom: 0; }
-  .row b { font-weight: 500; color: var(--ink-3); }
+  .row b { font-weight: 500; color: var(--ink-3); font-variant-numeric: tabular-nums; }
   .blocked { display: flex; align-items: center; gap: 6px; padding: 4px 0; color: var(--ink-2); }
   .blocked svg { width: 12px; height: 12px; color: var(--red); flex: none; }
   .g1 { background: linear-gradient(160deg, #5ac8fa, #007aff); }
@@ -217,13 +287,24 @@
   @media (max-width: 600px) {
     .window { grid-template-columns: 1fr; min-height: 0; }
     .sidebar { display: none; }
+    .library { padding: 16px 14px; }
     .library::before { content: ""; display: block; width: 52px; height: 12px; margin-bottom: 14px;
       background: radial-gradient(circle 6px at 6px 6px, var(--red) 98%, transparent), radial-gradient(circle 6px at 26px 6px, var(--yellow) 98%, transparent), radial-gradient(circle 6px at 46px 6px, var(--green) 98%, transparent); }
-    .cards { grid-template-columns: repeat(2, 1fr); }
+    /* 手机上仍然一行三个，整个窗口不超过一屏 */
+    .cards { gap: 8px; }
+    .card { padding: 12px 4px 10px; gap: 4px; border-radius: 10px; }
+    .card .ic { width: 38px; height: 38px; border-radius: 9px; }
+    .card .ic svg { width: 21px; height: 21px; }
+    .card .nm { font-size: 11.5px; }
+    .tag { font-size: 9.5px; }
+    .tag:not(.run) svg { display: none; }
+    .card.add .plus { width: 30px; height: 30px; font-size: 20px; }
   }
 
   /* 通用版块 */
-  section { padding: 120px 0 0; }
+  section { padding: var(--sec-pad) 0 0; }
+  /* 从导航跳过来时，标题停在导航栏下方不远处，而不是先空出一整段版块间距 */
+  section[id] { scroll-margin-top: calc(var(--nav-h) + 28px - var(--sec-pad)); }
   .kicker { color: var(--link); font-weight: 600; font-size: 15px; margin: 0 0 8px; }
   h2 { font-size: clamp(30px, 4.6vw, 52px); line-height: 1.1; letter-spacing: -0.02em; margin: 0; font-weight: 700; max-width: 18em; }
   .intro { color: var(--ink-2); font-size: clamp(17px, 2vw, 21px); max-width: 36em; margin: 18px 0 0; line-height: 1.55; }
@@ -232,15 +313,18 @@
 
   /* 问题 */
   .mess { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 44px; }
-  .mess div { background: var(--surface); border-radius: var(--radius); padding: 26px; box-shadow: var(--shadow); }
-  .mess h3 { margin: 12px 0 6px; font-size: 19px; }
+  .mess > div { background: var(--surface); border-radius: var(--radius); padding: 26px; box-shadow: var(--shadow); }
+  .mess h3 { margin: 14px 0 6px; font-size: 19px; }
   .mess p { margin: 0; color: var(--ink-2); font-size: 15px; }
-  .mess svg { width: 30px; height: 30px; color: var(--ink-3); }
+  .mi { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: var(--code-bg); color: var(--ink-2); }
+  .mi svg { width: 24px; height: 24px; }
   .verdict {
     margin-top: 18px; border-radius: var(--radius); padding: 34px; text-align: center;
     background: linear-gradient(180deg, var(--metal-1), var(--metal-2));
     border: 1px solid var(--line); font-size: clamp(20px, 2.6vw, 28px); font-weight: 600; letter-spacing: -0.01em;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.5);
   }
+  @media (prefers-color-scheme: dark) { .verdict { box-shadow: inset 0 1px 0 rgba(255,255,255,.07); } }
   @media (max-width: 760px) { .mess { grid-template-columns: 1fr; } }
 
   /* 三步 */
@@ -260,7 +344,7 @@
   .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 44px; }
   .feat { background: var(--surface); border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow); }
   .feat.wide { grid-column: span 2; }
-  .feat .fi { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; color: #fff; }
+  .feat .fi { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; color: #fff; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.12); }
   .feat .fi svg { width: 22px; height: 22px; }
   .feat h3 { margin: 14px 0 6px; font-size: 18px; }
   .feat p { margin: 0; color: var(--ink-2); font-size: 15px; }
@@ -284,6 +368,8 @@
   .honest { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
   .honest ul { margin: 0; padding: 0; list-style: none; }
   .honest li { padding: 14px 0 14px 30px; border-bottom: 1px solid var(--line); position: relative; color: var(--ink-2); font-size: 15.5px; }
+  /* 中英文条目交替排列，隐藏的那种语言也算子元素，按语言找最后一条 */
+  html[data-lang="zh"] .honest li:nth-last-child(2), html[data-lang="en"] .honest li:last-child { border-bottom: 0; }
   .honest li::before { content: ""; position: absolute; left: 4px; top: 22px; width: 10px; height: 10px; border-radius: 50%; background: var(--yellow); }
   .honest li strong { color: var(--ink); font-weight: 600; }
   @media (max-width: 860px) { .honest { grid-template-columns: 1fr; gap: 24px; } }
@@ -293,36 +379,66 @@
   .install .side { text-align: center; }
   .install .side img { width: 150px; height: 150px; }
   .install .side .btn { margin-top: 18px; }
-  .install ol { margin: 0; padding-left: 1.3em; }
-  .install li { margin: 0 0 16px; color: var(--ink-2); font-size: 15.5px; }
+  .install .side .meta { margin: 10px 0 0; }
+  .install .side .meta + .meta { margin-top: 4px; }
+  .install h2 { font-size: clamp(28px, 3.6vw, 40px); }
+  .install ol { margin: 0; padding: 0; list-style: none; counter-reset: n; }
+  .install li { counter-increment: n; position: relative; padding-left: 38px; margin: 0 0 18px; color: var(--ink-2); font-size: 15.5px; }
+  html[data-lang="zh"] .install li:nth-last-child(2), html[data-lang="en"] .install li:last-child { margin-bottom: 0; }
+  .install li::before {
+    content: counter(n); position: absolute; left: 0; top: 0; width: 25px; height: 25px; border-radius: 50%;
+    display: grid; place-items: center; background: var(--code-bg); color: var(--ink); font-size: 13px; font-weight: 600;
+  }
   .install li strong { color: var(--ink); }
-  .req { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+  .req { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 24px; }
   .req span { background: var(--code-bg); border-radius: 999px; padding: 4px 12px; font-size: 13.5px; }
   @media (max-width: 760px) { .install { grid-template-columns: 1fr; gap: 28px; } }
+  @media (max-width: 600px) { .install { padding: 28px 20px; border-radius: 24px; } .install li { padding-left: 34px; } }
 
-  .term { margin: 10px 0 0; background: #1d1d1f; color: #f5f5f7; border-radius: 12px; position: relative; border: 1px solid var(--line); }
+  /* 终端：标题栏放复制按钮，命令再长也不会被按钮挡住 */
+  .term { margin: 12px 0 0; background: #1d1d1f; color: #f5f5f7; border-radius: 12px; border: 1px solid var(--line); overflow: hidden; color-scheme: dark; }
+  .term-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 7px 6px 12px; background: #2a2a2c; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .term-bar .dots { gap: 6px; }
+  .term-bar .dots i { width: 10px; height: 10px; }
   .term .cmd {
-    margin: 0; padding: 14px 76px 14px 16px; overflow-x: auto; white-space: pre; color: inherit;
-    font: 14px/1.6 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    margin: 0; padding: 12px 16px 14px; overflow-x: auto; white-space: pre; color: inherit;
+    font: 13.5px/1.65 "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.22) transparent;
   }
-  .term .p { color: #8e8e93; user-select: none; }
+  .term .p { color: #8e8e93; user-select: none; -webkit-user-select: none; }
   .copy {
-    position: absolute; top: 8px; right: 8px; border: 0; border-radius: 7px; padding: 4px 9px; cursor: pointer;
-    background: #3a3a3c; color: #f5f5f7; font: 12px -apple-system, BlinkMacSystemFont, sans-serif;
-    box-shadow: -12px 0 10px #1d1d1f;
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 64px;
+    border: 0; border-radius: 6px; padding: 3px 9px; cursor: pointer;
+    background: rgba(255,255,255,.08); color: #d1d1d6; font: 12px/1.45 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    transition: background-color .15s ease, color .15s ease;
   }
-  .copy:hover { background: #48484a; }
+  .copy:hover { background: rgba(255,255,255,.15); color: #fff; }
+  .copy svg { width: 12px; height: 12px; flex: none; }
+  .copy.ok { color: #30d158; }
+  html:not(.js) .copy { display: none; }
 
   /* 开源 */
   .oss { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+  .oss .btn { margin-top: 22px; }
   @media (max-width: 860px) { .oss { grid-template-columns: 1fr; gap: 20px; } }
   /* 网格列默认不会窄于内容；命令是不换行的一整行，不允许缩小就会撑出屏幕 */
   .install > *, .oss > * { min-width: 0; }
 
   footer { margin-top: 120px; border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--ink-2); font-size: 13px; }
   footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: center; }
-  footer .sp { flex: 1; }
   footer a { color: var(--ink-2); }
+  footer a:hover { color: var(--ink); }
+  .foot-links { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-left: auto; }
+
+  @media (max-width: 600px) {
+    :root { --sec-pad: 88px; }
+    .hero { padding-top: 56px; }
+    .hero-icon { width: 124px; height: 124px; }
+    .stage { margin-top: 48px; }
+    .mess > div, .step, .feat, .mode { padding: 22px; }
+    footer { margin-top: 88px; }
+    .foot-links { margin-left: 0; width: 100%; gap: 8px 20px; }
+  }
 
   /* 进入视口时淡入 */
   /* 只有脚本在运行时才先隐藏，脚本失效时内容照常显示 */
@@ -330,7 +446,16 @@
   .js .reveal.in { opacity: 1; transform: none; }
   @media (prefers-reduced-motion: reduce) {
     .js .reveal { opacity: 1; transform: none; transition: none; }
+    .js .stage:not(.in) .window { transform: none; }
+    .window { transition: none; }
+    .tag.run svg { animation: none; }
     html { scroll-behavior: auto; }
+  }
+
+  @media print {
+    .nav, .copy, .stage::before { display: none !important; }
+    .js .reveal { opacity: 1; transform: none; }
+    .js .stage:not(.in) .window { transform: none; }
   }
 </style>
 </head>
@@ -343,6 +468,8 @@
     <symbol id="i-play" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 8.5v7l6-3.5z" fill="currentColor"/></symbol>
     <symbol id="i-display" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M9 20h6M12 16v4"/></g></symbol>
     <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></g></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20.5 20.5"/></g></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 17.5 17 7M8.5 6.5H17.5V15.5"/></g></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><path fill="currentColor" d="M7 10V7a5 5 0 0 1 10 0v3h1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2zm2 0h6V7a3 3 0 0 0-6 0z"/></symbol>
     <symbol id="i-cloud" viewBox="0 0 24 24"><path fill="currentColor" d="M7 19a5 5 0 0 1-.6-9.96A6.5 6.5 0 0 1 19 9.5 4.75 4.75 0 0 1 18.25 19z"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></g></symbol>
@@ -360,14 +487,17 @@
     <symbol id="i-clock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4v4h4M12 8v4.5l3 2"/></g></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path fill="currentColor" d="M12 5c5 0 8.6 4 9.8 7-1.2 3-4.8 7-9.8 7S3.4 15 2.2 12C3.4 9 7 5 12 5zm0 3.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6z"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5a9.5 9.5 0 1 1 0 19 9.5 9.5 0 0 1 0-19zm4.3 6.2-5.7 5.8-2.9-2.9-1.5 1.5 4.4 4.4 7.2-7.3z"/></symbol>
-    <symbol id="i-globe" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.8 5.6 3.8 9s-1.2 6.4-3.8 9c-2.6-2.6-3.8-5.6-3.8-9S9.4 5.6 12 3z"/></g></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 6.5 16H8"/></g></symbol>
+    <symbol id="i-ok" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
     <symbol id="i-github" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></symbol>
   </defs>
 </svg>
 
+<a class="skip" href="#main"><span lang="zh-CN">跳到正文</span><span lang="en">Skip to content</span></a>
+
 <nav class="nav">
   <div class="wrap">
-    <a class="brand" href="#"><img src="icon.png" alt="">MacBox</a>
+    <a class="brand" href="#top"><img src="favicon.png" width="26" height="26" alt="">MacBox</a>
     <div class="nav-links">
       <a href="#how"><span lang="zh-CN">怎么用</span><span lang="en">How It Works</span></a>
       <a href="#features"><span lang="zh-CN">特性</span><span lang="en">Features</span></a>
@@ -375,16 +505,16 @@
       <a href="#download" class="keep"><span lang="zh-CN">下载</span><span lang="en">Download</span></a>
       <a href="https://github.com/PykeDLing/macbox">GitHub</a>
     </div>
-    <div class="lang" role="group" aria-label="Language">
-      <button type="button" data-set="zh">中</button>
-      <button type="button" data-set="en">EN</button>
+    <div class="lang" role="group" aria-label="Language / 语言">
+      <button type="button" data-set="zh" title="简体中文" aria-label="简体中文">中</button>
+      <button type="button" data-set="en" title="English" aria-label="English">EN</button>
     </div>
   </div>
 </nav>
 
 <header class="hero">
   <div class="wrap">
-    <img class="hero-icon" src="icon.png" alt="MacBox">
+    <img class="hero-icon" src="icon-320.png" srcset="icon-320.png 2x, icon.png 3x" width="152" height="152" alt="MacBox" fetchpriority="high">
     <p class="eyebrow">
       <span lang="zh-CN">免费 · 开源 · 为 Apple Silicon 打造</span>
       <span lang="en">Free · Open source · Built for Apple Silicon</span>
@@ -397,7 +527,7 @@
     <p class="lede" lang="en">They open like any other app, with their own windows and a place in the Dock. But the files, settings and keychain items they write stay in the box. Delete the box and your Mac is clean.</p>
     <div class="cta">
       <a class="btn btn-primary js-download" href="https://github.com/PykeDLing/macbox/releases/latest">
-        <svg><use href="#i-down"/></svg>
+        <svg aria-hidden="true"><use href="#i-down"/></svg>
         <span lang="zh-CN">下载 MacBox</span><span lang="en">Download MacBox</span>
       </a>
       <a class="btn btn-ghost" href="https://github.com/PykeDLing/macbox">
@@ -412,10 +542,10 @@
   </div>
 
   <div class="stage reveal">
-    <div class="window" role="img" aria-label="MacBox window">
+    <div class="window" role="img" aria-label="MacBox 窗口示意" data-label-zh="MacBox 窗口示意：应用库里有五个应用，详情面板列出本次被拦截的行为" data-label-en="Illustration of the MacBox window: five apps in the library, with the details panel listing what was blocked this session">
       <aside class="sidebar">
         <span class="dots"><i></i><i></i><i></i></span>
-        <div class="search"><span lang="zh-CN">搜索应用</span><span lang="en">Search Apps</span></div>
+        <div class="search"><svg><use href="#i-search"/></svg><span lang="zh-CN">搜索应用</span><span lang="en">Search Apps</span></div>
         <div class="sb-h"><span lang="zh-CN">应用</span><span lang="en">Apps</span></div>
         <div class="sb-i on"><svg><use href="#i-grid"/></svg><span lang="zh-CN">全部应用</span><span lang="en">All Apps</span><span class="sb-n">5</span></div>
         <div class="sb-i"><svg><use href="#i-play"/></svg><span lang="zh-CN">运行中</span><span lang="en">Running</span><span class="sb-n">1</span></div>
@@ -426,7 +556,7 @@
       </aside>
       <div class="library">
         <h4><span lang="zh-CN">全部应用</span><span lang="en">All Apps</span></h4>
-        <div class="sub"><span lang="zh-CN">5 个应用 · 1 个正在运行</span><span lang="en">5 apps · 1 running</span></div>
+        <div class="sub"><span lang="zh-CN">5 个应用 · 1 个运行中</span><span lang="en">5 apps · 1 running</span></div>
         <div class="cards">
           <div class="card sel">
             <div class="ic g1"><svg><use href="#i-cloud"/></svg></div>
@@ -463,8 +593,12 @@
         <div class="head">
           <div class="ic g1"><svg><use href="#i-cloud"/></svg></div>
           <div class="ttl"><span lang="zh-CN">某某网盘</span><span lang="en">Cloud Drive</span></div>
+          <div class="tag run"><svg><use href="#i-play"/></svg><span lang="zh-CN">运行中</span><span lang="en">Running</span></div>
         </div>
-        <div class="open"><span lang="zh-CN">退出</span><span lang="en">Quit</span></div>
+        <div class="acts">
+          <span class="act pri"><svg><use href="#i-arrow"/></svg><span lang="zh-CN">切换过去</span><span lang="en">Switch to App</span></span>
+          <span class="act"><span lang="zh-CN">退出</span><span lang="en">Quit</span></span>
+        </div>
         <div class="ins-h"><span lang="zh-CN">运行环境</span><span lang="en">Runtime</span></div>
         <div class="seg"><span class="on"><span lang="zh-CN">本机隔离</span><span lang="en">Native</span></span><span><span lang="zh-CN">虚拟 Mac</span><span lang="en">Virtual Mac</span></span></div>
         <div class="ins-h"><span lang="zh-CN">本次已拦截</span><span lang="en">Blocked This Session</span></div>
@@ -479,7 +613,7 @@
   </div>
 </header>
 
-<main>
+<main id="main">
   <section>
     <div class="wrap">
       <div class="center reveal">
@@ -490,19 +624,19 @@
       </div>
       <div class="mess reveal">
         <div>
-          <svg><use href="#i-rocket"/></svg>
+          <span class="mi"><svg><use href="#i-rocket"/></svg></span>
           <h3><span lang="zh-CN">开机自启</span><span lang="en">Launch at login</span></h3>
           <p lang="zh-CN">没打开它，它也在跑。登录项、助手程序，一个接一个。</p>
           <p lang="en">Running even when you never opened it. Login items and helpers pile up.</p>
         </div>
         <div>
-          <svg><use href="#i-gears"/></svg>
+          <span class="mi"><svg><use href="#i-gears"/></svg></span>
           <h3><span lang="zh-CN">后台服务</span><span lang="en">Background services</span></h3>
           <p lang="zh-CN">悄悄注册的常驻进程，卸载 App 时往往不会一起删掉。</p>
           <p lang="en">Quietly registered daemons that usually survive deleting the app.</p>
         </div>
         <div>
-          <svg><use href="#i-scatter"/></svg>
+          <span class="mi"><svg><use href="#i-scatter"/></svg></span>
           <h3><span lang="zh-CN">散落各处的文件</span><span lang="en">Files everywhere</span></h3>
           <p lang="zh-CN">缓存、设置、钥匙串条目，分散在资源库的各个角落。</p>
           <p lang="en">Caches, preferences and keychain items scattered all over your Library.</p>
@@ -669,36 +803,38 @@
     <div class="wrap">
       <div class="install reveal">
         <div class="side">
-          <img src="icon.png" alt="">
+          <img src="icon-320.png" srcset="icon-320.png 2x, icon.png 3x" width="150" height="150" alt="" loading="lazy">
           <div>
             <a class="btn btn-primary js-download" href="https://github.com/PykeDLing/macbox/releases/latest">
-              <svg><use href="#i-down"/></svg>
+              <svg aria-hidden="true"><use href="#i-down"/></svg>
               <span lang="zh-CN">下载</span><span lang="en">Download</span>
               <span class="js-version">v0.2.0</span>
             </a>
           </div>
+          <!-- 大小和发布日期由脚本从 GitHub 取到后再显示 -->
+          <p class="meta js-dl-info" hidden><span lang="zh-CN"></span><span lang="en"></span></p>
           <p class="meta"><a href="https://github.com/PykeDLing/macbox/releases"><span lang="zh-CN">全部版本</span><span lang="en">All releases</span></a></p>
         </div>
         <div>
-          <p class="kicker"><span lang="zh-CN">下载与安装</span><span lang="en">Download & install</span></p>
-          <h2 style="font-size: clamp(28px, 3.6vw, 40px)"><span lang="zh-CN">三步装好。</span><span lang="en">Up and running in three steps.</span></h2>
-          <div class="req" style="margin-top: 18px">
+          <p class="kicker"><span lang="zh-CN">下载与安装</span><span lang="en">Download &amp; install</span></p>
+          <h2><span lang="zh-CN">三步装好。</span><span lang="en">Up and running in three steps.</span></h2>
+          <div class="req">
             <span>Apple Silicon</span>
             <span><span lang="zh-CN">macOS 26 或更新</span><span lang="en">macOS 26 or later</span></span>
             <span><span lang="zh-CN">中文 / English</span><span lang="en">English / 中文</span></span>
           </div>
           <ol>
             <li lang="zh-CN">下载 <code>MacBox-版本.dmg</code>，打开后把 <strong>MacBox</strong> 拖到「应用程序」（Applications）。想校验下载是否完整，可以从<a href="https://github.com/PykeDLing/macbox/releases/latest">发布页</a>下载对应的 <code>.sha256</code> 文件，放在同一个文件夹里运行：
-              <div class="term"><button class="copy" type="button" data-copy="shasum -a 256 -c MacBox-*.dmg.sha256">复制</button><pre class="cmd"><span class="p">$ </span>shasum -a 256 -c MacBox-*.dmg.sha256</pre></div>
+              <div class="term"><div class="term-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><button class="copy" type="button" data-copy="shasum -a 256 -c MacBox-*.dmg.sha256"></button></div><pre class="cmd"><span class="p">$ </span>shasum -a 256 -c MacBox-*.dmg.sha256</pre></div>
             </li>
             <li lang="en">Download <code>MacBox-version.dmg</code>, open it and drag <strong>MacBox</strong> to Applications. To verify the download, get the matching <code>.sha256</code> file from the <a href="https://github.com/PykeDLing/macbox/releases/latest">release page</a>, put it in the same folder and run:
-              <div class="term"><button class="copy" type="button" data-copy="shasum -a 256 -c MacBox-*.dmg.sha256">Copy</button><pre class="cmd"><span class="p">$ </span>shasum -a 256 -c MacBox-*.dmg.sha256</pre></div>
+              <div class="term"><div class="term-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><button class="copy" type="button" data-copy="shasum -a 256 -c MacBox-*.dmg.sha256"></button></div><pre class="cmd"><span class="p">$ </span>shasum -a 256 -c MacBox-*.dmg.sha256</pre></div>
             </li>
             <li lang="zh-CN"><strong>第一次打开</strong>：MacBox 还没有经过 Apple 公证，macOS 会提示 Apple 无法验证“MacBox”是否包含恶意软件。点「完成」，然后到 <strong>系统设置 › 隐私与安全性</strong>，在页面底部点 <strong>仍要打开</strong>，再输入密码确认。也可以在终端里去掉下载标记：
-              <div class="term"><button class="copy" type="button" data-copy="xattr -dr com.apple.quarantine /Applications/MacBox.app">复制</button><pre class="cmd"><span class="p">$ </span>xattr -dr com.apple.quarantine /Applications/MacBox.app</pre></div>
+              <div class="term"><div class="term-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><button class="copy" type="button" data-copy="xattr -dr com.apple.quarantine /Applications/MacBox.app"></button></div><pre class="cmd"><span class="p">$ </span>xattr -dr com.apple.quarantine /Applications/MacBox.app</pre></div>
             </li>
             <li lang="en"><strong>First launch</strong>: MacBox isn’t notarized yet, so macOS says Apple could not verify that it’s free of malware. Click Done, then go to <strong>System Settings › Privacy &amp; Security</strong>, click <strong>Open Anyway</strong> near the bottom and confirm with your password. Or remove the download flag in Terminal:
-              <div class="term"><button class="copy" type="button" data-copy="xattr -dr com.apple.quarantine /Applications/MacBox.app">Copy</button><pre class="cmd"><span class="p">$ </span>xattr -dr com.apple.quarantine /Applications/MacBox.app</pre></div>
+              <div class="term"><div class="term-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><button class="copy" type="button" data-copy="xattr -dr com.apple.quarantine /Applications/MacBox.app"></button></div><pre class="cmd"><span class="p">$ </span>xattr -dr com.apple.quarantine /Applications/MacBox.app</pre></div>
             </li>
             <li lang="zh-CN">把下载的 <code>.dmg</code> 拖进 MacBox，开始使用。</li>
             <li lang="en">Drag a downloaded <code>.dmg</code> into MacBox and you’re set.</li>
@@ -715,17 +851,15 @@
         <h2><span lang="zh-CN">每一行代码都公开。</span><span lang="en">Every line is public.</span></h2>
         <p class="intro" lang="zh-CN">MacBox 以 MIT 许可证开源。不想运行下载的二进制文件，可以自己从源码构建——只需要 Command Line Tools（Swift 6.4 或更新）。</p>
         <p class="intro" lang="en">MacBox is MIT-licensed. If you’d rather not run a downloaded binary, build it from source — the Command Line Tools (Swift 6.4 or later) are all you need.</p>
-        <p style="margin-top: 22px">
-          <a class="btn btn-ghost" style="padding-left:0" href="https://github.com/PykeDLing/macbox">
-            <svg><use href="#i-github"/></svg>PykeDLing/macbox ›
-          </a>
-        </p>
+        <a class="btn btn-ghost btn-link" href="https://github.com/PykeDLing/macbox">
+          <svg aria-hidden="true"><use href="#i-github"/></svg>PykeDLing/macbox ›
+        </a>
       </div>
       <div class="reveal">
-        <div class="term"><button class="copy" type="button" data-copy="git clone https://github.com/PykeDLing/macbox.git
+        <div class="term"><div class="term-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><button class="copy" type="button" data-copy="git clone https://github.com/PykeDLing/macbox.git
 cd macbox
 ./build.sh
-open build/MacBox.app"><span lang="zh-CN">复制</span><span lang="en">Copy</span></button><pre class="cmd"><span class="p">$ </span>git clone https://github.com/PykeDLing/macbox.git
+open build/MacBox.app"></button></div><pre class="cmd"><span class="p">$ </span>git clone https://github.com/PykeDLing/macbox.git
 <span class="p">$ </span>cd macbox
 <span class="p">$ </span>./build.sh
 <span class="p">$ </span>open build/MacBox.app</pre></div>
@@ -736,49 +870,81 @@ open build/MacBox.app"><span lang="zh-CN">复制</span><span lang="en">Copy</spa
 
 <footer>
   <div class="wrap">
-    <span class="dots"><i></i><i></i><i></i></span>
+    <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
     <span>© 2026 PykeDLing</span>
-    <span class="sp"></span>
-    <a href="https://github.com/PykeDLing/macbox/blob/main/LICENSE"><span lang="zh-CN">MIT 许可证</span><span lang="en">MIT License</span></a>
-    <a href="https://github.com/PykeDLing/macbox/issues"><span lang="zh-CN">反馈问题</span><span lang="en">Report an Issue</span></a>
-    <a href="https://github.com/PykeDLing/macbox">GitHub</a>
+    <div class="foot-links">
+      <a href="https://github.com/PykeDLing/macbox/blob/main/LICENSE"><span lang="zh-CN">MIT 许可证</span><span lang="en">MIT License</span></a>
+      <a href="https://github.com/PykeDLing/macbox/issues"><span lang="zh-CN">反馈问题</span><span lang="en">Report an Issue</span></a>
+      <a href="https://github.com/PykeDLing/macbox">GitHub</a>
+    </div>
   </div>
 </footer>
+
+<p class="sr-only" aria-live="polite" id="status"></p>
 
 <script>
   (function () {
     var root = document.documentElement;
+    var nav = document.querySelector(".nav");
+    var shot = document.querySelector(".window");
+    var status = document.getElementById("status");
     var titles = {
       zh: "MacBox — 把不放心的 Mac 软件装进盒子里",
       en: "MacBox — Run the Mac apps you don’t trust in a box"
     };
+    function zh() { return root.dataset.lang === "zh"; }
 
-    function setLang(lang) {
-      root.dataset.lang = lang;
-      root.lang = lang === "zh" ? "zh-CN" : "en";
-      document.title = titles[lang];
-      try { localStorage.setItem("macbox-lang", lang); } catch (e) {}
-      syncLangButtons();
+    // 切换语言后两种文字长短不同，页面会上下跳；记下视口顶部附近的一块，切换后把它放回原来的位置
+    function scrollAnchor() {
+      var top = nav.offsetHeight;
+      var els = document.querySelectorAll("header, section, .reveal:not([lang])");
+      for (var i = 0; i < els.length; i++) {
+        if (els[i].getBoundingClientRect().top >= top) return els[i];
+      }
+      return null;
     }
-    function syncLangButtons() {
+    function applyLang() {
+      document.title = titles[root.dataset.lang] || titles.zh;
+      shot.setAttribute("aria-label", shot.dataset[zh() ? "labelZh" : "labelEn"]);
       document.querySelectorAll(".lang button").forEach(function (b) {
         b.setAttribute("aria-pressed", String(b.dataset.set === root.dataset.lang));
       });
     }
-    syncLangButtons();
-    document.title = titles[root.dataset.lang] || titles.zh;
+    function setLang(lang) {
+      if (lang === root.dataset.lang) return;
+      var anchor = scrollAnchor(), before = anchor && anchor.getBoundingClientRect().top;
+      root.dataset.lang = lang;
+      root.lang = lang === "zh" ? "zh-CN" : "en";
+      try { localStorage.setItem("macbox-lang", lang); } catch (e) {}
+      applyLang();
+      if (anchor) window.scrollBy({ top: anchor.getBoundingClientRect().top - before, behavior: "instant" });
+    }
+    applyLang();
     document.querySelectorAll(".lang button").forEach(function (b) {
       b.addEventListener("click", function () { setLang(b.dataset.set); });
     });
 
-    // 复制命令：剪贴板 API 不可用（非 HTTPS、部分 App 内置浏览器）时退回 execCommand
+    // 导航栏：滚动后才显示底部分隔线
+    function onScroll() { nav.classList.toggle("scrolled", window.scrollY > 4); }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+
+    // 复制命令：剪贴板 API 不可用（非 HTTPS、部分 App 内置浏览器）时退回 execCommand；
+    // 都失败就选中命令，用户直接按 ⌘C
+    var COPY = '<svg aria-hidden="true"><use href="#i-copy"/></svg><span lang="zh-CN">复制</span><span lang="en">Copy</span>';
+    var DONE = '<svg aria-hidden="true"><use href="#i-ok"/></svg><span lang="zh-CN">已复制</span><span lang="en">Copied</span>';
+    var FAIL = '<span lang="zh-CN">按 ⌘C 复制</span><span lang="en">Press ⌘C</span>';
     document.querySelectorAll(".copy").forEach(function (b) {
-      var label = b.innerHTML, timer = 0;
+      var timer = 0;
+      var pre = b.closest(".term").querySelector(".cmd");
+      b.innerHTML = COPY;
       function flash(ok) {
-        var zh = root.dataset.lang === "zh";
-        b.textContent = ok ? (zh ? "已复制" : "Copied") : (zh ? "请手动复制" : "Copy manually");
+        b.innerHTML = ok ? DONE : FAIL;
+        b.classList.toggle("ok", ok);
+        status.textContent = ok ? (zh() ? "已复制到剪贴板" : "Copied to clipboard") : "";
+        if (!ok) window.getSelection().selectAllChildren(pre);
         clearTimeout(timer);
-        timer = setTimeout(function () { b.innerHTML = label; }, 1400);
+        timer = setTimeout(function () { b.innerHTML = COPY; b.classList.remove("ok"); }, 1600);
       }
       function fallback() {
         var ta = document.createElement("textarea");
@@ -802,29 +968,56 @@ open build/MacBox.app"><span lang="zh-CN">复制</span><span lang="en">Copy</spa
       });
     });
 
-    // 下载按钮直接指向最新版的 dmg；取不到时保留指向发布页的链接
+    // 下载按钮直接指向最新版的 dmg，并显示大小和发布日期；取不到时保留指向发布页的链接
     fetch("https://api.github.com/repos/PykeDLing/macbox/releases/latest")
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (release) {
         if (!release) return;
         var dmg = (release.assets || []).filter(function (a) { return /\.dmg$/.test(a.name); })[0];
-        if (dmg) document.querySelectorAll(".js-download").forEach(function (a) { a.href = dmg.browser_download_url; });
         if (release.tag_name) document.querySelectorAll(".js-version").forEach(function (s) { s.textContent = release.tag_name; });
+        if (!dmg) return;
+        document.querySelectorAll(".js-download").forEach(function (a) { a.href = dmg.browser_download_url; });
+        // 和访达一样按 1000 进位
+        var size = (dmg.size / 1e6).toFixed(1) + " MB";
+        var date = new Date(release.published_at || dmg.updated_at);
+        var info = document.querySelector(".js-dl-info");
+        info.querySelector('[lang="zh-CN"]').textContent = size + " · " + date.toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" }) + "发布";
+        info.querySelector('[lang="en"]').textContent = size + " · Released " + date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+        info.hidden = false;
       })
       .catch(function () {});
 
-    // 滚动到视口时淡入
-    var items = document.querySelectorAll(".reveal");
     if (!("IntersectionObserver" in window)) {
-      items.forEach(function (el) { el.classList.add("in"); });
+      document.querySelectorAll(".reveal").forEach(function (el) { el.classList.add("in"); });
       return;
     }
+
+    // 滚动到视口时淡入；同时进入的几块依次错开一点
     var io = new IntersectionObserver(function (entries) {
+      var n = 0;
       entries.forEach(function (e) {
-        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+        if (!e.isIntersecting) return;
+        e.target.style.transitionDelay = Math.min(n++, 4) * 80 + "ms";
+        e.target.classList.add("in");
+        io.unobserve(e.target);
       });
     }, { rootMargin: "0px 0px -8% 0px" });
-    items.forEach(function (el) { io.observe(el); });
+    document.querySelectorAll(".reveal").forEach(function (el) { io.observe(el); });
+
+    // 导航高亮当前所在的版块
+    var links = {};
+    document.querySelectorAll('.nav-links a[href^="#"]').forEach(function (a) { links[a.hash.slice(1)] = a; });
+    var spy = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        var a = links[e.target.id];
+        if (e.isIntersecting) a.setAttribute("aria-current", "true");
+        else a.removeAttribute("aria-current");
+      });
+    }, { rootMargin: "-45% 0px -54% 0px" });
+    Object.keys(links).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) spy.observe(el);
+    });
   })();
 </script>
 </body>
