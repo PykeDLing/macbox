@@ -205,27 +205,50 @@ nonisolated enum ViolationMonitor {
             // “挂载磁盘映像”，正在运行的安装器还会被误判为下载完成、被提前结束
             let mountByHelper = installer && (name == "hdiutil" || name.hasPrefix("diskimages"))
                 && target.contains("DiskArbitration")
-            guard mountByHelper || belongs(message) else { return nil }
+            guard mountByHelper || Self.belongs(Identity.of(message.pid), main: session.pid, boxPrefix: boxPrefix,
+                                                loggedName: name, processNames: processNames) else { return nil }
             return categorize(operation: message.operation, target: target)
+        }
+
+        /// 判断归属要用的进程信息。取信息（读进程表、问守卫）和判断分开，判断是纯函数，便于测试
+        struct Identity: Sendable {
+            /// 可执行文件路径；nil 表示进程已经退出
+            var path: String?
+            var parent: pid_t?
+            var group: pid_t?
+            /// 负责进程。只记下、不作为依据（见 belongs）
+            var responsible: pid_t?
+            /// 守卫记下的归属：继承了盒子沙盒规则的成员所属的会话主进程（见 EscapeGuard.session(of:)）
+            var guardSession: pid_t?
+
+            static func of(_ pid: pid_t) -> Identity {
+                let lineage = ProcessTable.lineage(of: pid)
+                return Identity(path: ProcessTable.path(of: pid), parent: lineage?.parent, group: lineage?.group,
+                                responsible: ProcessTable.responsiblePID(of: pid),
+                                guardSession: EscapeGuard.shared.session(of: pid))
+            }
         }
 
         /// 这条记录是不是本盒子的进程报告的。按进程身份认，名字只用来认已经退出的进程：
         /// 本机同时开着同名的 App（盒子里第二个微信账号、本机的微信）、名字很普通的辅助程序
         /// （Sparkle 的 Installer、Updater），按名字认会把别人的拦截算到盒子头上；
-        /// 反过来，盒子里的 App 调用的系统工具（cp、launchctl、defaults）名字不在盒子里，按名字认不出来
-        private func belongs(_ message: Message) -> Bool {
-            let pid = message.pid
-            let main = session.pid
-            if let main, EscapeGuard.shared.session(of: pid) == main { return true } // 守卫第一次看到它时就确认过归属
-            guard let path = ProcessTable.path(of: pid) else {
+        /// 反过来，盒子里的 App 调用的系统工具（cp、launchctl、defaults）名字不在盒子里，按名字认不出来。
+        ///
+        /// 只认继承了盒子沙盒规则的进程：位于盒子里的、守卫记下的会话成员、在会话进程组里的、父进程是会话主进程的。
+        /// 不看负责进程：系统代 App 启动的 XPC 服务（WebKit 的 WebContent、GPU、Networking）负责进程也是 App，
+        /// 但它们由 launchd 启动、带的是自己的沙盒，报告的拒绝不是盒子的规则挡的
+        /// （每个 WebContent 启动时都会被拒绝读取 /dev/dtracehelper，算进来就成了“读取私人数据”）
+        static func belongs(_ identity: Identity, main: pid_t?, boxPrefix: String,
+                            loggedName: String, processNames: Set<String>) -> Bool {
+            if let main, identity.guardSession == main { return true } // 守卫第一次看到它时就确认过归属
+            guard let path = identity.path else {
                 // 已经退出：只能看名字
-                return processNames.contains { ViolationMonitor.loggedName(message.process, matches: $0) }
+                return processNames.contains { ViolationMonitor.loggedName(loggedName, matches: $0) }
             }
             if path.hasPrefix(boxPrefix) { return true }
             guard let main else { return false }
-            // 会话里的进程：负责进程是会话主进程（App 派生的进程、系统代它启动的 XPC 服务），
-            // 或者在会话的进程组里（主进程退出后留下的进程派生的，负责进程已经不是主进程）
-            return ProcessTable.responsiblePID(of: pid) == main || ProcessTable.lineage(of: pid)?.group == main
+            // 在会话的进程组里（主进程退出后留下的进程派生的也在），或者是会话主进程直接派生、离开了进程组的
+            return identity.group == main || identity.parent == main
         }
 
         private func categorize(operation: String, target: String) -> BlockEvent? {

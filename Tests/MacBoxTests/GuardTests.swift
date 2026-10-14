@@ -75,6 +75,33 @@ final class GuardTests {
         #expect(escapes.all.isEmpty)
     }
 
+    @Test("会话里的进程一派生就记下来：几毫秒就结束的系统工具，守卫没来得及检查也认得出")
+    func shortLivedChildrenAreRecorded() async throws {
+        let (paths, _, profile) = try await makeBox()
+        // 把自己的 pid 写下来再 exec 成 true（exec 不换 pid），true 一启动就结束
+        let child = paths.tmp.appending(path: "child.sh")
+        try "echo $$ > \"$STUB_DIR/$1\"\nexec /usr/bin/true\n".write(to: child, atomically: true, encoding: .utf8)
+        // 不开始守卫的检查，只靠 fork 事件。b 由会话里的另一个 sh 派生：要盯着新记下的进程的 fork 才认得出
+        let watcher = EscapeGuard(boxes: boxes)
+        let main = try ChildProcess.spawn("/usr/bin/sandbox-exec", [
+            "-p", profile, "/bin/sh", "-c", "sleep 0.3; sh '\(child.path)' a; sh -c \"sh '\(child.path)' b; true\"; sleep 0.5",
+        ], options: sessionOptions(paths))
+        watcher.register(session: main.pid)
+        defer {
+            main.signal(SIGKILL)
+            watcher.unregister(session: main.pid)
+        }
+        #expect(await main.waitForExit() == 0)
+        let first = try #require(readPID(paths.tmp.appending(path: "a")))
+        let second = try #require(readPID(paths.tmp.appending(path: "b")))
+        #expect(!isRunning(first) && !isRunning(second))
+        #expect(watcher.session(of: first) == main.pid, "派生后立即结束的进程没被记下")
+        #expect(watcher.session(of: second) == main.pid, "会话里的其他进程派生的没被记下")
+        #expect(watcher.session(of: main.pid) == main.pid)
+        watcher.unregister(session: main.pid)
+        #expect(watcher.session(of: first) == nil, "会话结束后不再算")
+    }
+
     @Test("会话里的程序启动另一个 App 包里的程序（负责进程是它自己）也算会话的")
     func sessionChildInAnotherBundle() async throws {
         let (paths, stub, profile) = try await makeBox()

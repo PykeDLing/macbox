@@ -39,10 +39,14 @@ struct SessionTests {
         return (holder, task)
     }
 
-    /// 测试中途失败时不留下还在运行的进程：结束会话进程组里在沙盒中的进程
-    func killLeftovers(_ holder: Holder) {
-        guard let group = holder.session?.mainPID else { return }
-        for pid in ProcessTable.pids(inGroup: group) where ProcessTable.isSandboxed(pid) { kill(pid, SIGKILL) }
+    /// 测试中途失败时不留下还在运行的进程：结束会话进程组里在沙盒中的进程，以及可执行文件在盒子里的
+    func killLeftovers(_ holder: Holder, box: BoxPaths? = nil) {
+        if let group = holder.session?.mainPID {
+            for pid in ProcessTable.pids(inGroup: group) where ProcessTable.isSandboxed(pid) { kill(pid, SIGKILL) }
+        }
+        if let box {
+            for pid in ProcessTable.processes(under: FileOps.realPath(box.url) + "/") { kill(pid, SIGKILL) }
+        }
     }
 
     func lease(_ paths: BoxPaths, _ config: BoxConfig) -> PreferenceLease {
@@ -100,6 +104,71 @@ struct SessionTests {
         let outcome = try await task.value
         #expect(outcome.mainExitStatus == 128 + SIGKILL)
         #expect(AppLock.isLocked(paths.app(config)))
+    }
+
+    @Test("主进程不是带界面的 App 时，退出请求也送到离开了进程组的盒子程序", .timeLimit(.minutes(1)))
+    func terminateReachesDetachedHelpers() async throws {
+        let (paths, config) = try await makeBox(script: """
+        "$(dirname "$0")/detached"
+        trap 'exit 0' TERM
+        touch "$TMPDIR/ready"
+        while :; do sleep 0.2; done
+        """)
+        defer { try? FileManager.default.removeItem(at: paths.url) }
+        let app = paths.app(config)
+        try await TestDetachedHelper.install(at: app.appending(path: "Contents/MacOS/detached"))
+        try AppLock.lock(app)
+        let (holder, task) = start(paths, config)
+        defer { killLeftovers(holder, box: paths) }
+        #expect(await eventually(.seconds(10)) {
+            holder.session != nil && FileManager.default.fileExists(atPath: paths.tmp.appending(path: "ready").path)
+        })
+        let session = try #require(holder.session)
+        #expect(await eventually {
+            ProcessTable.processes(under: FileOps.realPath(app) + "/").contains { ProcessTable.lineage(of: $0)?.group != session.mainPID }
+        }, "辅助程序应该已经离开会话的进程组")
+
+        session.terminate()
+        let marker = paths.tmp.appending(path: "detached-term")
+        let reached = await eventually(.seconds(5)) { FileManager.default.fileExists(atPath: marker.path) }
+        #expect(reached, "离开了进程组的盒子程序没收到退出请求")
+        if !reached { await session.forceQuit() }
+        let outcome = try await task.value
+        #expect(outcome.mainExitStatus == 0)
+        #expect(AppLock.isLocked(app))
+    }
+
+    @Test("盒子里的文件夹（旧版规则下）被换成指向别处的链接：不打开，也不改动链接指向的文件",
+          .timeLimit(.minutes(1)), arguments: ["App", "Home/Library/Keychains"])
+    func replacedFolderIsRefused(folder: String) async throws {
+        let (paths, config) = try await makeBox(script: "exit 0\n")
+        let victim = AppPaths.root.appending(path: "victim-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer {
+            try? FileManager.default.removeItem(at: paths.url)
+            try? FileManager.default.removeItem(at: victim)
+        }
+        // 把盒子里的文件夹搬到盒子外（代表你自己的文件），原处换成指向它的符号链接
+        let original = paths.url.appending(path: folder)
+        try FileManager.default.moveItem(at: original, to: victim)
+        try FileManager.default.createSymbolicLink(at: original, withDestinationURL: victim)
+        let victimMain = victim.appending(path: "\(config.appFolderName)/Contents/MacOS/main")
+        let victimLogin = victim.appending(path: "login.keychain-db")
+        if folder == "App" {
+            try AppLock.unlock(victim.appending(path: config.appFolderName)) // 你自己装的 App：能运行
+        } else {
+            try "precious".write(to: victimLogin, atomically: true, encoding: .utf8) // 你自己的「登录」钥匙串
+        }
+
+        let error = await #expect(throws: MacBoxError.self) {
+            try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onBlock: { _ in })
+        }
+        #expect(error?.message.contains("link") == true || error?.message.contains("链接") == true)
+        if folder == "App" {
+            #expect(access(victimMain.path, X_OK) == 0, "顺着链接去掉了盒子外 App 的执行权限")
+        } else {
+            #expect((try? String(contentsOf: victimLogin, encoding: .utf8)) == "precious", "顺着链接替换了盒子外的钥匙串")
+        }
+        #expect(!lease(paths, config).isOutstanding)
     }
 
     @Test("退出码和运行时长；只有在线安装器才找下载的安装包；偏好设置已收回", .timeLimit(.minutes(1)), arguments: [false, true])
@@ -210,6 +279,27 @@ struct AppLockTests {
         #expect(programs.allSatisfy(isExecutable))
         let mode = try FileManager.default.attributesOfItem(atPath: data.path)[.posixPermissions] as? Int
         #expect(mode == 0o644, "数据文件不加执行权限")
+    }
+
+    @Test("上锁、解锁不顺着符号链接改到 App 包以外")
+    func lockStaysInsideBundle() throws {
+        let victim = root.appending(path: "Victim.app")
+        try makeFakeApp(at: victim, identifier: "dev.macboxtest.victim", script: "#!/bin/sh\nexit 0\n")
+        let victimMain = victim.appending(path: "Contents/MacOS/main")
+        // App 包本身是链接：一个文件也不改，报错
+        let linked = root.appending(path: "Linked.app")
+        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: victim)
+        #expect(throws: MacBoxError.self) { try AppLock.lock(linked) }
+        #expect(isExecutable(victimMain))
+        // 包里的 MacOS 是链接：不进去
+        let app = root.appending(path: "Z.app")
+        try AppPaths.ensure(app.appending(path: "Contents"))
+        try FileManager.default.createSymbolicLink(at: app.appending(path: "Contents/MacOS"),
+                                                   withDestinationURL: victim.appending(path: "Contents/MacOS"))
+        try AppLock.lock(app)
+        #expect(isExecutable(victimMain))
+        // 不存在的 App：什么也不做
+        try AppLock.lock(root.appending(path: "Missing.app"))
     }
 
     @Test("上锁的 App 也能通过启动前检查；不是程序的过不了")

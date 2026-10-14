@@ -54,21 +54,58 @@ nonisolated enum TestStub {
     }
     """
 
-    private static let compiled = Task { () throws -> URL in
-        let folder = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-stub-\(UUID().uuidString)")
-        try AppPaths.ensure(folder)
-        let output = folder.appending(path: "stub")
-        try await Shell.run("/usr/bin/cc", ["-x", "c", "-o", output.path, "-"], input: source)
-        return output
-    }
+    private static let compiled = Task { try await compileC(source, name: "stub") }
 
     /// 编译好的程序复制到 destination（目录不存在时创建）
     static func install(at destination: URL) async throws {
-        let stub = try await compiled.value
-        try AppPaths.ensure(destination.deletingLastPathComponent())
-        try FileOps.removeIfExists(destination)
-        try FileManager.default.copyItem(at: stub, to: destination)
+        try await installCompiled(compiled.value, at: destination)
     }
+}
+
+/// 离开会话进程组的盒子辅助程序（像调用过 setsid、以 detached 方式启动的辅助程序）：
+/// 启动后 fork，父进程立即退出，子进程 setsid 后等待；收到 SIGTERM 时在 $TMPDIR 里留下 detached-term 再退出。
+/// 最多运行 30 秒，测试失败时也不会一直留着
+nonisolated enum TestDetachedHelper {
+    private static let source = """
+    #include <fcntl.h>
+    #include <signal.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <unistd.h>
+    static char marker[4096];
+    static void term(int signal) { close(open(marker, O_CREAT | O_WRONLY, 0644)); _exit(0); }
+    int main(void) {
+      const char *dir = getenv("TMPDIR");
+      snprintf(marker, sizeof(marker), "%s/detached-term", dir ? dir : "/nonexistent");
+      if (fork() != 0) return 0;
+      setsid();
+      signal(SIGTERM, term);
+      for (int i = 0; i < 300; i++) usleep(100000);
+      return 0;
+    }
+    """
+
+    private static let compiled = Task { try await compileC(source, name: "detached") }
+
+    static func install(at destination: URL) async throws {
+        try await installCompiled(compiled.value, at: destination)
+    }
+}
+
+/// 把一段 C 源码编译到临时目录里
+nonisolated func compileC(_ source: String, name: String) async throws -> URL {
+    let folder = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-\(name)-\(UUID().uuidString)")
+    try AppPaths.ensure(folder)
+    let output = folder.appending(path: name)
+    try await Shell.run("/usr/bin/cc", ["-x", "c", "-o", output.path, "-"], input: source)
+    return output
+}
+
+/// 编译好的程序复制到 destination（目录不存在时创建）
+nonisolated func installCompiled(_ program: URL, at destination: URL) throws {
+    try AppPaths.ensure(destination.deletingLastPathComponent())
+    try FileOps.removeIfExists(destination)
+    try FileManager.default.copyItem(at: program, to: destination)
 }
 
 /// 隔离会话的测试要一个能解锁的盒子钥匙串。security create-keychain 会临时改动你的钥匙串搜索列表，

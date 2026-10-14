@@ -85,19 +85,24 @@ nonisolated enum ProcessTable {
         return arguments
     }
 
+    /// 可执行文件是常见的脚本解释器（只看名字，不碰文件系统）
+    static func isInterpreter(_ executable: String) -> Bool {
+        let name = (executable as NSString).lastPathComponent.lowercased()
+        return shells.contains(name) || ["osascript", "tclsh", "wish"].contains(name)
+            || ["python", "perl", "ruby", "node", "php"].contains { name.hasPrefix($0) }
+    }
+
+    private static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "fish"]
+
     /// 解释器运行的脚本：`/bin/bash /盒子/…/MacOS/启动脚本`、`python3 -u 脚本`。
     /// 主程序是脚本的 App 运行时，进程的可执行文件是解释器，脚本路径只出现在参数里
     /// （内核执行 #! 脚本时把参数改成“解释器 [#! 行的参数] 脚本路径 原参数…”）。
     /// 只认常见的脚本解释器、跳过选项后的第一个参数；`sh -c 命令`、`python3 -c 代码` 这类没有脚本文件。
-    /// 返回解析符号链接后的真实路径，脚本不存在时为 nil
-    static func script(of pid: pid_t, executable: String) -> String? {
-        let name = (executable as NSString).lastPathComponent.lowercased()
-        let shells: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "fish"]
-        let others: Set<String> = ["osascript", "tclsh", "wish"]
-        let families = ["python", "perl", "ruby", "node", "php"]
-        let isShell = shells.contains(name)
-        guard isShell || others.contains(name) || families.contains(where: { name.hasPrefix($0) }),
-              let arguments = arguments(of: pid) else { return nil }
+    /// 返回参数原样（绝对路径），不解析符号链接：解析要逐级访问路径，路径在没响应的网络卷上时会卡住，
+    /// 由调用方决定要不要、在哪里解析
+    static func scriptArgument(of pid: pid_t, executable: String) -> String? {
+        guard isInterpreter(executable), let arguments = arguments(of: pid) else { return nil }
+        let isShell = shells.contains((executable as NSString).lastPathComponent.lowercased())
         for argument in arguments.dropFirst() {
             if argument.hasPrefix("-") {
                 let inline = isShell ? !argument.hasPrefix("--") && argument.contains("c")
@@ -105,11 +110,21 @@ nonisolated enum ProcessTable {
                 if inline { return nil }
                 continue
             }
-            guard argument.hasPrefix("/"), let resolved = realpath(argument, nil) else { return nil }
-            defer { free(resolved) }
-            return String(cString: resolved)
+            return argument.hasPrefix("/") ? argument : nil
         }
         return nil
+    }
+
+    /// 直接子进程（含僵尸进程）
+    static func children(of pid: pid_t) -> [pid_t] {
+        guard pid > 0 else { return [] }
+        var pids = [pid_t](repeating: 0, count: 64)
+        while true {
+            let count = proc_listchildpids(pid, &pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+            guard count > 0 else { return [] }
+            if Int(count) < pids.count { return Array(pids.prefix(Int(count))).filter { $0 > 0 } }
+            pids = [pid_t](repeating: 0, count: pids.count * 4) // 装满了：可能还有，放大再取
+        }
     }
 
     /// 可执行文件位于某目录下的进程（要遍历整个进程表）

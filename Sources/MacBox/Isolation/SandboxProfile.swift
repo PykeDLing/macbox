@@ -18,6 +18,12 @@ nonisolated enum SandboxProfile {
         // （都是盒子目录的直接子项，在真实路径后面拼名字；它们可能还不存在，不能逐个解析）
         func inBox(_ url: URL) -> String { boxRoot + "/" + url.lastPathComponent }
         let boxWritable = [box.home, box.tmp, box.appDirectory].map(inBox)
+        // 可写的只是这几个文件夹里面，文件夹本身不能删、不能改名、不能换成符号链接：
+        // subpath 也包括它自己，App 可以清空 App 文件夹后 rmdir，再在原处放一个指向 /Applications 的链接，
+        // MacBox 在沙盒外上锁、解锁、找安装包、准备主目录时就会顺着链接改到别处（去掉你自己装的同名 App 的执行权限、
+        // 把你真实的「下载」移走）。主目录里的 Library、Library/Keychains 同理：MacBox 每次启动前会在里面
+        // 替换 login.keychain-db，顺着链接替换的会是你自己的「登录」钥匙串
+        let boxSkeleton = boxWritable + ["Library", "Library/Keychains"].map { inBox(box.home) + "/" + $0 }
         // 盒子里 App 不该看到的：本机原来的偏好设置备份（登录状态、设备 ID）、钥匙串密码、还原点
         let boxPrivate = [box.prefs, box.restorePoint].map { "(subpath \(quote(inBox($0))))" }
             + ["(literal \(quote(inBox(box.keychainPassword))))"]
@@ -47,6 +53,8 @@ nonisolated enum SandboxProfile {
         (deny file-write* (subpath \(quote(boxRoot))))
         (allow file-write*
         \(boxWritable.map { "  (subpath \(quote($0)))" }.joined(separator: "\n")))
+        (deny file-write*
+        \(boxSkeleton.map { "  (literal \(quote($0)))" }.joined(separator: "\n")))
 
         ; 只挡内容读取（file-read-data），不挡元数据：App 启动时要逐级解析自身路径
         (deny file-read-data

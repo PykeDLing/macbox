@@ -9,8 +9,8 @@ struct IsolationTests {
 
     func makeBox(shareDownloads: Bool = false) throws -> (BoxPaths, BoxConfig) {
         let paths = BoxPaths(url: root.appending(path: "\(UUID().uuidString).box"))
-        try AppPaths.ensure(paths.home)
-        try AppPaths.ensure(paths.tmp)
+        // 和启动前准备好的一样：这几个文件夹本身沙盒里的进程建不了（见 SandboxProfile）
+        for folder in [paths.keychains, paths.tmp, paths.appDirectory] { try AppPaths.ensure(folder) }
         var config = BoxConfig(id: UUID(), name: "T", bundleIdentifier: "dev.macboxtest.app", appFolderName: "T.app")
         config.shareDownloads = shareDownloads
         return (paths, config)
@@ -48,9 +48,37 @@ struct IsolationTests {
         for control in ["box.json", "w", "Prefs/.lease.json", "Prefs/.native/x.plist", ".keychain-password", "RestorePoint/Home/w"] {
             #expect(try await !canWrite("\(paths.url.path)/\(control)"), "\(control)")
         }
+        // 里面照常：新建、改名、删除文件夹和文件
+        let box = paths.url.path
+        let inside = try await sandboxed(paths, config, """
+        for d in '\(box)/App' '\(box)/Home' '\(box)/tmp' '\(box)/Home/Library/Keychains'; do
+          mkdir -p "$d/a" && mv "$d/a" "$d/b" && echo x > "$d/b/f" && mv "$d/b/f" "$d/b/g" && rm "$d/b/g" && rmdir "$d/b" && echo ok
+        done
+        """)
+        #expect(inside == "ok\nok\nok\nok")
         #expect(try await sandboxed(paths, config, "touch '\(probe)' 2>/dev/null && echo leak || echo denied") == "denied")
         #expect(try await sandboxed(paths, config, "touch '\(home)/Downloads/.macbox-probe' 2>/dev/null && echo leak || echo denied") == "denied")
         #expect(try await sandboxed(paths, config, "echo $HOME") == paths.home.path)
+    }
+
+    @Test("盒子里可写的文件夹本身不能删除、改名、换成符号链接", arguments: ["App", "Home", "tmp", "Home/Library", "Home/Library/Keychains"])
+    func boxSkeletonIsFixed(folder: String) async throws {
+        let (paths, config) = try makeBox()
+        // 只留下这一个空文件夹（和它的上级）：rmdir 成不成功只取决于规则
+        try FileManager.default.removeItem(at: paths.url)
+        let target = paths.url.appending(path: folder).path
+        try AppPaths.ensure(URL(fileURLWithPath: target))
+        let output = try await sandboxed(paths, config, """
+        rmdir '\(target)' 2>/dev/null && echo rmdir
+        mv '\(target)' '\(target).old' 2>/dev/null && echo mv
+        [ -d '\(target)' ] && [ ! -L '\(target)' ] && echo intact
+        """)
+        #expect(output == "intact", "\(folder)")
+        // 不存在时（比如在线安装器的盒子还没有 App 文件夹）也不能在原处放一个符号链接
+        try FileManager.default.removeItem(atPath: target)
+        let link = try await sandboxed(paths, config, "ln -s /Applications '\(target)' 2>/dev/null && echo linked || echo denied")
+        #expect(link == "denied", "\(folder)")
+        #expect(!FileManager.default.fileExists(atPath: target))
     }
 
     @Test("读取：其他盒子、密钥和凭证、其他 App 的数据都读不到")
@@ -133,6 +161,102 @@ struct IsolationTests {
         #expect(!EscapeGuard.isManaged(session.pid, sessions: []), "没登记：例如 MacBox 崩溃后遗留的进程")
         #expect(EscapeGuard.isManaged(session.pid, sessions: [session.pid]))
         #expect(!EscapeGuard.isManaged(plain.pid, sessions: [plain.pid]), "不在沙盒中")
+    }
+
+    @Test("守卫认会话成员：进程组、父进程认出的继承了沙盒规则，负责进程认出的没有")
+    func guardAdmission() {
+        let main: pid_t = 500, helper: pid_t = 600
+        let members: [pid_t: EscapeGuard.Membership] = [
+            main: .init(session: main, inherited: true),
+            helper: .init(session: main, inherited: true),
+            700: .init(session: main, inherited: false), // 系统代 App 启动的 XPC 服务
+        ]
+        func admit(parent: pid_t, group: pid_t, responsible: pid_t?) -> EscapeGuard.Membership? {
+            EscapeGuard.admission(900, lineage: ProcessTable.Lineage(parent: parent, group: group, isZombie: false),
+                                  responsible: responsible, sessions: [main]) { members[$0] }
+        }
+        #expect(admit(parent: 1, group: main, responsible: 900) == .init(session: main, inherited: true), "会话进程组里的")
+        #expect(admit(parent: helper, group: 900, responsible: 900) == .init(session: main, inherited: true), "离开了进程组的子进程")
+        #expect(admit(parent: 700, group: 901, responsible: 700) == .init(session: main, inherited: false), "XPC 服务派生的")
+        // launchd 代 App 启动的 XPC 服务（WebKit 的 WebContent 等）：只有负责进程是会话的
+        #expect(admit(parent: 1, group: 900, responsible: main) == .init(session: main, inherited: false))
+        #expect(admit(parent: 1, group: 900, responsible: 900) == nil)
+    }
+
+    @Test("拦截记录归属的判断：负责进程是会话主进程、但没继承盒子沙盒规则的不算")
+    func attributionRule() {
+        typealias Identity = ViolationMonitor.Parser.Identity
+        let main: pid_t = 500
+        func belongs(_ identity: Identity, name: String = "x", main: pid_t? = main) -> Bool {
+            ViolationMonitor.Parser.belongs(identity, main: main, boxPrefix: "/box/", loggedName: name, processNames: ["Helper"])
+        }
+        // 系统代 App 启动的 XPC 服务：父进程是 launchd、自己一个进程组，负责进程是 App；它报告的拒绝来自它自己的沙盒
+        let webContent = Identity(path: "/System/Library/Frameworks/WebKit.framework/XPCServices/WebContent", parent: 1,
+                                  group: 900, responsible: main)
+        #expect(!belongs(webContent))
+        #expect(belongs(Identity(path: "/usr/bin/touch", parent: 1, group: main, responsible: 900)), "会话进程组里的")
+        #expect(belongs(Identity(path: "/usr/bin/touch", parent: main, group: 901)), "会话主进程直接派生、离开了进程组的")
+        #expect(belongs(Identity(path: "/box/App/S.app/Contents/MacOS/S", parent: 1, group: 1)), "盒子里的程序")
+        #expect(belongs(Identity(path: nil, guardSession: main)), "守卫记下的成员，已退出")
+        #expect(!belongs(Identity(path: "/usr/bin/touch", parent: 1, group: 900, guardSession: 999)), "别的会话的成员")
+        #expect(belongs(Identity(path: nil), name: "Helper"), "已退出：按名字")
+        #expect(!belongs(Identity(path: nil), name: "touch"))
+        #expect(!belongs(Identity(path: "/usr/bin/touch", parent: 1, group: main), main: nil), "还不知道会话主进程")
+    }
+
+    @Test("解释器运行的脚本：给出参数原样，不解析符号链接；-c 这类没有脚本文件")
+    func scriptArgument() async throws {
+        let script = root.appending(path: "s.sh")
+        try AppPaths.ensure(root)
+        try "sleep 3\ntrue\n".write(to: script, atomically: true, encoding: .utf8) // 最后一条不是 sleep：sh 可能直接 exec 最后一条
+        // 临时目录本身经过符号链接（/var → /private/var），给出的必须还是原样
+        let unresolved = script.path.replacingOccurrences(of: "/private/var/", with: "/var/")
+        let file = try ChildProcess.spawn("/bin/sh", [unresolved])
+        let inline = try ChildProcess.spawn("/bin/sh", ["-c", "sleep 3; true", unresolved])
+        defer { [file, inline].forEach { $0.signal(SIGKILL) } }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(ProcessTable.scriptArgument(of: file.pid, executable: "/bin/sh") == unresolved)
+        #expect(ProcessTable.scriptArgument(of: inline.pid, executable: "/bin/sh") == nil)
+        #expect(ProcessTable.scriptArgument(of: file.pid, executable: "/bin/sleep") == nil, "不是解释器")
+    }
+
+    @Test("系统日志：几毫秒就结束的系统工具（touch）的拒绝记录也归盒子", .enabled(if: AppPaths.override != nil, "需要 MACBOX_DATA_ROOT"))
+    func shortLivedToolAttribution() async throws {
+        let (paths, config) = try makeBox()
+        // 内核会丢弃一部分拒绝报告（全局限流），多试几次
+        var received: BlockEvent?
+        for _ in 0..<3 where received == nil {
+            let session = SessionPID()
+            let events = await ViolationMonitor.events(boxPrefix: FileOps.realPath(paths.url), processNames: [], session: session)
+            let name = "dev.macboxtest.\(UUID().uuidString).plist"
+            let target = "\(AppPaths.realHome.path)/Library/LaunchAgents/\(name)"
+            defer { try? FileManager.default.removeItem(atPath: target) }
+            let waiting = Task { () -> BlockEvent? in
+                for await event in events where event.target.hasSuffix(name) { return event }
+                return nil
+            }
+            var options = ChildProcess.Options()
+            options.environment["HOME"] = paths.home.path
+            options.newProcessGroup = true
+            options.disclaimResponsibility = true
+            // touch 被拒绝后立刻退出，拦截记录到达时它早已不在：名字不在盒子里，也查不到它的进程信息
+            let main = try ChildProcess.spawn("/usr/bin/sandbox-exec", [
+                "-p", SandboxProfile.make(box: paths, config: config),
+                "/bin/sh", "-c", "sleep 0.3; /usr/bin/touch '\(target)'; sleep 1",
+            ], options: options)
+            EscapeGuard.shared.register(session: main.pid)
+            session.set(main.pid)
+            let timeout = Task {
+                try await Task.sleep(for: .seconds(6))
+                waiting.cancel()
+            }
+            received = await waiting.value
+            timeout.cancel()
+            main.signal(SIGKILL)
+            _ = await main.waitForExit()
+            EscapeGuard.shared.unregister(session: main.pid)
+        }
+        #expect(received?.kind == .autostart)
     }
 
     @Test("系统日志：多个订阅共用一个 log 进程；盒子派生的系统程序的拒绝记录归盒子，本机同名进程的不归")

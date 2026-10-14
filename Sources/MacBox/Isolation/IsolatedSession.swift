@@ -74,8 +74,8 @@ final class IsolatedSession {
         options.disclaimResponsibility = true
         // App 平时是锁着的（见 AppLock），启动前一刻才解锁；所有进程退出后、或者启动失败时再锁上
         let app = paths.app(config)
-        try await unlock(app, executable: plan.executable)
-        defer { await lock(app) }
+        try await unlock(app, executable: plan.executable, paths: paths)
+        defer { await lock(app, paths: paths) }
         let process = try ChildProcess.spawn("/usr/bin/sandbox-exec", ["-p", profile, plan.executable] + plan.arguments,
                                              options: options)
         EscapeGuard.shared.register(session: process.pid)
@@ -97,16 +97,19 @@ final class IsolatedSession {
     /// 主进程已退出（会话可能还在：辅助进程还在运行）
     var mainHasExited: Bool { process.hasExited }
 
-    /// 让窗口回到前台。主进程已退出时（启动器式的主程序、重启以生效后的新实例），切到盒子里还在运行的带界面的程序
+    /// 让窗口回到前台。主进程不是普通的带界面的 App 时（启动器式的主程序、在后台运行的辅助程序，
+    /// 或者已经退出、重启以生效后换了新实例），切到盒子里还在运行的普通 App；一个都没有时才切到主进程
     func activate() {
-        if !process.hasExited, let app = NSRunningApplication(processIdentifier: mainPID) {
-            app.activate()
+        let main = process.hasExited ? nil : NSRunningApplication(processIdentifier: mainPID)
+        if let main, main.activationPolicy == .regular {
+            main.activate()
             return
         }
         let boxRoot = boxRoot
-        NSWorkspace.shared.runningApplications.first { app in
+        let regular = NSWorkspace.shared.runningApplications.first { app in
             app.activationPolicy == .regular && app.bundleURL.map { FileOps.realPath($0).hasPrefix(boxRoot) } == true
-        }?.activate()
+        }
+        (regular ?? main)?.activate()
     }
 
     /// 请求退出，像 ⌘Q 一样。只是请求：App 可能弹出“是否存储”，用户也可能点“取消”继续使用，
@@ -116,14 +119,22 @@ final class IsolatedSession {
         guard !exited else { return }
         if !process.hasExited {
             // 主进程还在：只请求它退出，由它结束自己的辅助进程（辅助进程里可能就有没存的内容）。
-            // 不是带界面的 App（命令行程序、脚本）时给整组发 SIGTERM，和在终端里结束它一样
             if let app = NSRunningApplication(processIdentifier: mainPID), app.terminate() { return }
+            // 不是带界面的 App（命令行程序、脚本）时给整组发 SIGTERM，和在终端里结束它一样；
+            // 离开了进程组的盒子程序（调用过 setsid 的、以 detached 方式启动的辅助程序）收不到，单独请求。
+            // 组里的不再单独发：带 trap 的脚本每收到一次都会执行一遍
             process.signal(SIGTERM)
+            requestQuit { ProcessTable.lineage(of: $0)?.group != $1 }
             return
         }
         // 主进程已退出、只剩辅助进程：带界面的（比如重启以生效后的新实例）请求退出，其余的发 SIGTERM
+        requestQuit { _, _ in true }
+    }
+
+    /// 请求会话里 include 选中的进程退出（参数：进程、会话的进程组号）：带界面的请求退出，其余的发 SIGTERM
+    private func requestQuit(_ include: @escaping @Sendable (pid_t, pid_t) -> Bool) {
         Task {
-            for pid in await Self.members(boxRoot: boxRoot, group: mainPID) where !exited {
+            for pid in await Self.members(boxRoot: boxRoot, group: mainPID) where !exited && include(pid, mainPID) {
                 if let app = NSRunningApplication(processIdentifier: pid), app.terminate() { continue }
                 kill(pid, SIGTERM)
             }
@@ -197,7 +208,8 @@ final class IsolatedSession {
 
     /// 解锁 App，确认主程序能执行；失败时重新锁上再抛出
     @concurrent
-    private static func unlock(_ app: URL, executable: String) async throws {
+    private static func unlock(_ app: URL, executable: String, paths: BoxPaths) async throws {
+        try checkLayout(paths, app: app) // 准备时查过，这之间又借出了偏好设置、准备了钥匙串；只是几次 lstat，解锁前再查一次
         do {
             try AppLock.unlock(app)
             guard access(executable, X_OK) == 0 else {
@@ -210,13 +222,41 @@ final class IsolatedSession {
         }
     }
 
+    /// 重新锁上。App 运行期间改得到 App 文件夹里的内容，可能把 App 换成了指向别处的符号链接（比如指向
+    /// /Applications 里你自己装的同名 App）：这时不锁，顺着链接会去掉别处 App 的执行权限
     @concurrent
-    private static func lock(_ app: URL) async {
+    private static func lock(_ app: URL, paths: BoxPaths) async {
         do {
+            try checkLayout(paths, app: app)
             try AppLock.lock(app)
         } catch {
             NSLog("MacBox: 无法锁上 App：\(error.localizedDescription)")
         }
+    }
+
+    /// MacBox 在沙盒外要读写的盒子文件夹不能是符号链接，App 必须真的在盒子的 App 文件夹里。
+    /// 现在的沙盒规则不许 App 删除、替换这些文件夹（见 SandboxProfile），旧版的规则许可：那时被换成指向别处的链接的，
+    /// 顺着链接准备主目录、替换钥匙串的链接、给 App 上锁解锁，改到的都是盒子以外你自己的文件。
+    /// App 包本身在 App 文件夹里面，运行期间仍然可能被换掉，所以每次上锁前也要查
+    nonisolated static func checkLayout(_ paths: BoxPaths, app: URL) throws {
+        let folders = [paths.home, paths.tmp, paths.appDirectory, paths.home.appending(path: "Library"), paths.keychains]
+        if let replaced = folders.first(where: { isSymlink($0.path) }) {
+            let name = replaced.lastPathComponent
+            throw MacBoxError(L("盒子里的「\(name)」文件夹被换成了指向别处的链接。为了不改动盒子以外的文件，这个应用不会打开。可以删除它再重新添加。",
+                                "The “\(name)” folder in this box was replaced with a link to another location. To avoid changing files outside the box, the app won’t open. Try deleting it and adding it again."))
+        }
+        // App 不存在时由读取 App 信息的那一步报告
+        let folder = FileOps.realPath(paths.url) + "/" + paths.appDirectory.lastPathComponent + "/"
+        guard !FileManager.default.fileExists(atPath: app.path) || FileOps.realPath(app).hasPrefix(folder) else {
+            throw MacBoxError(L("盒子里的 App 被换成了指向别处的链接。为了不改动盒子以外的文件，这个应用不会打开。可以删除它再重新添加。",
+                                "The app in this box was replaced with a link to another location. To avoid changing files outside the box, the app won’t open. Try deleting it and adding it again."))
+        }
+    }
+
+    /// 路径本身是符号链接（不跟随最后一级；URL 的 path 不带结尾的 /，带了就会跟随）
+    private nonisolated static func isSymlink(_ path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0 && info.st_mode & S_IFMT == S_IFLNK
     }
 
     private static func environment(for paths: BoxPaths) -> [String: String] {
@@ -255,6 +295,7 @@ final class IsolatedSession {
     @concurrent
     private static func prepare(_ paths: BoxPaths, config: BoxConfig) async throws -> LaunchPlan {
         let app = paths.app(config)
+        try checkLayout(paths, app: app)
         let info = try AppInspector.info(of: app)
         try preflight(info.executable)
         try prepareHome(paths, config: config)
