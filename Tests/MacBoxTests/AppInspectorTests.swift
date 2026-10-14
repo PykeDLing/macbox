@@ -173,6 +173,19 @@ final class AppInspectorTests {
             ("com.quark.clouddrive.mac", ["com.quark.clouddrive"], ["com.quark.clouddrive.mac"]),
             ("dev.macboxtest.a.b", ["dev.macboxtest"], ["dev.macboxtest.a.b"]),
             ("com.foo", [], ["com.foo"]),
+            // jp.co.、cn.com.、uk.co. 这类两段后缀：厂商是前三段，五段以上才放宽，放宽到前四段。
+            // 佳能的打印、扫描工具装在 /Library/Printers 等查不到的地方，整个厂商不放宽
+            ("jp.co.canon.ij.scanutility", [], ["jp.co.canon.ij.scanutility"]),
+            ("jp.co.example.scanner", [], ["jp.co.example.scanner"]),
+            ("jp.co.example.scan.utility", [], ["jp.co.example.scan"]),
+            ("cn.com.foo.bar.app", [], ["cn.com.foo.bar"]),
+            ("cn.com.foo.bar.app", ["cn.com.foo.bar.player"], ["cn.com.foo.bar.app"]),
+            ("uk.co.foo.app", [], ["uk.co.foo.app"]),
+            // 反写时顺序搞反的 foo.com.cn → com.cn.foo
+            ("com.cn.foo.app", [], ["com.cn.foo.app"]),
+            ("com.cn.foo.bar.app", [], ["com.cn.foo.bar"]),
+            // 两个字母的厂商名（jd.com）不是国家顶级域，照常放宽
+            ("com.jd.mall.mac", [], ["com.jd.mall"]),
           ] as [(String, Set<String>, [String])])
     func preferencePrefixes(identifier: String, installed: Set<String>, expected: [String]) throws {
         let app = try makeApp(try directory().appending(path: "A.app"), id: identifier)
@@ -213,6 +226,17 @@ final class AppInspectorTests {
         // 没有冲突时放宽到前三段，被它盖住的部件不再单列
         let widened = AppInspector.preferencePrefixes(for: app, identifier: "dev.macboxtest.vendor.app", installed: [])
         #expect(widened.first == "dev.macboxtest.vendor" && !widened.contains("dev.macboxtest.vendor.app.xpc"))
+    }
+
+    @Test("偏好设置域前缀：两段后缀（cn.com.）下按前三段认厂商，别家的部件、只有厂商根的部件都不借")
+    func secondLevelSuffixVendors() throws {
+        let app = try makeApp(try directory().appending(path: "Foo.app"), id: "cn.com.foo.bar.app")
+        let contents = app.appending(path: "Contents")
+        try makeApp(contents.appending(path: "Library/LoginItems/Agent.app"), id: "cn.com.foo.agent")
+        try makeApp(contents.appending(path: "Helpers/Other.app"), id: "cn.com.other.helper")
+        try writePlist(["CFBundleIdentifier": "cn.com.foo"], to: contents.appending(path: "XPCServices/Root.xpc/Contents/Info.plist"))
+        #expect(AppInspector.preferencePrefixes(for: app, identifier: "cn.com.foo.bar.app", installed: [])
+                == ["cn.com.foo.bar", "cn.com.foo.agent"])
     }
 
     @Test("本机安装的 App：读「应用程序」顶层和其中文件夹里的 Info.plist")

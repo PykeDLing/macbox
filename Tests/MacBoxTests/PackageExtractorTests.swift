@@ -62,6 +62,15 @@ final class PackageExtractorTests {
         return try await makePkg(name, in: directory, payload: payload)
     }
 
+    /// 产品归档（productbuild 做的分发包）：组件包套在外层安装包里，展开后 App 在 <组件>.pkg/Payload 下。
+    /// Zoom、Chrome、Office 等厂商的安装包和在线安装器下载的安装包多半是这种
+    func makeProductArchive(_ name: String, app: String, in directory: URL) async throws -> URL {
+        let component = try await makeAppPkg("component", app: app, in: try self.directory("component"))
+        let product = directory.appending(path: "\(name).pkg")
+        try await Shell.run("/usr/bin/productbuild", ["--quiet", "--package", component.path, product.path])
+        return product
+    }
+
     /// 卸载包：比安装包大，里面也有个 App（清理工具），只看体积或排序就会选错
     func makeUninstallerPkg(_ name: String, in directory: URL) async throws -> URL {
         let payload = try self.directory("uninstaller")
@@ -156,6 +165,18 @@ final class PackageExtractorTests {
         #expect(!FileManager.default.fileExists(atPath: marker.path))
     }
 
+    @Test("产品归档（productbuild）：单独的、装在 dmg 里的、装在 zip 里的都能取出 App", arguments: ["pkg", "dmg", "zip"])
+    func productArchive(container: String) async throws {
+        let source = try directory("source")
+        var package = try await makeProductArchive("Product", app: "Prod", in: source)
+        if container == "dmg" { package = try await makeDmg(of: source) }
+        if container == "zip" { package = try await makeZip(of: package) }
+        let extracted = try await PackageExtractor.extractApp(from: package, into: output())
+        #expect(extracted.app.lastPathComponent == "Prod.app")
+        #expect(try AppInspector.info(of: extracted.app).bundleIdentifier == "dev.macboxtest.prod")
+        #expect(await noImagesAttached())
+    }
+
     @Test("不支持的类型报错")
     func unsupported() async {
         await #expect(throws: MacBoxError.self) {
@@ -245,6 +266,34 @@ final class PackageExtractorTests {
         #expect(FileOps.allocatedSize(of: extras) > FileOps.allocatedSize(of: source.appending(path: "Foo.pkg")))
         let dmg = try await makeDmg(of: source)
         #expect(try await PackageExtractor.extractApp(from: dmg, into: output()).app.lastPathComponent == "Foo.app")
+        #expect(await noImagesAttached())
+    }
+
+    // MARK: - 没找到
+
+    static let notFoundInDiskImage = L("磁盘映像里没有找到 App 或安装包", "No app or installer package was found in the disk image")
+
+    @Test("dmg 里只有无关的压缩包（说明文档、坏的压缩包）：报磁盘映像里没找到，不报里面压缩包的错")
+    func unrelatedArchivesInDiskImage() async throws {
+        let source = try directory("source")
+        let docs = try directory("Documentation")
+        try "readme".write(to: docs.appending(path: "README.txt"), atomically: true, encoding: .utf8)
+        try FileManager.default.moveItem(at: try await makeZip(of: docs), to: source.appending(path: "Documentation.zip"))
+        try Data("not a zip".utf8).write(to: source.appending(path: "Broken.zip"))
+        let dmg = try await makeDmg(of: source)
+        let error = await #expect(throws: MacBoxError.self) { try await PackageExtractor.extractApp(from: dmg, into: self.output()) }
+        #expect(error?.message == Self.notFoundInDiskImage)
+        #expect(await noImagesAttached())
+    }
+
+    @Test("dmg 里的安装包展开失败：报磁盘映像里没找到，附上是哪个安装包、为什么")
+    func brokenPackageInDiskImage() async throws {
+        let source = try directory("source")
+        try Data("not a package".utf8).write(to: source.appending(path: "Broken.pkg"))
+        let dmg = try await makeDmg(of: source)
+        let error = await #expect(throws: MacBoxError.self) { try await PackageExtractor.extractApp(from: dmg, into: self.output()) }
+        let message = try #require(error?.message)
+        #expect(message.hasPrefix(Self.notFoundInDiskImage) && message.contains("Broken.pkg") && message.contains("pkgutil"), "\(message)")
         #expect(await noImagesAttached())
     }
 
@@ -363,6 +412,29 @@ final class PackageExtractorTests {
         let extracted = try await PackageExtractor.extractApp(from: zip, into: output())
         #expect(quarantine(extracted.app) != nil)
         #expect(quarantine(extracted.app.appending(path: "Contents/MacOS/main")) != nil)
+    }
+
+    @Test("去掉隔离标记（通过公证后）：只读的文件也去掉，权限恢复原样")
+    func clearQuarantine() async throws {
+        let pkg = try await makeQuarantineTestPkg()
+        FileOps.markQuarantined(pkg)
+        let app = try await PackageExtractor.extractApp(from: pkg, into: output()).app
+        try expectQuarantined(app, as: try #require(quarantine(pkg)))
+        // 包里指向外面的符号链接：只处理链接本身，不能去改它指向的文件
+        let outside = try directory("outside").appending(path: "target.txt")
+        try "x".write(to: outside, atomically: true, encoding: .utf8)
+        FileOps.markQuarantined(outside)
+        try FileManager.default.createSymbolicLink(at: app.appending(path: "Contents/Resources/link.txt"), withDestinationURL: outside)
+
+        PackageExtractor.clearQuarantine(app)
+        var items = [app]
+        let enumerator = FileManager.default.enumerator(at: app, includingPropertiesForKeys: nil)
+        while let item = enumerator?.nextObject() as? URL { items.append(item) }
+        #expect(items.count > 5)
+        for item in items { #expect(quarantine(item) == nil, "\(item.path)") }
+        let mode = try FileManager.default.attributesOfItem(atPath: app.appending(path: "Contents/Resources/readonly.txt").path)[.posixPermissions]
+        #expect((mode as? NSNumber)?.intValue == 0o444, "去掉标记后要恢复原来的权限")
+        #expect(quarantine(outside) != nil, "链接指向的包外文件不动")
     }
 
     @Test("没有隔离标记的 pkg：取出的 App 也不加")

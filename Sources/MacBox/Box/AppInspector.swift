@@ -173,19 +173,44 @@ nonisolated enum AppInspector {
     }
 
     /// 多个产品共用前三段标识符的厂商（com.google.Chrome / .canary / .beta、com.apple.dt.Xcode、
-    /// com.microsoft.edgemac.Beta），这些标识符不往上放宽
+    /// com.microsoft.edgemac.Beta），这些标识符不往上放宽。jp.co.canon：打印、扫描工具（jp.co.canon.ij.*）
+    /// 装在 /Library/Printers、/Library/Image Capture 和「应用程序」的深层文件夹里，查本机 App 时看不到
     private static let sharedVendors: Set<String> = [
         "com.apple", "com.google", "com.microsoft", "com.adobe", "org.mozilla", "com.jetbrains",
         "com.brave", "com.operasoftware", "com.vivaldi", "org.chromium", "com.github", "com.amazon",
+        "jp.co.canon",
     ]
+
+    /// 国家顶级域下惯用的二级域（jp.co、cn.com、uk.co、au.com、kr.or、jp.ac…）：和 com 一样是公共后缀，
+    /// 再下一段才是厂商
+    private static let secondLevelDomains: Set<String> = [
+        "co", "com", "net", "org", "ac", "gov", "edu", "ne", "or", "go", "gob", "gen", "ltd", "plc", "nom", "mil", "sch",
+    ]
+
+    /// 反写时顺序搞反的写法（foo.com.cn → com.cn.foo、foo.co.uk → co.uk.foo）里的国家顶级域。
+    /// 只收惯用二级域注册的这些，com.jd、com.qq、com.hp 这类两个字母的厂商名不能当成后缀
+    private static let secondLevelCountries: Set<String> = [
+        "cn", "uk", "jp", "kr", "tw", "hk", "au", "nz", "br", "sg", "za", "il", "in", "mx", "ar", "tr",
+    ]
+
+    /// 标识符里表示厂商的段数：通常是两段（com.foo），公共后缀是两段时是三段（jp.co.canon、cn.com.foo、com.cn.foo）
+    private static func vendorLength(of components: [Substring]) -> Int {
+        guard components.count >= 3 else { return 2 }
+        let first = components[0].lowercased(), second = components[1].lowercased()
+        let isCountry = first.count == 2 && first.allSatisfy { $0.isASCII && $0.isLetter }
+        if isCountry && secondLevelDomains.contains(second) { return 3 }
+        if ["com", "net", "org", "co", "ac", "edu", "gov"].contains(first) && secondLevelCountries.contains(second) { return 3 }
+        return 2
+    }
 
     /// 借出的偏好设置域前缀，每个前缀覆盖 <前缀> 和 <前缀>.*：
     /// - App 自己的完整标识符；
-    /// - 包里的登录项、Helpers、XPC 服务、扩展、内嵌 App 各自的标识符：只收同一厂商（前两段相同）、
-    ///   不比 App 自己的更宽、也不与本机安装的其他 App 重叠的。Sparkle、Electron 这类第三方组件的
+    /// - 包里的登录项、Helpers、XPC 服务、扩展、内嵌 App 各自的标识符：只收同一厂商（厂商段相同，见 vendorLength）、
+    ///   比厂商段长、不比 App 自己的更宽、也不与本机安装的其他 App 重叠的。Sparkle、Electron 这类第三方组件的
     ///   标识符所有用它的 App 都一样，借走会把本机其他 App 的设置一起换掉；
-    /// - 标识符至少四段时放宽到前三段，覆盖同系列的安装器和 helper
-    ///   （com.quark.clouddrive.installer → com.quark.clouddrive），但前三段不能属于共用前缀的厂商，
+    /// - 标识符比厂商段多两段以上时放宽到厂商段加一段，覆盖同系列的安装器和 helper
+    ///   （com.quark.clouddrive.installer → com.quark.clouddrive；jp.co.、cn.com. 这类两段后缀下是五段以上
+    ///   放宽到前四段，jp.co.foo.bar 放宽成 jp.co.foo 就盖住了整个厂商），但放宽后的前缀不能属于共用前缀的厂商，
     ///   也不能等于、覆盖或落在本机安装的其他 App 的标识符之下。
     /// 不足三段的标识符（com.foo）只能原样返回，借出时仍会覆盖 com.foo.*。
     /// 会读本机「应用程序」文件夹里各 App 的 Info.plist，在后台调用
@@ -202,18 +227,23 @@ nonisolated enum AppInspector {
             let prefix = prefix.lowercased()
             return others.contains { $0 == prefix || $0.hasPrefix(prefix + ".") || prefix.hasPrefix($0 + ".") }
         }
-        func vendor(_ id: String) -> String { id.lowercased().split(separator: ".").prefix(2).joined(separator: ".") }
+        func vendor(_ id: String) -> String {
+            let components = id.lowercased().split(separator: ".")
+            return components.prefix(vendorLength(of: components)).joined(separator: ".")
+        }
         func covers(_ prefix: String, _ domain: String) -> Bool { domain == prefix || domain.hasPrefix(prefix + ".") }
 
         var main = identifier
         let components = identifier.split(separator: ".", omittingEmptySubsequences: false)
-        if components.count >= 4, !components.contains(where: \.isEmpty), !sharedVendors.contains(vendor(identifier)) {
-            let widened = components.prefix(3).joined(separator: ".")
+        let vendorCount = vendorLength(of: components)
+        if components.count >= vendorCount + 2, !components.contains(where: \.isEmpty), !sharedVendors.contains(vendor(identifier)) {
+            let widened = components.prefix(vendorCount + 1).joined(separator: ".")
             if !overlapsOthers(widened) { main = widened }
         }
 
         let nested = nestedBundleIdentifiers(in: app).filter { id in
-            isWellFormed(id) && id.split(separator: ".").count >= 3
+            let components = id.split(separator: ".")
+            return isWellFormed(id) && components.count > vendorLength(of: components)
                 && vendor(id) == vendor(identifier) && !sharedVendors.contains(vendor(id))
                 && !covers(id, main) && !overlapsOthers(id)
         }
@@ -336,7 +366,9 @@ nonisolated enum AppInspector {
     }
 
     /// 用 Gatekeeper 同样的规则检查 App：通过公证的，去掉盒子里副本的“来自互联网”标记，
-    /// 免得系统在 MacBox 已经确认过之后再弹一次“确定要打开吗”；没通过的保留标记，由系统拦下
+    /// 免得系统在 MacBox 已经确认过之后再弹一次“确定要打开吗”；没通过的保留标记，由系统拦下。
+    /// 去标记要遍历整个 App 包，在后台执行
+    @concurrent
     static func verifyAndTrust(_ app: URL) async -> CompatibilityIssue {
         let result = try? await Shell.execute("/usr/sbin/spctl", ["--assess", "--type", "execute", "-vv", app.path])
         let text = (result?.output ?? "") + (result?.error ?? "")
@@ -344,7 +376,8 @@ nonisolated enum AppInspector {
             text.split(separator: "\n").first { $0.hasPrefix(key + "=") }.map { String($0.dropFirst(key.count + 1)) }
         }
         if result?.status == 0 {
-            _ = try? await Shell.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", app.path])
+            // 只读的文件也要去掉（xattr -dr 做不到），见 clearQuarantine
+            PackageExtractor.clearQuarantine(app)
             return CompatibilityIssue(severity: .info, title: "已通过 Apple 公证检查",
                                       detail: field("origin") ?? field("source") ?? "来源已验证")
         }

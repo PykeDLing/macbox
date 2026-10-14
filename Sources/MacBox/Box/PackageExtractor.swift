@@ -119,16 +119,24 @@ nonisolated enum PackageExtractor {
             return Extracted(app: try copyApp(app.url, named: app.name, into: destination))
         }
         let containers = nesting < maxNesting ? nestedContainers(in: root) : []
-        var failures: [any Error] = []
+        var failures: [(container: URL, error: any Error)] = []
         for container in containers {
             do {
                 return try await extract(container, into: destination, nesting: nesting + 1)
             } catch {
-                failures.append(error)
+                failures.append((container, error))
             }
         }
         // 都失败时，“只能用虚拟 Mac”比“没找到”更有用（例如 dmg 里只有一个驱动安装包）
-        throw failures.first { $0 is NeedsVirtualMac } ?? failures.last ?? MacBoxError(notFound)
+        if let needsVirtualMac = failures.lazy.map(\.error).first(where: { $0 is NeedsVirtualMac }) { throw needsVirtualMac }
+        // 否则报用户拖进来的这个容器里没找到：里面附带的压缩包（Documentation.zip、坏的压缩包）各自的错误
+        // 会把人引到不相干的文件上。只有安装包、磁盘映像出错的原因附在后面（排在最前的那个，通常是主安装包，
+        // 或 Foo.dmg.zip 里的 dmg）：这时里面确实有它，光说“没找到”说不清
+        guard let failed = failures.first(where: { ["pkg", "mpkg", "dmg"].contains($0.container.pathExtension.lowercased()) }) else {
+            throw MacBoxError(notFound)
+        }
+        let name = failed.container.lastPathComponent, detail = failed.error.localizedDescription
+        throw MacBoxError(L("\(notFound)。「\(name)」：\(detail)", "\(notFound). “\(name)”: \(detail)"))
     }
 
     /// 展开 pkg，只取出其中的 .app；安装脚本不执行
@@ -150,7 +158,9 @@ nonisolated enum PackageExtractor {
         return result
     }
 
-    /// 目录下扩展名符合的项目，最多往下 maxDepth 层；不进入 App 包和安装包内部，不跟随指向文件夹的符号链接
+    /// 目录下扩展名符合的项目，最多往下 maxDepth 层；不进入 App 包和找到的项目内部，不跟随指向文件夹的符号链接。
+    /// 文件夹形式的 .pkg 要进去：产品归档（productbuild 做的，厂商安装包多半是这种）展开后
+    /// App 在 <组件>.pkg/Payload 下。找套着的安装包时 pkg 本身就是要找的，自然不会再往里走
     private static func findItems(in directory: URL, extensions: Set<String>, maxDepth: Int) -> [URL] {
         var found: [URL] = []
         let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil,
@@ -158,7 +168,7 @@ nonisolated enum PackageExtractor {
         while let item = enumerator?.nextObject() as? URL {
             let ext = item.pathExtension.lowercased()
             if extensions.contains(ext) { found.append(item) }
-            if ["app", "pkg", "mpkg"].contains(ext) || extensions.contains(ext) || (enumerator?.level ?? 0) >= maxDepth {
+            if ext == "app" || extensions.contains(ext) || (enumerator?.level ?? 0) >= maxDepth {
                 enumerator?.skipDescendants()
             }
         }
@@ -246,16 +256,36 @@ nonisolated enum PackageExtractor {
         return read > 0 ? data.prefix(read) : nil
     }
 
-    /// 只给普通文件和文件夹打标记。只读的项目（安装包里常见 0444 / 0555）要先临时加上写权限才能写扩展属性
+    /// 只给普通文件和文件夹打标记
     private static func setQuarantine(_ value: Data, on url: URL) {
         var info = stat()
         guard lstat(url.path, &info) == 0, [S_IFREG, S_IFDIR].contains(info.st_mode & S_IFMT) else { return }
-        func write() -> Bool {
+        changeAttribute(of: url) {
             value.withUnsafeBytes { setxattr(url.path, quarantineAttribute, $0.baseAddress, value.count, 0, XATTR_NOFOLLOW) } == 0
         }
-        if !write(), info.st_mode & S_IWUSR == 0, chmod(url.path, info.st_mode | S_IWUSR) == 0 {
-            _ = write()
-            chmod(url.path, info.st_mode & 0o7777)
+    }
+
+    /// 去掉整个 App 包上的隔离标记：verifyAndTrust 确认通过公证之后调用。和补标记一样逐项处理、不跟随符号链接
+    /// （链接自己的标记也去掉，它指向的东西不碰，可能在包外）。不用 `xattr -dr`：它碰到只读的项目
+    /// 会报权限不足，标记就一直留着，而 inheritQuarantine 连只读的项目也会补上标记
+    static func clearQuarantine(_ app: URL) {
+        func clear(_ url: URL) {
+            guard quarantine(of: url) != nil else { return }
+            changeAttribute(of: url) { removexattr(url.path, quarantineAttribute, XATTR_NOFOLLOW) == 0 }
         }
+        clear(app)
+        let enumerator = FileManager.default.enumerator(at: app, includingPropertiesForKeys: nil)
+        while let item = enumerator?.nextObject() as? URL { clear(item) }
+    }
+
+    /// 写或删扩展属性：先直接试；只读的普通文件和文件夹（安装包里常见 0444 / 0555）要临时给属主加上写权限
+    /// 再试一次，完了恢复原来的权限。符号链接不改权限（chmod 会改到它指向的东西）
+    private static func changeAttribute(of url: URL, _ change: () -> Bool) {
+        var info = stat()
+        guard lstat(url.path, &info) == 0, !change(),
+              [S_IFREG, S_IFDIR].contains(info.st_mode & S_IFMT), info.st_mode & S_IWUSR == 0,
+              chmod(url.path, info.st_mode | S_IWUSR) == 0 else { return }
+        _ = change()
+        chmod(url.path, info.st_mode & 0o7777)
     }
 }
