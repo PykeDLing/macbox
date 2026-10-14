@@ -45,9 +45,10 @@ struct VirtualMacWindow: View {
         }
         .frame(minWidth: 800, minHeight: 500)
         .navigationTitle(L("虚拟 Mac", "Virtual Mac"))
-        .navigationSubtitle(vm.status.title)
+        .navigationSubtitle(vm.displayStatus)
         .dropDestination(for: URL.self) { urls, _ in
-            vm.sendToGuest(urls)
+            // 复制在后台进行，这里只能同步回答「收下了」
+            Task { await vm.sendToGuest(urls) }
             return !urls.isEmpty
         }
         .toolbar {
@@ -57,11 +58,10 @@ struct VirtualMacWindow: View {
                 }
                 .help(L("复制到虚拟 Mac 的「传入」文件夹", "Copy to the Virtual Mac’s “传入” (Incoming) folder"))
                 .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item, .folder], allowsMultipleSelection: true) { result in
-                    if case .success(let urls) = result { vm.sendToGuest(urls) }
+                    if case .success(let urls) = result { Task { await vm.sendToGuest(urls) } }
                 }
                 Button {
-                    try? vm.bundle.ensureExchangeFolders()
-                    NSWorkspace.shared.open(vm.bundle.outgoingURL)
+                    Task { await vm.openOutgoingFolder() }
                 } label: {
                     Label(L("传出", "Outgoing"), systemImage: "tray.and.arrow.up")
                 }
@@ -73,17 +73,28 @@ struct VirtualMacWindow: View {
                     }
                     Button { Task { await vm.sleep() } } label: { Label(L("睡眠", "Sleep"), systemImage: "moon.zzz.fill") }
                         .help(L("保存当前状态并关闭，下次几秒内恢复", "Save the current state and close; resumes in seconds next time"))
-                    Menu {
-                        Button(L("关机", "Shut Down")) { vm.requestShutdown() }
-                        Divider()
-                        Button(L("强制关机", "Force Shut Down"), role: .destructive) { Task { await vm.forceStop() } }
-                    } label: {
-                        Label(L("关机", "Shut Down"), systemImage: "power")
-                    } primaryAction: {
-                        vm.requestShutdown()
-                    }
+                    shutDownMenu
                 }
             }
+        }
+    }
+
+    /// 暂停时虚拟机不能正常关机：去掉主按钮的直接动作（点一下只展开菜单），菜单里的「关机」也禁用，
+    /// 只留「强制关机」，免得点了没反应
+    @ViewBuilder
+    private var shutDownMenu: some View {
+        let canShutDown = vm.status == .running
+        let items = Group {
+            Button(L("关机", "Shut Down")) { vm.requestShutdown() }
+                .disabled(!canShutDown)
+            Divider()
+            Button(L("强制关机", "Force Shut Down"), role: .destructive) { Task { await vm.forceStop() } }
+        }
+        let label = Label(L("关机", "Shut Down"), systemImage: "power")
+        if canShutDown {
+            Menu { items } label: { label } primaryAction: { vm.requestShutdown() }
+        } else {
+            Menu { items } label: { label }
         }
     }
 }
