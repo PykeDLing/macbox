@@ -71,6 +71,9 @@
     --run: #1f9d3a;
     /* 示意窗口里控件的底色：叠在面板上，两种模式下都比面板深一点 / 亮一点 */
     --fill: rgba(0, 0, 0, 0.055);
+    --fill-2: rgba(0, 0, 0, 0.14);
+    --warn: #c56a00;
+    --danger: #d70015;
     --seg-on: #ffffff;
     --glow: rgba(0, 113, 227, 0.2);
     --metal-1: #f2f2f4;
@@ -97,6 +100,9 @@
       --link: #2997ff;
       --run: #30d158;
       --fill: rgba(255, 255, 255, 0.08);
+      --fill-2: rgba(255, 255, 255, 0.2);
+      --warn: #ff9f0a;
+      --danger: #ff453a;
       --seg-on: #5a5a5e;
       --glow: rgba(10, 132, 255, 0.38);
       --metal-1: #2c2c2e;
@@ -122,10 +128,17 @@
   html[data-lang="en"] body [lang="zh-CN"] { display: none !important; }
 
   /* 断行：标题两行尽量等长，正文避免最后一行只剩一个字 */
-  h1, h2, h3, .verdict, .lede, .center .intro { text-wrap: balance; }
+  h1, h2, h3, .verdict, .lede, .center .intro, .alert b { text-wrap: balance; }
   p, li, dd { text-wrap: pretty; }
   /* 中文标题只在标点和空格处断行，不把一个词拆到两行；实在放不下再随处断 */
-  html[data-lang="zh"] :is(h1, h2, h3, .verdict) { word-break: keep-all; overflow-wrap: anywhere; }
+  html[data-lang="zh"] :is(h1, h2, h3, .verdict, .lede, .center .intro) { word-break: keep-all; overflow-wrap: anywhere; }
+
+  /* 中文全角标点的字形只占左半边，右边是空白。居中的文字遇到行尾标点会整体看着偏左，
+     所以确定落在行尾的标点收掉这块空白（约 0.6 个字宽，按苹方实测） */
+  .pe { margin-right: -0.6em; }
+  .ln { display: block; }
+  /* 中文导语两句话各占一行（宽屏时），窄了再在标点处折行 */
+  html[data-lang="zh"] .lede { max-width: 37.5em; }
 
   ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
   a { color: var(--link); text-decoration: none; }
@@ -194,7 +207,8 @@
   }
   html[data-lang="en"] h1 { letter-spacing: -0.035em; }
   .lede { font-size: clamp(18px, 2.2vw, 22px); color: var(--ink-2); max-width: 34em; margin: 22px auto 0; line-height: 1.5; }
-  .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 34px; }
+  /* 文字链接不留左右内边距，按钮和文字这一组看得见的部分才真正居中 */
+  .cta { display: flex; gap: 14px 36px; justify-content: center; align-items: center; flex-wrap: wrap; margin-top: 34px; }
   .btn {
     display: inline-flex; align-items: center; gap: 8px; padding: 13px 24px; border-radius: 999px;
     font-size: 17px; font-weight: 500; border: 0; cursor: pointer;
@@ -204,13 +218,12 @@
   .btn:active { transform: scale(.97); }
   .btn-primary { background: var(--accent-fill); color: var(--accent-ink); }
   .btn-primary:hover { filter: brightness(1.08); }
-  .btn-ghost { color: var(--link); }
+  .btn-ghost { color: var(--link); padding-left: 0; padding-right: 0; }
   .btn-ghost:hover { text-decoration: underline; }
-  .btn-link { padding-left: 0; padding-right: 0; }
   .btn svg { width: 18px; height: 18px; }
   .meta { color: var(--ink-2); font-size: 13px; margin-top: 14px; }
 
-  /* 产品窗口示意（纯 CSS，跟随语言和深色模式） */
+  /* 产品窗口示意：有脚本时是一个可以点的小演示（界面文字和行为照着 App 做），没有脚本时是一张静态图 */
   .stage { margin: 64px auto 0; max-width: 1000px; padding: 0 var(--gutter); perspective: 1600px; position: relative; isolation: isolate; }
   /* 窗口后面一圈淡淡的光，深色模式下窗口不至于沉进黑色背景里 */
   .stage::before {
@@ -219,71 +232,172 @@
     filter: blur(40px); pointer-events: none;
   }
   .window {
-    border-radius: 14px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow-lg);
+    position: relative; border-radius: 14px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow-lg);
     border: 1px solid var(--line); display: grid; grid-template-columns: 200px 1fr 250px; min-height: 420px;
-    text-align: left; font-size: 13px;
+    text-align: left; font-size: 13px; -webkit-user-select: none; user-select: none;
     transform-origin: 50% 0; transition: transform 1.1s cubic-bezier(.2, .75, .25, 1);
   }
+  /* 能点的时候窗口高度固定，内容多了在里面滚动，不会把整页撑得上下跳 */
+  .window.live { height: 500px; }
   /* 滚到时窗口从微微后仰的角度立起来 */
   .js .stage:not(.in) .window { transform: rotateX(12deg) scale(.96); }
-  .sidebar { background: var(--surface-2); border-right: 1px solid var(--line); padding: 14px 10px; }
+  :where(.window button) { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; text-align: inherit; cursor: pointer; }
+  .window button:disabled { cursor: default; opacity: .4; }
+  .window.wide .library { grid-column: 2 / -1; }
+  .window.wide .inspector { display: none; }
+  .try { margin: 18px 0 0; text-align: center; color: var(--ink-3); font-size: 13px; }
+  html:not(.js) .try { display: none; }
+
+  .ic {
+    display: grid; place-items: center; color: #fff; border-radius: 11px; flex: none;
+    box-shadow: inset 0 0 0 .5px rgba(0,0,0,.15), 0 2px 6px rgba(0,0,0,.12);
+  }
+  .ic.hop { animation: hop .7s ease; }
+  @keyframes hop { 30% { transform: translateY(-10px); } 55% { transform: none; } 75% { transform: translateY(-4px); } }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; animation: blink 2.4s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+  @keyframes pop { from { opacity: 0; transform: scale(.85); } }
+  @keyframes fade { from { opacity: 0; } }
+
+  .sidebar { background: var(--surface-2); border-right: 1px solid var(--line); padding: 14px 10px; overflow: hidden; }
   .sidebar .dots { margin: 0 4px 16px; }
   .sidebar .search { display: flex; align-items: center; gap: 6px; background: var(--fill); border-radius: 7px; padding: 5px 9px; color: var(--ink-3); margin-bottom: 14px; }
   .sidebar .search svg { width: 12px; height: 12px; flex: none; }
+  .search:focus-within { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+  .search input {
+    flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ink); font: inherit;
+    outline: none; -webkit-user-select: text; user-select: text; -webkit-appearance: none; appearance: none;
+  }
+  .search input::placeholder { color: var(--ink-3); }
+  .search input::-webkit-search-cancel-button { display: none; }
   .sb-h { color: var(--ink-3); font-size: 11px; font-weight: 600; margin: 12px 8px 4px; }
-  .sb-i { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; color: var(--ink); }
+  .sb-i { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border-radius: 7px; color: var(--ink); }
+  .sb-i:hover { background: var(--fill); }
   .sb-i.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
   .sb-i svg { width: 14px; height: 14px; color: var(--accent); flex: none; }
   .sb-n { margin-left: auto; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
-  .library { padding: 18px 20px; }
+  .sb-i .dot { margin-left: auto; color: var(--run); }
+
+  .library { padding: 18px 20px; overflow-y: auto; min-height: 0; scrollbar-width: thin; }
   .library h4 { margin: 0; font-size: 15px; }
   .library .sub { color: var(--ink-3); font-size: 12px; margin-bottom: 16px; }
   .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
   .card {
     border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); padding: 16px 8px 12px;
-    text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0;
+    text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; width: 100%;
+    transition: border-color .15s ease, opacity .25s ease, transform .25s ease;
   }
+  button.card:hover { border-color: color-mix(in srgb, var(--ink) 18%, transparent); }
   .card.sel { outline: 2.5px solid var(--accent); outline-offset: -1px; }
-  .card .ic {
-    width: 46px; height: 46px; border-radius: 11px; display: grid; place-items: center; color: #fff;
-    box-shadow: inset 0 0 0 .5px rgba(0,0,0,.15), 0 2px 6px rgba(0,0,0,.12);
-  }
+  .card.new { animation: pop .35s cubic-bezier(.2, .8, .3, 1.2); }
+  .card.gone { opacity: 0; transform: scale(.85); }
+  .card .ic { width: 46px; height: 46px; }
   .card .ic svg { width: 26px; height: 26px; }
   .card .nm { font-weight: 500; font-size: 12.5px; }
   .tag { font-size: 10.5px; color: var(--ink-3); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
   .tag svg { width: 9px; height: 9px; flex: none; }
   .tag.run { color: var(--run); }
-  .tag.run svg { animation: blink 2.4s ease-in-out infinite; }
-  @keyframes blink { 50% { opacity: .3; } }
+  .tag.warn { color: var(--warn); }
   .card.add { border-style: dashed; background: transparent; color: var(--ink-3); justify-content: center; }
   .card.add .plus { width: 34px; height: 34px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); display: grid; place-items: center; font-size: 22px; line-height: 1; }
-  .inspector { border-left: 1px solid var(--line); padding: 20px 16px; background: var(--surface-2); }
-  .inspector .head { text-align: center; }
-  .inspector .ic { width: 54px; height: 54px; border-radius: 13px; margin: 0 auto 8px; display: grid; place-items: center; color: #fff; }
-  .inspector .ic svg { width: 30px; height: 30px; }
+  .empty { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 44px 16px; text-align: center; color: var(--ink-3); }
+  .empty svg { width: 28px; height: 28px; margin-bottom: 6px; }
+  .empty b { color: var(--ink); font-size: 14px; font-weight: 600; }
+  .empty p { margin: 0; font-size: 12px; }
+  .pill { margin-top: 10px; padding: 4px 12px; border-radius: 7px; background: var(--fill); color: var(--ink); font-weight: 500; }
+
+  .inspector { border-left: 1px solid var(--line); padding: 16px 14px; background: var(--surface-2); overflow-y: auto; min-height: 0; scrollbar-width: thin; }
+  .live .inspector { padding-top: 14px; padding-bottom: 12px; }
+  .inspector .head { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+  .inspector .head .ic { width: 50px; height: 50px; border-radius: 12px; margin-bottom: 4px; }
+  .inspector .head .ic svg { width: 28px; height: 28px; }
   .inspector .ttl { font-weight: 600; font-size: 14px; }
-  .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 12px 0 16px; }
+  .inspector > .empty { padding: 90px 8px; }
+  .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0 0; }
   .act {
     display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 4px; border-radius: 7px;
-    background: var(--fill); font-weight: 500; font-size: 12px; white-space: nowrap;
+    background: var(--fill); font-weight: 500; font-size: 12px; white-space: nowrap; transition: filter .15s ease, background-color .15s ease;
   }
   .act.pri { background: var(--accent-fill); color: #fff; }
+  .act.wide { grid-column: 1 / -1; }
+  button.act:not(:disabled):hover { filter: brightness(1.12); }
   .act svg { width: 10px; height: 10px; flex: none; }
-  .ins-h { color: var(--ink-3); font-size: 11px; font-weight: 600; margin: 14px 0 6px; }
+  .hint { display: flex; align-items: center; gap: 5px; margin-top: 10px; color: var(--warn); font-size: 11.5px; line-height: 1.35; }
+  .hint svg { width: 12px; height: 12px; flex: none; }
+  button.hint:not(:disabled):hover { text-decoration: underline; }
+  .ins-h { color: var(--ink-3); font-size: 11px; font-weight: 600; margin: 12px 0 5px; }
+  .ins-note { margin: 0; color: var(--ink-3); font-size: 11.5px; line-height: 1.45; }
   .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--fill); border-radius: 7px; padding: 2px; font-size: 11.5px; text-align: center; }
-  .seg > span { padding: 4px 2px; border-radius: 5px; }
-  .seg > span.on { background: var(--seg-on); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
-  .row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .seg > * { padding: 4px 2px; border-radius: 5px; text-align: center; }
+  .seg > .on { background: var(--seg-on); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
   .row:last-child { border-bottom: 0; }
   .row b { font-weight: 500; color: var(--ink-3); font-variant-numeric: tabular-nums; }
-  .blocked { display: flex; align-items: center; gap: 6px; padding: 4px 0; color: var(--ink-2); }
+  .blocked { display: flex; align-items: center; gap: 6px; padding: 3px 0; color: var(--ink-2); }
   .blocked svg { width: 12px; height: 12px; color: var(--red); flex: none; }
+  .blocked.new { animation: pop .3s ease; }
+  .danger { margin-top: 10px; color: var(--danger); font-size: 12px; }
+  button.danger:not(:disabled):hover { text-decoration: underline; }
+
+  /* 虚拟 Mac 页和设置页 */
+  .vm-card { display: flex; align-items: center; gap: 12px; padding: 12px; margin-bottom: 10px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); }
+  .vm-card .ic { width: 44px; height: 44px; border-radius: 10px; }
+  .vm-card .ic svg { width: 24px; height: 24px; }
+  .vm-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .vm-card .act { padding: 5px 14px; }
+  .list-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 2px; border-bottom: 1px solid var(--line); }
+  .list-row:hover .nm { color: var(--link); }
+  .list-row .tag { margin-left: auto; }
+  .ic.sm { width: 24px; height: 24px; border-radius: 6px; }
+  .ic.sm svg { width: 14px; height: 14px; }
+  .group { margin-top: 14px; }
+  .group-h { color: var(--ink-3); font-size: 11px; font-weight: 600; margin-bottom: 6px; }
+  .box { padding: 4px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+  .set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+  .set-row .seg { flex: 0 1 280px; }
+  .box .ins-note { padding: 0 0 8px; }
+  .switch { position: relative; flex: none; width: 30px; height: 18px; border-radius: 9px; background: var(--fill-2); transition: background-color .2s ease; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .2s ease; }
+  .switch[aria-checked="true"] { background: var(--accent-fill); }
+  .switch[aria-checked="true"]::after { transform: translateX(12px); }
+  .facts { list-style: none; margin: 0; padding: 4px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+  .facts li { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); color: var(--ink-2); font-size: 12px; line-height: 1.45; }
+  .facts li:last-child { border-bottom: 0; }
+  .facts svg { width: 14px; height: 14px; margin-top: 1px; color: var(--accent); flex: none; }
+
+  /* 提示框和底部通知：外层容器不占网格位置，里面的浮层相对整个窗口定位 */
+  .sheet-host, .toast-host { display: contents; }
+  .sheet { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; background: rgba(0,0,0,.22); animation: fade .2s ease; }
+  .alert { width: min(272px, 86%); padding: 18px 16px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-lg); text-align: center; animation: pop .25s cubic-bezier(.2, .8, .3, 1.2); }
+  .alert .ic { width: 48px; height: 48px; margin: 0 auto 10px; }
+  .alert .ic svg { width: 26px; height: 26px; }
+  .alert b { display: block; font-size: 13px; line-height: 1.35; }
+  .alert p { margin: 6px 0 0; color: var(--ink-2); font-size: 11.5px; line-height: 1.45; }
+  .alert-btns { display: grid; gap: 6px; margin-top: 14px; }
+  .toast {
+    position: absolute; z-index: 4; left: calc(50% - 25px); bottom: 16px; transform: translateX(-50%); max-width: min(360px, 86%);
+    display: flex; align-items: center; gap: 7px; padding: 7px 12px; border-radius: 9px;
+    background: rgba(28, 28, 30, .92); color: #f5f5f7; font-size: 12px; line-height: 1.4; box-shadow: var(--shadow);
+    pointer-events: none; animation: toast .3s ease;
+  }
+  .toast svg { width: 13px; height: 13px; flex: none; color: #30d158; }
+  @keyframes toast { from { opacity: 0; transform: translate(-50%, 8px); } }
+
   .g1 { background: linear-gradient(160deg, #5ac8fa, #007aff); }
   .g2 { background: linear-gradient(160deg, #34c759, #248a3d); }
   .g3 { background: linear-gradient(160deg, #ff9f0a, #ff6a00); }
   .g4 { background: linear-gradient(160deg, #bf5af2, #7d3cff); }
   .g5 { background: linear-gradient(160deg, #ff6482, #e0245e); }
-  @media (max-width: 900px) { .window { grid-template-columns: 180px 1fr; } .inspector { display: none; } }
+  @media (max-width: 900px) {
+    .window { grid-template-columns: 180px 1fr; }
+    .window.live { height: auto; }
+    /* 窄屏时详情面板挪到应用库下面，分左右两栏 */
+    html:not(.js) .inspector { display: none; }
+    .js .sidebar { grid-row: span 2; }
+    .js .inspector { grid-column: 2; display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; align-content: start; border-left: 0; border-top: 1px solid var(--line); }
+    .js .inspector > .empty { grid-column: 1 / -1; padding: 24px 8px; }
+    .toast { left: calc(50% + 90px); }
+  }
   @media (max-width: 600px) {
     .window { grid-template-columns: 1fr; min-height: 0; }
     .sidebar { display: none; }
@@ -297,8 +411,14 @@
     .card .ic svg { width: 21px; height: 21px; }
     .card .nm { font-size: 11.5px; }
     .tag { font-size: 9.5px; }
-    .tag:not(.run) svg { display: none; }
+    .card .tag:not(.run) svg { display: none; }
     .card.add .plus { width: 30px; height: 30px; font-size: 20px; }
+    .js .inspector { grid-column: 1; grid-template-columns: 1fr; padding: 14px; }
+    .inspector .head { flex-direction: row; align-items: center; gap: 10px; text-align: left; }
+    .inspector .head .ic { width: 40px; height: 40px; border-radius: 10px; margin: 0; }
+    .inspector .head .ic svg { width: 22px; height: 22px; }
+    .ins-data { display: none; }
+    .toast { left: 50%; }
   }
 
   /* 通用版块 */
@@ -448,7 +568,7 @@
     .js .reveal { opacity: 1; transform: none; transition: none; }
     .js .stage:not(.in) .window { transform: none; }
     .window { transition: none; }
-    .tag.run svg { animation: none; }
+    .dot, .card.new, .blocked.new, .ic.hop, .alert, .sheet, .toast { animation: none; }
     html { scroll-behavior: auto; }
   }
 
@@ -489,6 +609,11 @@
     <symbol id="i-check" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5a9.5 9.5 0 1 1 0 19 9.5 9.5 0 0 1 0-19zm4.3 6.2-5.7 5.8-2.9-2.9-1.5 1.5 4.4 4.4 7.2-7.3z"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 6.5 16H8"/></g></symbol>
     <symbol id="i-ok" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-play-fill" viewBox="0 0 24 24"><path fill="currentColor" d="M7 4.6c0-.8.9-1.3 1.6-.9l11 6.9c.6.4.6 1.4 0 1.8l-11 6.9c-.7.4-1.6-.1-1.6-.9z"/></symbol>
+    <symbol id="i-hourglass" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M6.5 3h11M6.5 21h11M7.5 3c0 5 4.5 6 4.5 9s-4.5 4-4.5 9M16.5 3c0 5-4.5 6-4.5 9s4.5 4 4.5 9"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M12 2.8c.7 0 1.3.4 1.7 1l8.4 14.6c.8 1.3-.2 3-1.7 3H3.6c-1.5 0-2.5-1.7-1.7-3L10.3 3.8c.4-.6 1-1 1.7-1zM10.8 9v5.2h2.4V9zm1.2 7.2a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8z"/></symbol>
+    <symbol id="i-cursor" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M6 3.5 18.5 13l-5.6.9 3.1 6.3-2.4 1.2-3.1-6.3L6 19z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 6.5h16M9.5 6.5v-2h5v2M6.5 6.5l1 13.5h9l1-13.5M10.5 10.5v6M13.5 10.5v6"/></symbol>
     <symbol id="i-github" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></symbol>
   </defs>
 </svg>
@@ -520,10 +645,10 @@
       <span lang="en">Free · Open source · Built for Apple Silicon</span>
     </p>
     <h1>
-      <span lang="zh-CN">不放心的软件，<br>装进盒子里用。</span>
+      <span lang="zh-CN">不放心的软件<span class="pe">，</span><br>装进盒子里用<span class="pe">。</span></span>
       <span lang="en">Run the apps you don’t trust in a box.</span>
     </h1>
-    <p class="lede" lang="zh-CN">像普通 App 一样打开，有自己的窗口，待在程序坞里。但它写下的文件、设置和钥匙串会留在盒子里——删掉盒子，你的 Mac 干干净净。</p>
+    <p class="lede" lang="zh-CN"><span class="ln">像普通 App 一样打开，有自己的窗口，待在程序坞里<span class="pe">。</span></span><span class="ln">但它写下的文件、设置和钥匙串会留在盒子里&#8288;——删掉盒子，你的 Mac 干干净净<span class="pe">。</span></span></p>
     <p class="lede" lang="en">They open like any other app, with their own windows and a place in the Dock. But the files, settings and keychain items they write stay in the box. Delete the box and your Mac is clean.</p>
     <div class="cta">
       <a class="btn btn-primary js-download" href="https://github.com/PykeDLing/macbox/releases/latest">
@@ -561,7 +686,7 @@
           <div class="card sel">
             <div class="ic g1"><svg><use href="#i-cloud"/></svg></div>
             <div class="nm"><span lang="zh-CN">某某网盘</span><span lang="en">Cloud Drive</span></div>
-            <div class="tag run"><svg><use href="#i-play"/></svg><span lang="zh-CN">运行中</span><span lang="en">Running</span></div>
+            <div class="tag run"><i class="dot"></i><span lang="zh-CN">运行中</span><span lang="en">Running</span></div>
           </div>
           <div class="card">
             <div class="ic g3"><svg><use href="#i-down"/></svg></div>
@@ -593,7 +718,7 @@
         <div class="head">
           <div class="ic g1"><svg><use href="#i-cloud"/></svg></div>
           <div class="ttl"><span lang="zh-CN">某某网盘</span><span lang="en">Cloud Drive</span></div>
-          <div class="tag run"><svg><use href="#i-play"/></svg><span lang="zh-CN">运行中</span><span lang="en">Running</span></div>
+          <div class="tag run"><i class="dot"></i><span lang="zh-CN">运行中</span><span lang="en">Running</span></div>
         </div>
         <div class="acts">
           <span class="act pri"><svg><use href="#i-arrow"/></svg><span lang="zh-CN">切换过去</span><span lang="en">Switch to App</span></span>
@@ -610,6 +735,7 @@
         <div class="row"><span lang="zh-CN">还原点</span><span lang="en">Restore Point</span><b><span lang="zh-CN">昨天</span><span lang="en">Yesterday</span></b></div>
       </aside>
     </div>
+    <p class="try"><span lang="zh-CN">这个窗口可以操作：选中一个应用，打开、退出、切换运行环境或者删除试试<span class="pe">。</span></span><span lang="en">This window is live. Pick an app and try opening, quitting, switching runtimes or deleting it.</span></p>
   </div>
 </header>
 
@@ -618,8 +744,8 @@
     <div class="wrap">
       <div class="center reveal">
         <p class="kicker"><span lang="zh-CN">为什么需要它</span><span lang="en">Why MacBox</span></p>
-        <h2><span lang="zh-CN">装一个软件，<br>留下一堆东西。</span><span lang="en">Install one app. Get a lot more than you asked for.</span></h2>
-        <p class="intro" lang="zh-CN">各种网盘、下载器、工具软件，装上之后往往在系统里到处留东西。就算卸载了，这些东西也常常还在。</p>
+        <h2><span lang="zh-CN">装一个软件<span class="pe">，</span><br>留下一堆东西<span class="pe">。</span></span><span lang="en">Install one app. Get a lot more than you asked for.</span></h2>
+        <p class="intro" lang="zh-CN"><span class="ln">各种网盘、下载器、工具软件，装上之后往往在系统里到处留东西<span class="pe">。</span></span><span class="ln">就算卸载了，这些东西也常常还在<span class="pe">。</span></span></p>
         <p class="intro" lang="en">Cloud drives, downloaders and all kinds of utilities tend to spread themselves across your system — and much of it stays behind even after you uninstall them.</p>
       </div>
       <div class="mess reveal">
@@ -643,7 +769,7 @@
         </div>
       </div>
       <div class="verdict reveal">
-        <span lang="zh-CN">MacBox 让它们照常工作——只是哪儿也去不了。</span>
+        <span lang="zh-CN">MacBox 让它们照常工作——只是哪儿也去不了<span class="pe">。</span></span>
         <span lang="en">MacBox lets them work as usual. They just can’t get out.</span>
       </div>
     </div>
@@ -851,7 +977,7 @@
         <h2><span lang="zh-CN">每一行代码都公开。</span><span lang="en">Every line is public.</span></h2>
         <p class="intro" lang="zh-CN">MacBox 以 MIT 许可证开源。不想运行下载的二进制文件，可以自己从源码构建——只需要 Command Line Tools（Swift 6.4 或更新）。</p>
         <p class="intro" lang="en">MacBox is MIT-licensed. If you’d rather not run a downloaded binary, build it from source — the Command Line Tools (Swift 6.4 or later) are all you need.</p>
-        <a class="btn btn-ghost btn-link" href="https://github.com/PykeDLing/macbox">
+        <a class="btn btn-ghost" href="https://github.com/PykeDLing/macbox">
           <svg aria-hidden="true"><use href="#i-github"/></svg>PykeDLing/macbox ›
         </a>
       </div>
@@ -909,6 +1035,7 @@ open build/MacBox.app"></button></div><pre class="cmd"><span class="p">$ </span>
       document.querySelectorAll(".lang button").forEach(function (b) {
         b.setAttribute("aria-pressed", String(b.dataset.set === root.dataset.lang));
       });
+      demoLang();
     }
     function setLang(lang) {
       if (lang === root.dataset.lang) return;
@@ -986,6 +1113,401 @@ open build/MacBox.app"></button></div><pre class="cmd"><span class="p">$ </span>
         info.hidden = false;
       })
       .catch(function () {});
+
+    // —— 首屏可以操作的 MacBox 窗口 ——
+    // 文字、状态标签和行为照着 App 做：拦截记录、兼容性提示、虚拟 Mac、删除后移到废纸篓。
+    // 状态都在 demo / apps 里，每次操作后重画三块区域（内容很少，重画比逐个改 DOM 简单可靠）。
+    var KINDS = {
+      autostart: ["注册开机自启动", "Register to open at login"],
+      service: ["注册后台服务", "Register a background service"],
+      system: ["写入系统目录", "Write to system folders"],
+      personal: ["写入你的个人文件夹", "Write to your personal folders"],
+      privacy: ["读取私人数据", "Read private data"],
+      notify: ["发送通知", "Send notifications"],
+      control: ["控制其他 App", "Control other apps"]
+    };
+    // 和 App 里的 suggestsVirtualMac 一致：被挡下这两类，退出后建议改用虚拟 Mac
+    var SEVERE = { service: true, system: true };
+    function makeApp(id, zhName, enName, icon, g, size, script, more) {
+      var a = { id: id, name: [zhName, enName], icon: icon, g: g, size: size, script: script,
+                runtime: "native", state: "idle", blocks: [], restore: null, timers: [] };
+      for (var k in more) a[k] = more[k];
+      return a;
+    }
+    var apps = [
+      makeApp("drive", "某某网盘", "Cloud Drive", "i-cloud", "g1", 294, ["autostart", "privacy", "notify", "privacy", "privacy"], {
+        state: "running", restore: ["昨天", "Yesterday"],
+        blocks: [{ kind: "autostart", n: 1 }, { kind: "notify", n: 1 }, { kind: "privacy", n: 3 }] }),
+      makeApp("dl", "下载工具", "Downloader", "i-down", "g3", 128, ["autostart", "personal", "notify"]),
+      makeApp("meet", "会议软件", "Meetings", "i-chat", "g2", 512, ["control", "privacy", "notify"], { restore: ["3 天前", "3 days ago"] }),
+      makeApp("music", "音乐播放器", "Music Player", "i-music", "g5", 86, ["notify", "control"]),
+      makeApp("driver", "驱动工具", "Driver Utility", "i-display", "g4", 42, ["system", "autostart", "service"], { runtime: "vm" })
+    ];
+    // “添加应用”从这里取；删掉的应用也放回这里，可以再加回来
+    var spare = [
+      makeApp("shot", "截图工具", "Screen Capture", "i-eye", "g1", 36, ["autostart", "privacy"]),
+      makeApp("keys", "密码小工具", "Password Helper", "i-key", "g3", 18, ["privacy", "control"]),
+      makeApp("zip", "压缩工具", "Archiver", "i-grid", "g2", 12, ["personal", "notify"])
+    ];
+    var demo = { page: "all", query: "", sel: "drive", vm: "asleep", policy: "ask", spotlight: true, alert: null };
+    var dSearch, dNav, dMain, dIns, dSheet, dToast, toastTimer = 0, shownAlert = null;
+
+    function T(zhText, enText) { return '<span lang="zh-CN">' + zhText + '</span><span lang="en">' + enText + '</span>'; }
+    function Tp(pair) { return T(pair[0], pair[1]); }
+    function ic(id) { return '<svg aria-hidden="true"><use href="#' + id + '"/></svg>'; }
+    function esc(text) { return text.replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+    function find(id) { return apps.filter(function (a) { return a.id === id; })[0]; }
+    // 打开中、运行中、退出中都算“在运行”；添加、打开、退出的过程中控件不能用
+    function live(a) { return a.state === "launching" || a.state === "running" || a.state === "quitting"; }
+    function locked(a) { return a.state !== "idle"; }
+    function severe(a) { return a.blocks.some(function (b) { return SEVERE[b.kind]; }); }
+    // 圆点的闪烁按真实时间对齐相位，重画时不会从头闪
+    function dot() { return '<i class="dot" style="animation-delay:-' + (Date.now() % 2400) + 'ms"></i>'; }
+    function btn(act, arg, cls, inner, disabled, attrs) {
+      return '<button type="button" class="' + cls + '" data-act="' + act + '" data-arg="' + arg + '" data-key="' + act + "-" + arg + '"' +
+        (disabled ? " disabled" : "") + (attrs || "") + ">" + inner + "</button>";
+    }
+
+    function tag(a) {
+      var t = a.state === "running" ? ["run", dot(), T("运行中", "Running")]
+        : a.state !== "idle" ? ["", ic("i-hourglass"), T("处理中…", "Working…")]
+        : a.runtime === "vm" ? ["", ic("i-display"), T("虚拟 Mac", "Virtual Mac")]
+        : severe(a) ? ["warn", ic("i-warn"), T("可能需要虚拟 Mac", "May Need Virtual Mac")]
+        : ["", ic("i-lock"), T("本机隔离", "Native Isolation")];
+      return '<span class="tag ' + t[0] + '">' + t[1] + t[2] + "</span>";
+    }
+    function summary() {
+      var n = apps.length, r = apps.filter(function (a) { return a.state === "running"; }).length;
+      return T(n + " 个应用" + (r ? " · " + r + " 个运行中" : ""), (n === 1 ? "1 app" : n + " apps") + (r ? " · " + r + " running" : ""));
+    }
+
+    function navItem(page, icon, label, extra) {
+      var on = demo.page === page;
+      return '<button type="button" class="sb-i' + (on ? " on" : "") + '" data-act="nav" data-arg="' + page + '" data-key="nav-' + page + '"' +
+        (on ? ' aria-current="page"' : "") + ">" + ic(icon) + label + (extra || "") + "</button>";
+    }
+    function renderNav() {
+      return '<div class="sb-h">' + T("应用", "Apps") + "</div>" +
+        navItem("all", "i-grid", T("全部应用", "All Apps"), '<span class="sb-n">' + apps.length + "</span>") +
+        navItem("running", "i-play", T("运行中", "Running"), '<span class="sb-n">' + apps.filter(live).length + "</span>") +
+        '<div class="sb-h">' + T("运行环境", "Runtime") + "</div>" +
+        navItem("vm", "i-display", T("虚拟 Mac", "Virtual Mac"), demo.vm === "running" ? dot() : "") +
+        '<div class="sb-h">MacBox</div>' +
+        navItem("settings", "i-gear", T("设置", "Settings"));
+    }
+
+    function empty(icon, title, text, extra) {
+      return '<div class="empty">' + ic(icon) + "<b>" + title + "</b><p>" + text + "</p>" + (extra || "") + "</div>";
+    }
+    function card(a) {
+      return '<button type="button" class="card' + (a.id === demo.sel ? " sel" : "") + (a.fresh ? " new" : "") + '" data-act="select" data-arg="' + a.id +
+        '" data-key="card-' + a.id + '" aria-pressed="' + (a.id === demo.sel) + '"><span class="ic ' + a.g + '">' + ic(a.icon) +
+        '</span><span class="nm">' + Tp(a.name) + "</span>" + tag(a) + "</button>";
+    }
+    function renderLibrary() {
+      var q = demo.query.trim().toLowerCase();
+      var list = apps.filter(function (a) {
+        return (demo.page !== "running" || live(a)) && (!q || (a.name[0] + " " + a.name[1]).toLowerCase().indexOf(q) >= 0);
+      });
+      var h = "<h4>" + (demo.page === "running" ? T("运行中", "Running") : T("全部应用", "All Apps")) + '</h4><div class="sub">' + summary() + "</div>";
+      if (!list.length && q) {
+        var shown = esc(demo.query.trim());
+        return h + empty("i-search", T("没有“" + shown + "”的结果", "No Results for “" + shown + "”"), T("请检查拼写或换个关键词。", "Check the spelling or try a new search."));
+      }
+      if (!list.length && demo.page === "running") {
+        return h + empty("i-play", T("没有正在运行的应用", "No Apps Running"), T("在「全部应用」里双击一个应用即可打开。", "Double-click an app in “All Apps” to open it."),
+          btn("nav", "all", "pill", T("查看全部应用", "Show All Apps")));
+      }
+      var add = demo.page === "all" && !q && spare.length
+        ? '<button type="button" class="card add" data-act="add" data-arg="" data-key="add"><span class="plus">+</span><span class="nm">' + T("添加应用", "Add App") + "</span></button>" : "";
+      return h + '<div class="cards">' + list.map(card).join("") + add + "</div>";
+    }
+
+    function renderInspector() {
+      var a = find(demo.sel);
+      if (!a) return empty("i-cursor", T("未选择应用", "No App Selected"), T("单击卡片查看详情，双击打开。", "Click a card to see details. Double-click to open."));
+      var h = '<div class="ins-a"><div class="head"><span class="ic ' + a.g + '">' + ic(a.icon) + '</span><div><div class="ttl">' + Tp(a.name) + "</div>" + tag(a) + "</div></div>";
+      h += '<div class="acts">' + (a.state === "running"
+        ? btn("front", a.id, "act pri", ic("i-arrow") + T("切换过去", "Switch to App")) + btn("quit", a.id, "act", T("退出", "Quit"))
+        : btn("open", a.id, "act pri wide", ic("i-play-fill") + T("打开", "Open"), locked(a))) + "</div>";
+      if (a.runtime === "native" && severe(a)) {
+        h += btn("runtime", a.id + "|vm", "hint", ic("i-warn") + T("软件不正常？改用虚拟 Mac 运行", "Not working right? Run in Virtual Mac instead"), locked(a));
+      }
+      h += '<div class="ins-h">' + T("运行环境", "Runtime") + '</div><div class="seg" role="radiogroup" aria-label="Runtime">' +
+        [["native", T("本机隔离", "Native")], ["vm", T("虚拟 Mac", "Virtual Mac")]].map(function (o) {
+          var on = a.runtime === o[0];
+          return btn("runtime", a.id + "|" + o[0], on ? "on" : "", o[1], locked(a), ' role="radio" aria-checked="' + on + '"');
+        }).join("") + "</div></div>";
+      h += '<div class="ins-b"><div class="ins-h">' + T("本次已拦截", "Blocked This Session") + "</div>";
+      if (a.blocks.length) {
+        h += a.blocks.map(function (b) {
+          return '<div class="blocked' + (b.fresh ? " new" : "") + '">' + ic("i-x") + "<span>" + Tp(KINDS[b.kind]) + (b.n > 1 ? " ×" + b.n : "") + "</span></div>";
+        }).join("");
+      } else {
+        h += '<p class="ins-note">' + (a.runtime === "vm" ? T("在虚拟 Mac 里运行，和你的 Mac 完全分开。", "Runs in the Virtual Mac, fully separate from your Mac.")
+          : live(a) ? T("暂时没有越界行为。", "Nothing out of bounds yet.")
+          : T("打开后，被挡下的行为会列在这里。", "Open it to see what gets blocked.")) + "</p>";
+      }
+      h += '<div class="ins-data"><div class="ins-h">' + T("数据", "Data") + '</div><div class="row">' + T("应用数据", "App Data") + "<b>" + a.size + ' MB</b></div><div class="row">' +
+        T("还原点", "Restore Point") + "<b>" + (a.restore ? Tp(a.restore) : T("无", "None")) + "</b></div></div>";
+      return h + btn("delete", a.id, "danger", T("删除应用…", "Delete App…"), locked(a)) + "</div>";
+    }
+
+    function renderVM() {
+      var vmApps = apps.filter(function (a) { return a.runtime === "vm"; });
+      var status = demo.vm === "running" ? '<span class="tag run">' + dot() + T("运行中", "Running") + " · macOS 26</span>"
+        : demo.vm === "waking" ? '<span class="tag">' + ic("i-hourglass") + T("正在唤醒…", "Waking…") + "</span>"
+        : '<span class="tag"><i class="dot" style="animation:none"></i>' + T("睡眠中", "Asleep") + " · macOS 26</span>";
+      var h = "<h4>" + T("虚拟 Mac", "Virtual Mac") + '</h4><div class="sub">' + T("所有需要它的应用共用一台", "Shared by every app that needs it") + "</div>";
+      h += '<div class="vm-card"><span class="ic g4">' + ic("i-display") + '</span><div class="vm-info"><b>' + T("虚拟 Mac", "Virtual Mac") + "</b>" + status + "</div>" +
+        (demo.vm === "running" ? btn("sleep", "", "act", T("睡眠", "Sleep"), vmApps.some(live))
+          : btn("wake", "", "act pri", ic("i-play-fill") + T("唤醒", "Wake"), demo.vm === "waking")) + "</div>";
+      h += '<p class="ins-note">' + T("本机隔离容纳不了的应用（需要驱动、系统服务等）在虚拟 Mac 中运行。所有这类应用共用一台，只在需要时设置。",
+        "Apps that Native Isolation can’t contain (ones that need drivers, system services and so on) run in a Virtual Mac. All such apps share a single one, which is set up only when needed.") + "</p>";
+      h += '<div class="ins-h">' + T("使用虚拟 Mac 的应用", "Apps in the Virtual Mac") + "</div>";
+      h += vmApps.length ? vmApps.map(function (a) {
+        return btn("goto", a.id, "list-row", '<span class="ic sm ' + a.g + '">' + ic(a.icon) + '</span><span class="nm">' + Tp(a.name) + "</span>" + tag(a));
+      }).join("") : '<p class="ins-note">' + T("还没有应用使用虚拟 Mac。", "No apps use the Virtual Mac yet.") + "</p>";
+      h += '<div class="ins-h">' + T("资源", "Resources") + '</div><div class="row">' + T("内存", "Memory") + '<b>6 GB</b></div><div class="row">' +
+        T("磁盘", "Disk") + "<b>" + T("约 30 GB", "About 30 GB") + "</b></div>";
+      return h;
+    }
+
+    function radio(act, value, label, on) {
+      return btn(act, value, on ? "on" : "", label, false, ' role="radio" aria-checked="' + on + '"');
+    }
+    function renderSettings() {
+      var facts = [
+        ["i-home", "应用看到的是盒子里的主目录：设置、缓存、登录状态都存在 MacBox 里", "The app sees the box as its home folder: settings, caches and sign-ins are stored in MacBox"],
+        ["i-key", "每个应用一个独立钥匙串，不会写进你的「登录」钥匙串", "Each app gets its own keychain and never writes to your “login” keychain"],
+        ["i-hand", "阻止写入系统目录、注册开机自启动和后台服务、发送通知、遥控其他 App", "Blocks writing to system folders, registering login items and background services, sending notifications and controlling other apps"],
+        ["i-eye", "阻止读取邮件、信息、Safari、其他应用的数据和 SSH 密钥", "Blocks reading Mail, Messages, Safari, other apps’ data and SSH keys"],
+        ["i-shield", "运行时守卫：盒子里的程序一旦在沙盒外被启动，立即结束", "Runtime guard: any program from a box launched outside the sandbox is ended immediately"]
+      ];
+      // 界面语言就是这个网页的语言，切换后整页一起换
+      return "<h4>" + T("设置", "Settings") + '</h4><div class="sub">MacBox</div>' +
+        '<div class="group"><div class="group-h">' + T("语言", "Language") + '</div><div class="box"><div class="set-row">' + T("界面语言", "Display Language") +
+        '<div class="seg" role="radiogroup" aria-label="Language">' + radio("lang", "zh", "简体中文", zh()) + radio("lang", "en", "English", !zh()) + "</div></div></div></div>" +
+        '<div class="group"><div class="group-h">' + T("兼容性", "Compatibility") + '</div><div class="box"><div class="set-row">' + T("出现兼容性问题时", "When an App Has Compatibility Issues") +
+        '<div class="seg" role="radiogroup" aria-label="Policy">' + radio("policy", "ask", T("询问我", "Ask Me"), demo.policy === "ask") +
+        radio("policy", "auto", T("自动改用虚拟 Mac", "Switch Automatically"), demo.policy === "auto") + "</div></div></div></div>" +
+        '<div class="group"><div class="group-h">' + T("新添加的应用", "New Apps") + '</div><div class="box"><div class="set-row">' + T("在聚焦中显示", "Show in Spotlight") +
+        btn("spotlight", "", "switch", '<span class="sr-only">' + T("在聚焦中显示", "Show in Spotlight") + "</span>", false, ' role="switch" aria-checked="' + demo.spotlight + '"') + "</div>" +
+        '<p class="ins-note">' + T("启动器放在 ~/Applications/MacBox，打开时由 MacBox 在隔离中启动真正的应用。", "Launchers go in ~/Applications/MacBox and open the real app in isolation through MacBox.") + "</p></div></div>" +
+        '<div class="group"><div class="group-h">' + T("本机隔离会做什么", "What Native Isolation Does") + '</div><ul class="facts">' +
+        facts.map(function (f) { return "<li>" + ic(f[0]) + "<span>" + T(f[1], f[2]) + "</span></li>"; }).join("") + "</ul></div>";
+    }
+
+    function renderAlert() {
+      var a = find(demo.alert);
+      if (!a) return "";
+      var reasons = a.blocks.filter(function (b) { return SEVERE[b.kind]; }).map(function (b) { return Tp(KINDS[b.kind]); }).join("<br>");
+      return '<div class="sheet"><div class="alert" role="alertdialog" aria-modal="true" aria-labelledby="demo-alert"><span class="ic ' + a.g + '">' + ic(a.icon) + "</span>" +
+        '<b id="demo-alert">' + T("「" + a.name[0] + "」在本机隔离中可能无法正常使用", "“" + a.name[1] + "” may not work properly in Native Isolation") + "</b>" +
+        "<p>" + reasons + "</p><p>" + T("改用虚拟 Mac 运行可以获得完整功能。", "Run it in a Virtual Mac to get full functionality.") + "</p>" +
+        '<div class="alert-btns">' + btn("alert-vm", a.id, "act pri", T("改用虚拟 Mac", "Use Virtual Mac")) + btn("alert-keep", a.id, "act", T("继续使用本机隔离", "Keep Native Isolation")) + "</div></div></div>";
+    }
+
+    function render() {
+      var active = document.activeElement;
+      var key = active && shot.contains(active) && active.dataset ? active.dataset.key : null;
+      var scroll = [dMain.scrollTop, dIns.scrollTop];
+      var wide = demo.page === "vm" || demo.page === "settings";
+      shot.classList.toggle("wide", wide);
+      dNav.innerHTML = renderNav();
+      dMain.innerHTML = demo.page === "vm" ? renderVM() : demo.page === "settings" ? renderSettings() : renderLibrary();
+      dIns.innerHTML = wide ? "" : renderInspector();
+      dMain.scrollTop = scroll[0];
+      dIns.scrollTop = scroll[1];
+      // 提示框只在出现、消失时重画，免得别的应用计时器一响它就重新弹一次
+      if (shownAlert !== demo.alert) {
+        dSheet.innerHTML = renderAlert();
+        shownAlert = demo.alert;
+        if (demo.alert) {
+          dSheet.querySelector("button").focus({ preventScroll: true });
+          key = null;
+        } else if (!key) {
+          key = "card-" + demo.sel;
+        }
+      }
+      // 重画后焦点放回原来的控件；它没了或者变成不可用，就放到选中的卡片上
+      if (key) {
+        var el = shot.querySelector('[data-key="' + key + '"]');
+        if (!el || el.disabled) el = shot.querySelector(".card.sel");
+        if (el) el.focus({ preventScroll: true });
+      }
+      apps.forEach(function (a) { a.fresh = false; a.blocks.forEach(function (b) { b.fresh = false; }); });
+    }
+
+    function toast(icon, pair) {
+      dToast.innerHTML = '<div class="toast" role="status">' + ic(icon) + Tp(pair) + "</div>";
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { dToast.innerHTML = ""; }, 3200);
+    }
+    function later(a, ms, fn) {
+      var t = setTimeout(function () {
+        a.timers = a.timers.filter(function (x) { return x !== t; });
+        fn();
+        render();
+      }, ms);
+      a.timers.push(t);
+    }
+    function addBlock(a, kind) {
+      var b = a.blocks.filter(function (x) { return x.kind === kind; })[0];
+      if (b) b.n++;
+      else a.blocks.push({ kind: kind, n: 1, fresh: true });
+    }
+    function wake() {
+      if (demo.vm !== "asleep") return;
+      demo.vm = "waking";
+      setTimeout(function () { demo.vm = "running"; render(); }, 1100);
+    }
+    function open(a) {
+      if (!a || a.state !== "idle") return;
+      a.state = "launching";
+      a.blocks = [];
+      if (a.runtime === "vm") wake();
+      later(a, a.runtime === "vm" ? 1400 : 800, function () {
+        a.state = "running";
+        // 本机隔离里运行时，App 试图越界的行为一条条被挡下
+        if (a.runtime === "native") a.script.forEach(function (kind, i) { later(a, 1200 * (i + 1), function () { addBlock(a, kind); }); });
+      });
+      render();
+    }
+    function quit(a) {
+      if (!a || a.state !== "running") return;
+      a.timers.forEach(clearTimeout);
+      a.timers = [];
+      a.state = "quitting";
+      later(a, 700, function () {
+        a.state = "idle";
+        if (a.runtime !== "native" || !severe(a)) return;
+        if (demo.policy === "auto") {
+          a.runtime = "vm";
+          toast("i-display", ["检测到兼容性问题，已按设置改用虚拟 Mac 运行。", "Compatibility issues were found. Switched to Virtual Mac as set."]);
+        } else {
+          demo.alert = a.id;
+        }
+      });
+      render();
+    }
+    function bounce(a) {
+      shot.querySelectorAll('[data-key="card-' + a.id + '"] .ic, .inspector .head .ic').forEach(function (el) {
+        el.classList.remove("hop");
+        void el.offsetWidth;
+        el.classList.add("hop");
+      });
+    }
+    function remove(a) {
+      if (!a || locked(a) || a.removing) return;
+      a.removing = true;
+      var el = shot.querySelector('[data-key="card-' + a.id + '"]');
+      if (el) el.classList.add("gone");
+      setTimeout(function () {
+        var i = apps.indexOf(a);
+        apps.splice(i, 1);
+        a.removing = false;
+        a.blocks = [];
+        a.restore = null;
+        spare.unshift(a);
+        var next = apps[Math.min(i, apps.length - 1)];
+        demo.sel = next ? next.id : null;
+        toast("i-trash", ["「" + a.name[0] + "」和它的全部数据已移到废纸篓。", "“" + a.name[1] + "” and all its data were moved to the Trash."]);
+        render();
+      }, el ? 250 : 0);
+    }
+    function add() {
+      var a = spare.shift();
+      if (!a) return;
+      a.state = "adding";
+      a.fresh = true;
+      apps.push(a);
+      demo.sel = a.id;
+      later(a, 1000, function () {
+        a.state = "idle";
+        toast("i-ok", ["「" + a.name[0] + "」已安装到 MacBox。", "“" + a.name[1] + "” was installed in MacBox."]);
+      });
+      render();
+      var card = shot.querySelector('[data-key="card-' + a.id + '"]');
+      if (card && card.scrollIntoViewIfNeeded) card.scrollIntoViewIfNeeded(false);
+    }
+
+    function act(name, arg) {
+      var parts = arg.split("|"), a = find(parts[0]);
+      switch (name) {
+        case "nav": demo.page = arg; break;
+        case "select": demo.sel = arg; break;
+        case "goto": demo.page = "all"; demo.query = dSearch.value = ""; demo.sel = arg; break;
+        case "open": open(a); return;
+        case "quit": quit(a); return;
+        case "front": bounce(a); return;
+        case "delete": remove(a); return;
+        case "add": add(); return;
+        case "runtime": if (a && !locked(a)) a.runtime = parts[1]; break;
+        case "wake": wake(); break;
+        case "sleep": demo.vm = "asleep"; break;
+        case "alert-vm": a.runtime = "vm"; demo.alert = null; break;
+        case "alert-keep": demo.alert = null; break;
+        case "lang": setLang(arg); return;
+        case "policy": demo.policy = arg; break;
+        case "spotlight": demo.spotlight = !demo.spotlight; break;
+      }
+      render();
+    }
+
+    // 语言切换后更新搜索框占位文字和设置页里的选中项
+    function demoLang() {
+      if (!dSearch) return;
+      dSearch.placeholder = zh() ? "搜索应用" : "Search Apps";
+      dSearch.setAttribute("aria-label", dSearch.placeholder);
+      render();
+    }
+
+    (function initDemo() {
+      shot.innerHTML =
+        '<aside class="sidebar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>' +
+        '<label class="search">' + ic("i-search") + '<input type="search" autocomplete="off" spellcheck="false"></label><div class="sb-nav"></div></aside>' +
+        '<div class="library"></div><aside class="inspector"></aside><div class="sheet-host"></div><div class="toast-host"></div>';
+      shot.classList.add("live");
+      shot.setAttribute("role", "group");
+      shot.dataset.labelZh = "可以操作的 MacBox 演示窗口";
+      shot.dataset.labelEn = "Interactive MacBox demo window";
+      dSearch = shot.querySelector("input");
+      dNav = shot.querySelector(".sb-nav");
+      dMain = shot.querySelector(".library");
+      dIns = shot.querySelector(".inspector");
+      dSheet = shot.querySelector(".sheet-host");
+      dToast = shot.querySelector(".toast-host");
+
+      dSearch.addEventListener("input", function () {
+        demo.query = dSearch.value;
+        if (demo.page !== "all" && demo.page !== "running") demo.page = "all";
+        render();
+      });
+      shot.addEventListener("click", function (e) {
+        var el = e.target.closest("[data-act]");
+        if (el) {
+          if (!el.disabled) act(el.dataset.act, el.dataset.arg || "");
+          return;
+        }
+        // 点应用库的空白处取消选择，和 App 一样
+        if (e.target.closest(".library") && !e.target.closest("button, input") && demo.page !== "vm" && demo.page !== "settings" && demo.sel) {
+          demo.sel = null;
+          render();
+        }
+      });
+      shot.addEventListener("dblclick", function (e) {
+        var el = e.target.closest(".card[data-act=select]");
+        var a = el && find(el.dataset.arg);
+        if (!a) return;
+        if (a.state === "idle") open(a);
+        else if (a.state === "running") bounce(a);
+      });
+      shot.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && demo.alert) act("alert-keep", demo.alert);
+      });
+      applyLang();
+    })();
 
     if (!("IntersectionObserver" in window)) {
       document.querySelectorAll(".reveal").forEach(function (el) { el.classList.add("in"); });
