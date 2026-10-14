@@ -219,6 +219,32 @@ struct PreferenceLeaseTests {
         await cleanUp()
     }
 
+    @Test("日志被换成符号链接、FIFO、乱码或目录（又没有 .native）：收回时删掉它，不再一直“未收回”，也不顺着它动任何设置")
+    func unreadableJournalIsRemoved() async throws {
+        try await systemWrite(domain, "who", "native")
+        // 盒子外一份像样的日志：顺着链接读它的话，收回时会把本机的设置当成借出的内容清空
+        let outsideJournal = root.appending(path: "outside-lease.json")
+        let valid = #"{"phase":"lent","nativeDomains":[],"lentDomains":["dev.macboxtest.app"]}"#
+        try valid.write(to: outsideJournal, atomically: true, encoding: .utf8)
+        let journal = box.leaseJournal
+        let plants: [(String, () throws -> Void)] = [
+            ("符号链接", { try FileManager.default.createSymbolicLink(at: journal, withDestinationURL: outsideJournal) }),
+            ("乱码", { try #"{"phase":"lent","nativeDo"#.write(to: journal, atomically: true, encoding: .utf8) }),
+            ("FIFO", { #expect(mkfifo(journal.path, 0o600) == 0) }),
+            ("目录", { try AppPaths.ensure(journal.appending(path: "x")) }),
+        ]
+        for (kind, plant) in plants {
+            try plant()
+            #expect(lease().isOutstanding, "\(kind)")
+            try await lease().checkOut()
+            #expect(!lease().isOutstanding, "\(kind)：读不出来的日志要删掉，否则清除数据、还原、删除一直被挡住")
+            #expect(await systemRead(domain) == ["who": "native"], "\(kind)：不能照着它改动任何设置")
+            #expect(boxContent(domain) == nil, "\(kind)")
+        }
+        #expect(FileOps.regularFileContents(outsideJournal) == Data(valid.utf8), "链接指向的盒子外文件不能被删、被改")
+        await cleanUp()
+    }
+
     @Test("借出在备份、替换阶段崩溃：已备份的域按备份恢复，没备份的本机域保持原样，系统里的内容不收进盒子")
     func crashWhileLending() async throws {
         let notBackedUp = "\(domain).native-only", boxOnly = "\(domain).helper"

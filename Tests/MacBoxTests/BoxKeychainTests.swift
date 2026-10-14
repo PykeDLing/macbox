@@ -4,12 +4,13 @@ import Testing
 
 /// 盒子钥匙串与你的钥匙串搜索列表。`security` 换成一个假命令：它把“用户搜索列表”记在文件里，
 /// create-keychain 和真的一样先把新钥匙串加进列表（记下解析过符号链接的真实路径，如 /private/var/…），
-/// 再稍等一会儿才建好文件，好让两次创建交错。真实的搜索列表从头到尾只读不写，结束时核对没有变化
+/// 再稍等一会儿才建好文件，好让两次创建交错。真实的搜索列表从头到尾只读不写，结束时核对里面没有这里的钥匙串
 @Suite("盒子钥匙串")
 struct BoxKeychainTests {
     let root: URL
     let fake: URL
     let state: URL
+    /// 存在时 create-keychain 失败；失败前先把它的内容追加进列表（模拟这期间别的工具改了搜索列表）
     let failMarker: URL
     /// 你的“登录”钥匙串和一个无关的钥匙串：这两项任何时候都不能被拿掉，顺序也不能变
     let original: [String]
@@ -49,7 +50,10 @@ struct BoxKeychainTests {
             dir=$(cd "$(dirname "$path")" && pwd -P) || exit 1
             printf '%s\\n' "$dir/$(basename "$path")" >> "$STATE"
             sleep \(delay)
-            if [ -e '\(failMarker.path)' ]; then echo "security: SecKeychainCreate $path: fake failure" >&2; exit 1; fi
+            if [ -e '\(failMarker.path)' ]; then
+              cat '\(failMarker.path)' >> "$STATE"
+              echo "security: SecKeychainCreate $path: fake failure" >&2; exit 1
+            fi
             printf '%s' "$pw" > "$path" ;;
           unlock-keychain)
             pw="$2"; path="$3"
@@ -72,15 +76,22 @@ struct BoxKeychainTests {
         try await Shell.run("/usr/bin/security", ["list-keychains", "-d", "user"]).output
     }
 
-    /// 在假 security 下运行；先确认确实换掉了，免得测试去动真实的搜索列表
+    /// 在假 security 下运行；先确认确实换掉了，免得测试去动真实的搜索列表。
+    ///
+    /// 结束时核对真实的搜索列表里没有这个测试目录下的任何钥匙串（按两种写法：/var/… 和真实路径 /private/var/…）。
+    /// 不比较前后是否完全相同：同一进程里并行运行的 BoxDataTests.keychainSelfHeals 用真的 security 创建钥匙串，
+    /// 会短暂地把它自己的临时钥匙串加进真实列表，两次读取有一次碰上就会误报
     func withFakeSecurity(_ work: () async throws -> Void) async throws {
-        let before = try await Self.realSearchList()
+        let prefixes = [root.path, FileOps.realPath(root)].map { $0 + "/" }
         defer { try? FileManager.default.removeItem(at: root) }
         try await BoxKeychain.$security.withValue(fake.path) {
             try #require(BoxKeychain.security == fake.path)
             try await work()
         }
-        #expect(try await Self.realSearchList() == before, "真实的钥匙串搜索列表不能有任何变化")
+        let leaked = try await Self.realSearchList().split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"")) }
+            .filter { entry in prefixes.contains { entry.hasPrefix($0) } }
+        #expect(leaked.isEmpty, "真实的钥匙串搜索列表里不能出现测试用的钥匙串")
     }
 
     @Test("创建钥匙串后只拿掉新加进搜索列表的那一项（按真实路径比较），其余原样保留")
@@ -118,13 +129,15 @@ struct BoxKeychainTests {
         }
     }
 
-    @Test("create-keychain 失败（已经把新钥匙串加进了列表）：报错，搜索列表照样恢复")
+    @Test("create-keychain 失败（已经把新钥匙串加进了列表）：报错，只拿掉新钥匙串，这期间别人加进列表的照样保留")
     func failedCreateStillCleansUp() async throws {
         try await withFakeSecurity {
-            try Data().write(to: failMarker)
+            // 失败前假 security 把这一项也加进列表：写回创建前的快照会把它抹掉
+            let addedMeanwhile = root.appending(path: "Other/added-meanwhile.keychain-db").path
+            try (addedMeanwhile + "\n").write(to: failMarker, atomically: true, encoding: .utf8)
             let error = await #expect(throws: MacBoxError.self) { try await BoxKeychain.prepare(box("A")) }
             #expect(error?.message.contains("fake failure") == true)
-            #expect(try fakeSearchList() == original)
+            #expect(try fakeSearchList() == original + [addedMeanwhile])
         }
     }
 

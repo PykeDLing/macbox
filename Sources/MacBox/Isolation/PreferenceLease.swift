@@ -91,7 +91,19 @@ nonisolated struct PreferenceLease: Sendable {
     /// 可能还是盒子里的内容，悄悄吞掉的话，之后的清除数据、还原会把唯一的备份一起删掉
     @concurrent
     func checkOut() async throws {
-        guard var journal = readJournal() else { return }
+        guard var journal = readJournal() else {
+            // 读不出日志、也没有 .native：没有要恢复的东西（.native 在替换任何域之前就建好，全部恢复之后才删除）。
+            // 这时日志的位置上要是还有东西——盒子里的 App 把它换成了符号链接、FIFO、乱码——也删掉（链接只删链接本身）：
+            // 留着的话 isOutstanding 一直为真，清除数据、还原、删除都会被它挡住，直到下次启动借出时覆盖它。
+            // 按 lstat 判断有没有：什么都没有时（平常收回的情形）不多做任何事
+            var info = stat()
+            if lstat(journalURL.path, &info) == 0 {
+                try step(L("无法删除读不出来的借出日志", "Couldn’t remove the unreadable lease journal")) {
+                    try FileOps.removeTree(journalURL)
+                }
+            }
+            return
+        }
         let domains = Set(systemDomains()).union(journal.nativeDomains).union(journal.lentDomains)
 
         if journal.phase == .lent {

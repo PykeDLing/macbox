@@ -3,8 +3,8 @@ import Foundation
 import Testing
 @testable import MacBox
 
-/// 删除、替换盒子里的数据：App 留下的只读目录、chflags 标志、指向盒子外的符号链接，以及替换中途崩溃后的收拾。
-/// 全部在临时目录里进行；“盒子外”的东西也放在同一个临时目录里，用来确认没有被碰到
+/// 删除、替换盒子里的数据：App 留下的只读目录、chflags 标志、拒绝删除的 ACL、很深的目录树、指向盒子外的符号链接，
+/// 以及替换中途崩溃后的收拾。全部在临时目录里进行；“盒子外”的东西也放在同一个临时目录里，用来确认没有被碰到
 @Suite("删除与替换盒子数据")
 struct FileOpsTests {
     let root: URL
@@ -19,20 +19,40 @@ struct FileOpsTests {
         try AppPaths.ensure(outside)
         try "keep".write(to: canary, atomically: true, encoding: .utf8)
         _ = chmod(outside.path, 0o755)
+        // 盒子外的东西也带着 ACL（~/Library 就是这样）：顺着链接去清 ACL 的话，删完就看得出来
+        Self.run("/bin/chmod", ["+a", "group:everyone deny delete", outside.path, canary.path])
     }
 
-    /// 不依赖被测代码的清理：清掉标志、补上权限再删
+    /// 不依赖被测代码的清理：清掉 ACL 和标志、补上权限再删
     func cleanUp() {
-        for (tool, arguments) in [("/usr/bin/chflags", ["-R", "nouchg,nouappnd", root.path]),
+        for (tool, arguments) in [("/bin/chmod", ["-R", "-N", root.path]),
+                                  ("/usr/bin/chflags", ["-R", "nouchg,nouappnd", root.path]),
                                   ("/bin/chmod", ["-R", "u+rwx", root.path]),
                                   ("/bin/rm", ["-rf", root.path])] {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: tool)
-            process.arguments = arguments
-            process.standardError = FileHandle.nullDevice
-            try? process.run()
-            process.waitUntilExit()
+            Self.run(tool, arguments)
         }
+    }
+
+    @discardableResult
+    static func run(_ tool: String, _ arguments: [String]) -> Int32 {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tool)
+        process.arguments = arguments
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return -1 }
+        process.waitUntilExit()
+        return process.terminationStatus
+    }
+
+    /// 加一条 ACL；noFollow 时加在符号链接本身上
+    func addACL(_ entry: String, to url: URL, noFollow: Bool = false) {
+        #expect(Self.run("/bin/chmod", (noFollow ? ["-h"] : []) + ["+a", entry, url.path]) == 0, "chmod +a \(entry) \(url.path)")
+    }
+
+    func hasACL(_ url: URL) -> Bool {
+        guard let acl = acl_get_link_np(url.path, ACL_TYPE_EXTENDED) else { return false }
+        acl_free(UnsafeMutableRawPointer(acl))
+        return true
     }
 
     func write(_ text: String, _ url: URL) throws {
@@ -52,7 +72,7 @@ struct FileOpsTests {
     }
 
     /// 盒子 Home 里常见的“删不动”的东西：Go 模块缓存（0555 目录、0444 文件）、uchg 文件、uappnd 目录、
-    /// 没有任何权限的目录，外加一堆普通文件和指向盒子外的链接
+    /// 没有任何权限的目录、拒绝删除（以及拒绝列出、进入、改权限）的 ACL，外加一堆普通文件和指向盒子外的链接
     func makeStubbornTree(at tree: URL) throws {
         let module = tree.appending(path: "go/pkg/mod/example.com/m@v1.0.0")
         try write("package m", module.appending(path: "m.go"))
@@ -73,17 +93,35 @@ struct FileOpsTests {
         #expect(chflags(tree.appending(path: "Library/locked.txt").path, UInt32(UF_IMMUTABLE)) == 0)
         #expect(chflags(tree.appending(path: "Library/AppendOnly").path, UInt32(UF_APPEND)) == 0)
         #expect(chmod(tree.appending(path: "Library/NoAccess").path, 0) == 0)
-        // 前提：FileManager 删不掉这样的目录（这正是要修的问题）
+        // ACL：~/Library 默认的 everyone deny delete；拒绝列出、进入、删除里面东西的目录，里面一个没有任何权限、
+        // 连属主改权限都拒绝了的文件；带着自己 ACL 的链接（指向的盒子外文件也有 ACL，不能被清掉）
+        let aclFile = tree.appending(path: "Library/acl-deny-delete.txt")
+        try write("acl", aclFile)
+        addACL("group:everyone deny delete", to: aclFile)
+        let locked = tree.appending(path: "Library/ACLLocked")
+        try write("inner", locked.appending(path: "inner.txt"))
+        try write("nested", locked.appending(path: "Nested/deep.txt"))
+        #expect(chmod(locked.appending(path: "inner.txt").path, 0) == 0)
+        addACL("group:everyone deny delete,read,write,readsecurity,writesecurity", to: locked.appending(path: "inner.txt"))
+        addACL("group:everyone deny delete,delete_child", to: locked.appending(path: "Nested"))
+        addACL("group:everyone deny list,search,delete,delete_child,add_file,add_subdirectory", to: locked)
+        let aclLink = tree.appending(path: "Library/acl-link")
+        try FileManager.default.createSymbolicLink(at: aclLink, withDestinationURL: canary)
+        addACL("group:everyone deny delete", to: aclLink, noFollow: true)
+        // 前提：FileManager 删不掉这样的目录、文件（这正是要修的问题）
         #expect(throws: (any Error).self) { try FileManager.default.removeItem(at: module) }
+        #expect(throws: (any Error).self) { try FileManager.default.removeItem(at: aclFile) }
+        #expect(throws: (any Error).self) { try FileManager.default.removeItem(at: aclLink) }
     }
 
     func outsideUntouched() {
         #expect((try? String(contentsOf: canary, encoding: .utf8)) == "keep")
         #expect(mode(outside) == 0o755, "不能顺着链接去改盒子外目录的权限")
         #expect(mode(canary) & 0o200 != 0)
+        #expect(hasACL(outside) && hasACL(canary), "不能顺着链接去清盒子外的 ACL")
     }
 
-    @Test("删除只读目录、带 uchg / uappnd 标志的东西；符号链接只删链接本身")
+    @Test("删除只读目录、带 uchg / uappnd 标志或拒绝删除 ACL 的东西；符号链接只删链接本身")
     func removeStubbornTree() throws {
         defer { cleanUp() }
         let tree = root.appending(path: "Home")
@@ -95,7 +133,42 @@ struct FileOpsTests {
         outsideUntouched()
     }
 
-    @Test("删除符号链接本身、单个带标志的文件；不存在的东西什么也不做")
+    @Test("上千层深的目录树：描述符上限只有 256（GUI App 的默认值）时也删得掉")
+    func removeDeepTree() throws {
+        defer { cleanUp() }
+        let tree = root.appending(path: "Home")
+        try AppPaths.ensure(tree)
+        // 用 mkdirat 逐层往下建，同时只开着一个目录：完整路径早就超过了 PATH_MAX，按路径建不出来
+        let depth = 1000
+        var directory = open(tree.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        try #require(directory >= 0)
+        for level in 0..<depth {
+            let next = mkdirat(directory, "d", 0o755) == 0 ? openat(directory, "d", O_RDONLY | O_DIRECTORY | O_CLOEXEC) : -1
+            close(directory)
+            directory = next
+            try #require(directory >= 0, "第 \(level) 层")
+        }
+        let leaf = openat(directory, "leaf.txt", O_CREAT | O_WRONLY | O_CLOEXEC, 0o444)
+        #expect(leaf >= 0)
+        close(leaf)
+        #expect(fchmod(directory, 0o555) == 0) // 最深处还是只读目录
+        close(directory)
+
+        // 每层占一个描述符的话，删到第 250 层左右就 EMFILE。上限是整个测试进程的，只在删除期间调低、马上恢复
+        // （并行运行的其他测试平时一共只开着二十来个描述符，256 绰绰有余）
+        var limit = rlimit()
+        try #require(getrlimit(RLIMIT_NOFILE, &limit) == 0)
+        var saved = limit
+        limit.rlim_cur = min(limit.rlim_cur, 256)
+        try #require(setrlimit(RLIMIT_NOFILE, &limit) == 0)
+        let result = Result { try FileOps.removeTree(tree) }
+        #expect(setrlimit(RLIMIT_NOFILE, &saved) == 0)
+
+        try result.get()
+        #expect(!exists(tree))
+    }
+
+    @Test("删除符号链接本身、单个带标志或 ACL 的文件；不存在的东西什么也不做")
     func removeSingleItems() throws {
         defer { cleanUp() }
         let link = root.appending(path: "Home")
@@ -108,9 +181,18 @@ struct FileOpsTests {
         let file = root.appending(path: "locked.txt")
         try write("x", file)
         _ = chmod(file.path, 0o444)
+        addACL("group:everyone deny delete,writesecurity", to: file)
         #expect(chflags(file.path, UInt32(UF_IMMUTABLE)) == 0)
         try FileOps.removeTree(file)
         #expect(!exists(file))
+
+        // 带着自己 ACL 的链接：删链接本身，指向的文件的 ACL 不动
+        let aclLink = root.appending(path: "acl-link")
+        try FileManager.default.createSymbolicLink(at: aclLink, withDestinationURL: canary)
+        addACL("group:everyone deny delete", to: aclLink, noFollow: true)
+        try FileOps.removeTree(aclLink)
+        #expect(!exists(aclLink))
+        outsideUntouched()
 
         try FileOps.removeTree(root.appending(path: "missing"))
         try FileOps.removeTree(root.appending(path: "missing-parent/missing"))
@@ -167,7 +249,7 @@ struct FileOpsTests {
         outsideUntouched()
     }
 
-    @Test("替换中途崩溃后的收拾：缺了原件就把 .old 改回来；其余 .old、.restoring、.deleting-… 删除")
+    @Test("替换中途崩溃后的收拾：缺了原件就把 .old 改回来；其余 .old、.restoring、各种 .deleting-… 删除")
     func recoverInterruptedReplacements() throws {
         defer { cleanUp() }
         let box = root.appending(path: "T.box")
@@ -180,6 +262,9 @@ struct FileOpsTests {
         try makeStubbornTree(at: box.appending(path: "Prefs.old"))
         // tmp：只删除（source 为 nil），删到一半崩溃
         try makeStubbornTree(at: box.appending(path: "tmp.deleting-5A3F"))
+        // 早先的写法按挪开前的名字起名：删换下来的 .old、残留的 .restoring 到一半时崩溃，留下的是这样的名字
+        try makeStubbornTree(at: box.appending(path: "Home.old.deleting-AAAA"))
+        try makeStubbornTree(at: box.appending(path: "Home.restoring.deleting-BBBB"))
         // 不在 items 里的不碰
         try write("other", box.appending(path: "Other.old/x"))
 
