@@ -1,7 +1,7 @@
 import Foundation
 
 /// 在 ~/Applications/MacBox 里放一个和原 App 同名同图标的启动器，
-/// 从启动台、聚焦、程序坞打开它时，由 MacBox 在隔离中启动真正的 App。
+/// 从聚焦、程序坞打开它时，由 MacBox 在隔离中启动真正的 App。
 /// 所有改动经由这个 actor 串行执行：并发安装时“找空闲名字”会互相踩到，产生重复的启动器
 actor Launcher {
     static let shared = Launcher()

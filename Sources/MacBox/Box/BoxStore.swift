@@ -278,7 +278,7 @@ final class BoxStore {
 
     // MARK: - 外部事件
 
-    /// macbox://open/<id>（启动台里的启动器）
+    /// macbox://open/<id>（聚焦里的启动器）
     func handle(_ url: URL) {
         start()
         guard url.scheme == "macbox", url.host() == "open",

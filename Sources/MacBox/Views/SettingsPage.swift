@@ -15,8 +15,8 @@ struct SettingsPage: View {
                                                                 set: { localization.language = $0 })) {
                     ForEach(AppLanguage.allCases) { Text($0.title).tag($0) }
                 }
-                Text(L("系统提供的文字（如菜单栏里的“退出”“编辑”、选择文件的窗口）在重新打开 MacBox 后切换。",
-                       "System-provided text (such as the Quit and Edit menu items and file dialogs) switches after you reopen MacBox."))
+                Text(L("系统提供的文字（如菜单栏里的“退出”“编辑”、选择文件的窗口）在退出并重新打开 MacBox 后切换。",
+                       "System-provided text (such as the Quit and Edit menu items and file dialogs) switches after you quit and reopen MacBox."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
@@ -36,7 +36,7 @@ struct SettingsPage: View {
             }
 
             Section(L("新添加的应用", "New Apps")) {
-                Toggle(L("在启动台和聚焦中显示", "Show in Launchpad and Spotlight"), isOn: $showInLaunchpad)
+                Toggle(L("在聚焦中显示", "Show in Spotlight"), isOn: $showInLaunchpad)
                 Text(L("启动器放在 ~/Applications/MacBox，打开时由 MacBox 在隔离中启动真正的应用。",
                        "Launchers go in ~/Applications/MacBox. Opening one has MacBox start the real app in isolation."))
                     .font(.caption)

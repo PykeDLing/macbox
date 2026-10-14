@@ -26,7 +26,7 @@ nonisolated enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// 当前界面语言。手写 Observable（而不是 @Observable 宏），这样后台线程里生成文字时也能安全读取。
-/// 选择保存在本 App 域的 AppleLanguages 里：系统菜单按它显示，系统设置 › 语言与地区 › 应用程序 改的也是它，
+/// 选择保存在本 App 域的 AppleLanguages 里：系统菜单按它显示，系统设置 › 通用 › 语言与地区 › 应用程序 改的也是它，
 /// 两边始终一致
 nonisolated final class Localization: Observable, Sendable {
     static let shared = Localization()

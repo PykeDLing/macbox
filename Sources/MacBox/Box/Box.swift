@@ -320,7 +320,7 @@ final class Box: Identifiable {
         }
     }
 
-    /// 按当前配置创建、更新或删除启动台里的启动器。返回的任务可用于等待完成
+    /// 按当前配置创建、更新或删除聚焦里的启动器。返回的任务可用于等待完成
     @discardableResult
     func syncLauncher() -> Task<Void, Never> {
         let previous = launcherTask

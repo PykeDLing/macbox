@@ -26,7 +26,7 @@ struct BoxInspector: View {
                 restoreSection
             }
             Section {
-                Toggle(L("在启动台和聚焦中显示", "Show in Launchpad and Spotlight"), isOn: $box.config.showInLaunchpad)
+                Toggle(L("在聚焦中显示", "Show in Spotlight"), isOn: $box.config.showInLaunchpad)
                     .help(L("在 ~/Applications/MacBox 放一个启动器，像普通 App 一样打开",
                             "Put a launcher in ~/Applications/MacBox so you can open it like any other app"))
                 Button(L("删除应用…", "Delete App…"), role: .destructive, action: onDelete)
@@ -79,7 +79,7 @@ struct BoxInspector: View {
                     .frame(width: 84, height: 84)
                     .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
                 VStack(spacing: 3) {
-                    // 回车才保存：改名会重建启动台里的启动器
+                    // 回车才保存：改名会重建聚焦里的启动器
                     TextField(L("名称", "Name"), text: $nameDraft)
                         .labelsHidden()
                         .textFieldStyle(.plain)

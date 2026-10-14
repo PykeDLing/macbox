@@ -19,7 +19,7 @@ nonisolated enum AppPaths {
     static var boxes: URL { root.appending(path: "Boxes", directoryHint: .isDirectory) }
     static var virtualMac: URL { root.appending(path: "VirtualMac", directoryHint: .isDirectory) }
     static var restoreImages: URL { root.appending(path: "RestoreImages", directoryHint: .isDirectory) }
-    /// 启动台/聚焦里的启动器（真正的 App 藏在 Boxes 里，只能经由 MacBox 在隔离中启动）
+    /// 聚焦里的启动器（真正的 App 藏在 Boxes 里，只能经由 MacBox 在隔离中启动）
     static var launchers: URL {
         if let override { return override.appending(path: "Launchers", directoryHint: .isDirectory) }
         return FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications/MacBox", directoryHint: .isDirectory)

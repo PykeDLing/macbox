@@ -16,7 +16,7 @@ struct MacBoxApp: App {
         .environment(virtualMac)
         .defaultSize(width: 1120, height: 720)
         .commands { MacBoxCommands(store: store) }
-        // 模型请求打开窗口（启动台打开虚拟 Mac 应用、⌘, 等）：在场景层处理，窗口全关着时也有效
+        // 模型请求打开窗口（从聚焦打开虚拟 Mac 应用、⌘, 等）：在场景层处理，窗口全关着时也有效
         .onChange(of: store.windowRequest) { _, request in
             if let request { openWindow(id: request.window.rawValue) }
         }
@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    /// 启动台里的启动器通过 macbox://open/<id> 打开应用；
+    /// 聚焦里的启动器通过 macbox://open/<id> 打开应用；
     /// 把 dmg 拖到程序坞的 MacBox 图标上、或「打开方式 › MacBox」则添加应用
     func application(_ application: NSApplication, open urls: [URL]) {
         let store = BoxStore.shared
