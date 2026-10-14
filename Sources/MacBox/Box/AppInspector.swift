@@ -13,10 +13,11 @@ nonisolated struct AppInfo: Sendable {
 nonisolated enum AppInspector {
     static func info(of app: URL) throws -> AppInfo {
         guard let bundle = Bundle(url: app), let info = bundle.infoDictionary else {
-            throw MacBoxError("「\(app.lastPathComponent)」不是有效的 App")
+            throw MacBoxError(L("「\(app.lastPathComponent)」不是有效的 App", "“\(app.lastPathComponent)” is not a valid app"))
         }
         guard let identifier = bundle.bundleIdentifier, let executable = bundle.executableURL else {
-            throw MacBoxError("「\(app.lastPathComponent)」缺少标识符或可执行文件")
+            throw MacBoxError(L("「\(app.lastPathComponent)」缺少标识符或可执行文件",
+                                  "“\(app.lastPathComponent)” is missing a bundle identifier or executable"))
         }
         let localized = bundle.localizedInfoDictionary ?? [:]
         let name = (localized["CFBundleDisplayName"] ?? localized["CFBundleName"]
@@ -57,6 +58,7 @@ nonisolated enum AppInspector {
         identifier.split(separator: ".").prefix(3).joined(separator: ".")
     }
 
+    /// 问题的标题和说明以中文存进 box.json，英文版本见 CompatibilityIssue.english
     @concurrent
     static func scan(_ app: URL) async -> [CompatibilityIssue] {
         var issues: [CompatibilityIssue] = []

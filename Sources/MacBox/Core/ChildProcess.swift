@@ -121,7 +121,8 @@ nonisolated final class ChildProcess: Sendable {
         let status = posix_spawn(&pid, executable, &actions, &attributes, argv, envp)
         guard status == 0 else {
             parentEnds.forEach { close($0) }
-            throw MacBoxError("无法启动 \((executable as NSString).lastPathComponent)：\(String(cString: strerror(status)))")
+            let tool = (executable as NSString).lastPathComponent, reason = String(cString: strerror(status))
+            throw MacBoxError(L("无法启动 \(tool)：\(reason)", "Couldn’t start \(tool): \(reason)"))
         }
 
         let process = ChildProcess(pid: pid, processGroup: options.newProcessGroup ? pid : nil,
@@ -191,7 +192,10 @@ nonisolated final class ChildProcess: Sendable {
 
     private static func makePipe() throws -> (read: Int32, write: Int32) {
         var fds: [Int32] = [0, 0]
-        guard pipe(&fds) == 0 else { throw MacBoxError("无法创建管道：\(String(cString: strerror(errno)))") }
+        guard pipe(&fds) == 0 else {
+            let reason = String(cString: strerror(errno))
+            throw MacBoxError(L("无法创建管道：\(reason)", "Couldn’t create a pipe: \(reason)"))
+        }
         // 父进程这边的描述符不能被其他途径启动的进程继承
         for fd in fds { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
         return (fds[0], fds[1])

@@ -144,7 +144,7 @@ nonisolated struct PreferenceLease: Sendable {
         let removed = existing.filter { content[$0] == nil }
         CFPreferencesSetMultiple(content as CFDictionary, removed as CFArray, ref, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
         guard CFPreferencesSynchronize(ref, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) else {
-            throw MacBoxError("无法写入偏好设置 \(domain)")
+            throw MacBoxError(L("无法写入偏好设置 \(domain)", "Couldn’t write preferences \(domain)"))
         }
         if content.isEmpty {
             // 只删文件不够：cfprefsd 稍后会把缓存里的空域重新写成一个空 plist。让它自己删除整个域

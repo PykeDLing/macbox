@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>zh_CN</string>
+	<string>en</string>
 	<key>CFBundleDisplayName</key>
 	<string>MacBox</string>
 	<key>CFBundleDocumentTypes</key>
@@ -28,6 +28,11 @@
 	<string>MacBox</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh-Hans</string>
+		<string>en</string>
+	</array>
 	<key>CFBundleIdentifier</key>
 	<string>dev.pyke.MacBox</string>
 	<key>CFBundleInfoDictionaryVersion</key>

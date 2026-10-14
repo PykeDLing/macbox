@@ -26,9 +26,10 @@ struct BoxInspector: View {
                 restoreSection
             }
             Section {
-                Toggle("在启动台和聚焦中显示", isOn: $box.config.showInLaunchpad)
-                    .help("在 ~/Applications/MacBox 放一个启动器，像普通 App 一样打开")
-                Button("删除应用…", role: .destructive, action: onDelete)
+                Toggle(L("在启动台和聚焦中显示", "Show in Launchpad and Spotlight"), isOn: $box.config.showInLaunchpad)
+                    .help(L("在 ~/Applications/MacBox 放一个启动器，像普通 App 一样打开",
+                            "Put a launcher in ~/Applications/MacBox so you can open it like any other app"))
+                Button(L("删除应用…", "Delete App…"), role: .destructive, action: onDelete)
                     .disabled(box.isRunning || box.isBusy)
             }
         }
@@ -37,27 +38,33 @@ struct BoxInspector: View {
         .task(id: "\(box.isRunning)-\(dataRevision)") {
             dataSize = await box.measureDataSize()
         }
-        .confirmationDialog("还原到还原点？", isPresented: $confirmRestore) {
-            Button("还原", role: .destructive) {
+        .confirmationDialog(L("还原到还原点？", "Restore to Restore Point?"), isPresented: $confirmRestore) {
+            Button(L("还原", "Restore"), role: .destructive) {
                 perform {
                     try await box.restoreRestorePoint()
-                    box.notice = "已还原。"
+                    box.notice = L("已还原。", "Restored.")
                     dataRevision += 1
                 }
             }
+            Button(L("取消", "Cancel"), role: .cancel) {}
         } message: {
-            Text("还原点之后的登录状态、设置和缓存都会丢弃。")
+            Text(L("还原点之后的登录状态、设置和缓存都会丢弃。",
+                   "Sign-ins, settings and caches since the restore point will be discarded."))
         }
-        .confirmationDialog("清除「\(box.config.name)」的数据？", isPresented: $confirmClear) {
-            Button("清除", role: .destructive) {
+        .confirmationDialog(L("清除「\(box.config.name)」的数据？", "Clear Data for “\(box.config.name)”?"),
+                            isPresented: $confirmClear) {
+            Button(L("清除", "Clear"), role: .destructive) {
                 perform {
                     try await box.clearData()
-                    box.notice = "数据已清除，下次打开就像刚安装一样。"
+                    box.notice = L("数据已清除，下次打开就像刚安装一样。",
+                                   "Data cleared. Next time it opens as if freshly installed.")
                     dataRevision += 1
                 }
             }
+            Button(L("取消", "Cancel"), role: .cancel) {}
         } message: {
-            Text("登录状态、设置、缓存和钥匙串都会被清空。应用本身保留。")
+            Text(L("登录状态、设置、缓存和钥匙串都会被清空。应用本身保留。",
+                   "Sign-ins, settings, caches and the keychain will be erased. The app itself is kept."))
         }
     }
 
@@ -73,19 +80,19 @@ struct BoxInspector: View {
                     .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
                 VStack(spacing: 3) {
                     // 回车才保存：改名会重建启动台里的启动器
-                    TextField("名称", text: $nameDraft)
+                    TextField(L("名称", "Name"), text: $nameDraft)
                         .labelsHidden()
                         .textFieldStyle(.plain)
                         .font(.title2.weight(.semibold))
                         .multilineTextAlignment(.center)
-                        .help("点击修改名称，按回车保存")
+                        .help(L("点击修改名称，按回车保存", "Click to rename, press Return to save"))
                         .onSubmit {
                             let name = nameDraft.trimmingCharacters(in: .whitespaces)
                             if name.isEmpty { nameDraft = box.config.name } else { box.config.name = name }
                         }
                         .onAppear { nameDraft = box.config.name }
                         .onChange(of: box.config.name) { nameDraft = box.config.name }
-                    Text([box.config.version.map { "版本 \($0)" }, box.config.bundleIdentifier]
+                    Text([box.config.version.map { L("版本 \($0)", "Version \($0)") }, box.config.bundleIdentifier]
                         .compactMap { $0 }.joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -97,13 +104,13 @@ struct BoxInspector: View {
                 HStack(spacing: 8) {
                     if box.isRunning {
                         Button { box.session?.activate() } label: {
-                            Label("切换过去", systemImage: "arrow.up.forward").frame(maxWidth: .infinity)
+                            Label(L("切换过去", "Switch to App"), systemImage: "arrow.up.forward").frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
-                        Button { box.quit() } label: { Text("退出").frame(maxWidth: .infinity) }
+                        Button { box.quit() } label: { Text(L("退出", "Quit")).frame(maxWidth: .infinity) }
                     } else {
                         Button { Task { await box.open() } } label: {
-                            Label(box.config.isInstaller ? "运行安装器" : "打开", systemImage: "play.fill")
+                            Label(box.config.isInstaller ? L("运行安装器", "Run Installer") : L("打开", "Open"), systemImage: "play.fill")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
@@ -136,7 +143,7 @@ struct BoxInspector: View {
 
     private var runtimeSection: some View {
         Section {
-            Picker("运行环境", selection: $box.config.runtime) {
+            Picker(L("运行环境", "Runtime"), selection: $box.config.runtime) {
                 ForEach(Runtime.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
@@ -161,7 +168,11 @@ struct BoxInspector: View {
                             Image(systemName: "chevron.right")
                                 .rotationEffect(.degrees(showAllBlocks ? 90 : 0))
                                 .font(.caption.weight(.semibold))
-                            Label("本次已拦截 \(box.blocks.reduce(0) { $0 + $1.count }) 次越界行为", systemImage: "hand.raised.fill")
+                            let total = box.blocks.reduce(0) { $0 + $1.count }
+                            Label(L("本次已拦截 \(total) 次越界行为",
+                                    total == 1 ? "Blocked 1 out-of-bounds attempt this session"
+                                               : "Blocked \(total) out-of-bounds attempts this session"),
+                                  systemImage: "hand.raised.fill")
                             Spacer()
                         }
                         .contentShape(Rectangle())
@@ -179,44 +190,48 @@ struct BoxInspector: View {
                         }
                     }
                 }
-                Button("软件不正常？改用虚拟 Mac 运行") { box.config.runtime = .virtualMac }
+                Button(L("软件不正常？改用虚拟 Mac 运行", "Not working right? Run in Virtual Mac instead")) { box.config.runtime = .virtualMac }
                     .buttonStyle(.link)
                     .disabled(box.isRunning || box.isBusy)
             } else {
                 if !virtualMac.config.installed {
-                    Label("虚拟 Mac 还没有设置。第一次需要下载约 18 GB 的 macOS 并安装，之后所有需要它的应用共用一台。",
+                    Label(L("虚拟 Mac 还没有设置。第一次需要下载约 18 GB 的 macOS 并安装，之后所有需要它的应用共用一台。",
+                            "Virtual Mac isn’t set up yet. The first setup downloads and installs about 18 GB of macOS; after that, every app that needs it shares the same one."),
                           systemImage: "info.circle")
                         .font(.caption)
-                    Button("前往设置虚拟 Mac…") { store.show(.virtualMac) }
+                    Button(L("前往设置虚拟 Mac…", "Set Up Virtual Mac…")) { store.show(.virtualMac) }
                 } else {
-                    Text("打开后，原始安装文件会放进虚拟 Mac 的「传入」文件夹（访达 › 位置 › My Shared Files），在里面安装一次即可。")
+                    Text(L("打开后，原始安装文件会放进虚拟 Mac 的「传入」文件夹（访达 › 位置 › My Shared Files），在里面安装一次即可。",
+                            "When you open it, the original installer is placed in the Virtual Mac’s “传入” (Incoming) folder (Finder › Locations › My Shared Files). Install it from there once."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
         } header: {
-            Text("运行环境")
+            Text(L("运行环境", "Runtime"))
         }
     }
 
     // MARK: - 文件
 
     private var filesSection: some View {
-        Section("文件") {
-            Toggle("共享「下载」文件夹", isOn: $box.config.shareDownloads)
+        Section(L("文件", "Files")) {
+            Toggle(L("共享「下载」文件夹", "Share Downloads Folder"), isOn: $box.config.shareDownloads)
                 .disabled(box.isRunning || box.isBusy)
             Text(box.config.shareDownloads
-                 ? "应用下载的文件直接保存到你的「下载」文件夹。"
-                 : "应用只能看到盒子里自己的「下载」文件夹。")
+                 ? L("应用下载的文件直接保存到你的「下载」文件夹。",
+                     "Files the app downloads are saved directly to your Downloads folder.")
+                 : L("应用只能看到盒子里自己的「下载」文件夹。",
+                     "The app can only see its own Downloads folder inside the box."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            LabeledContent("应用数据") {
+            LabeledContent(L("应用数据", "App Data")) {
                 if let dataSize { Text(FileOps.formatBytes(dataSize)) } else { ProgressView().controlSize(.small) }
             }
             HStack {
-                Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([box.paths.home]) }
+                Button(L("在访达中显示", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([box.paths.home]) }
                 Spacer()
-                Button("清除数据…") { confirmClear = true }
+                Button(L("清除数据…", "Clear Data…")) { confirmClear = true }
                     .disabled(box.isRunning || box.isBusy)
             }
         }
@@ -225,26 +240,27 @@ struct BoxInspector: View {
     // MARK: - 还原点
 
     private var restoreSection: some View {
-        Section("还原点") {
+        Section(L("还原点", "Restore Point")) {
             if let date = box.restorePointDate {
-                LabeledContent("创建于", value: date.formatted(date: .abbreviated, time: .shortened))
+                LabeledContent(L("创建于", "Created"), value: date.formatted(date: .abbreviated, time: .shortened))
             } else {
-                Text("创建一个还原点，之后可以随时回到这个状态（比如刚登录好的时候）。")
+                Text(L("创建一个还原点，之后可以随时回到这个状态（比如刚登录好的时候）。",
+                        "Create a restore point to return to this state at any time (for example, right after signing in)."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             HStack {
-                Button(box.restorePointDate == nil ? "创建还原点" : "更新还原点") {
+                Button(box.restorePointDate == nil ? L("创建还原点", "Create Restore Point") : L("更新还原点", "Update Restore Point")) {
                     perform {
                         try await box.createRestorePoint()
-                        box.notice = "还原点已创建。"
+                        box.notice = L("还原点已创建。", "Restore point created.")
                     }
                 }
-                Button("还原…") { confirmRestore = true }
+                Button(L("还原…", "Restore…")) { confirmRestore = true }
                     .disabled(box.restorePointDate == nil)
             }
             .disabled(box.isRunning || box.isBusy)
-            Toggle("每次退出后自动还原", isOn: $box.config.resetOnQuit)
+            Toggle(L("每次退出后自动还原", "Restore Automatically After Quitting"), isOn: $box.config.resetOnQuit)
                 .disabled(box.restorePointDate == nil)
         }
     }
@@ -263,8 +279,8 @@ private struct IssueRow: View {
     var body: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text(issue.title).font(.callout)
-                Text(issue.detail).font(.caption).foregroundStyle(.secondary)
+                Text(issue.localizedTitle).font(.callout)
+                Text(issue.localizedDetail).font(.caption).foregroundStyle(.secondary)
             }
         } icon: {
             Image(systemName: icon).foregroundStyle(color)

@@ -43,7 +43,7 @@ struct Banner: View {
             Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             Button(action: onClose) { Image(systemName: "xmark") }
                 .buttonStyle(.borderless)
-                .accessibilityLabel("关闭")
+                .accessibilityLabel(L("关闭", "Close"))
         }
         .font(.callout)
     }

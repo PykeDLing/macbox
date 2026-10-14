@@ -20,14 +20,14 @@ nonisolated enum DiskImage {
               let plist = try PropertyListSerialization.propertyList(
                   from: Data(result.output[range.lowerBound...].utf8), format: nil) as? [String: Any],
               let entities = plist["system-entities"] as? [[String: Any]] else {
-            throw MacBoxError("无法读取磁盘映像信息")
+            throw MacBoxError(L("无法读取磁盘映像信息", "Couldn’t read the disk image information"))
         }
         for entity in entities {
             if let mountPoint = entity["mount-point"] as? String, let device = entity["dev-entry"] as? String {
                 return Mount(device: device, mountPoint: URL(fileURLWithPath: mountPoint, isDirectory: true))
             }
         }
-        throw MacBoxError("磁盘映像里没有可读取的卷")
+        throw MacBoxError(L("磁盘映像里没有可读取的卷", "The disk image has no readable volume"))
     }
 
     /// 映像服务正忙（例如同时有其他映像在挂载、卸载）时 hdiutil 会报“资源暂时不可用”，稍等重试
@@ -40,7 +40,8 @@ nonisolated enum DiskImage {
             if result.status == 0 { return result }
             let busy = result.error.contains("暂时不可用") || result.error.localizedCaseInsensitiveContains("temporarily unavailable")
             guard busy, attempt < attempts else {
-                throw MacBoxError("hdiutil 失败：\(result.error.trimmingCharacters(in: .whitespacesAndNewlines))")
+                let detail = result.error.trimmingCharacters(in: .whitespacesAndNewlines)
+                throw MacBoxError(L("hdiutil 失败：\(detail)", "hdiutil failed: \(detail)"))
             }
             try await Task.sleep(for: .seconds(attempt))
         }

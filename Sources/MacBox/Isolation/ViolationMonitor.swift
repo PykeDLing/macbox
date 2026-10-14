@@ -7,16 +7,16 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Sendable {
 
         var title: String {
             switch self {
-            case .escapedLaunch: "在沙盒外启动程序"
-            case .diskMount: "挂载磁盘映像"
-            case .autostart: "注册开机自启动"
-            case .backgroundService: "注册后台服务"
-            case .systemInstall: "写入系统目录"
-            case .personalFiles: "写入你的个人文件夹"
-            case .privacyRead: "读取私人数据"
-            case .notification: "发送通知"
-            case .appleEvent: "控制其他 App"
-            case .other: "其他系统操作"
+            case .escapedLaunch: L("在沙盒外启动程序", "Launch a program outside the sandbox")
+            case .diskMount: L("挂载磁盘映像", "Mount a disk image")
+            case .autostart: L("注册开机自启动", "Register to open at login")
+            case .backgroundService: L("注册后台服务", "Register a background service")
+            case .systemInstall: L("写入系统目录", "Write to system folders")
+            case .personalFiles: L("写入你的个人文件夹", "Write to your personal folders")
+            case .privacyRead: L("读取私人数据", "Read private data")
+            case .notification: L("发送通知", "Send notifications")
+            case .appleEvent: L("控制其他 App", "Control other apps")
+            case .other: L("其他系统操作", "Other system operations")
             }
         }
 
@@ -191,14 +191,14 @@ nonisolated enum ViolationMonitor {
             if operation.hasPrefix("file-read") { return BlockEvent(kind: .privacyRead, target: target) }
             if operation == "mach-lookup" {
                 if target.contains("usernot") || target.contains("UNCUserNotification") {
-                    return BlockEvent(kind: .notification, target: "通知中心")
+                    return BlockEvent(kind: .notification, target: L("通知中心", "Notification Center"))
                 }
                 if target.contains("DiskArbitration") || target.contains("diskarbitrationd") {
-                    return BlockEvent(kind: .diskMount, target: "安装器自己下载的安装包")
+                    return BlockEvent(kind: .diskMount, target: L("安装器自己下载的安装包", "Installer package downloaded by the installer"))
                 }
                 // SMAppService 登录项 / 后台项注册
                 if target.contains("smd") || target.contains("backgroundtaskmanagement") {
-                    return BlockEvent(kind: .autostart, target: "登录项与后台项")
+                    return BlockEvent(kind: .autostart, target: L("登录项与后台项", "Login items and background items"))
                 }
                 return nil
             }

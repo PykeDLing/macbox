@@ -21,7 +21,7 @@ struct MacBoxApp: App {
             if let request { openWindow(id: request.window.rawValue) }
         }
 
-        Window("虚拟 Mac", id: WindowID.virtualMac.rawValue) {
+        Window(Text(L("虚拟 Mac", "Virtual Mac")), id: WindowID.virtualMac.rawValue) {
             VirtualMacWindow()
         }
         .environment(store)
@@ -37,11 +37,11 @@ private struct MacBoxCommands: Commands {
     var body: some Commands {
         // 设置在主窗口侧边栏里，⌘, 直接切过去
         CommandGroup(replacing: .appSettings) {
-            Button("设置…") { store.show(.settings) }
+            Button(L("设置…", "Settings…")) { store.show(.settings) }
                 .keyboardShortcut(",")
         }
         CommandGroup(replacing: .newItem) {
-            Button("添加应用…") { importApps?() }
+            Button(L("添加应用…", "Add App…")) { importApps?() }
                 .keyboardShortcut("o")
                 .disabled(importApps == nil)
         }

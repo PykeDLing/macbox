@@ -39,9 +39,10 @@ struct LibraryView: View {
                         BoxInspector(box: box) { pendingDelete = .box(box) }.id(box.id)
                     } else {
                         ContentUnavailableView {
-                            Label("未选择应用", systemImage: "cursorarrow.click.2")
+                            Label(L("未选择应用", "No App Selected"), systemImage: "cursorarrow.click.2")
                         } description: {
-                            Text("单击卡片查看详情，双击打开。\n右键可以切换运行环境或删除。")
+                            Text(L("单击卡片查看详情，双击打开。\n右键可以切换运行环境或删除。",
+                                 "Click a card to see details, double-click to open it.\nRight-click to change the runtime or delete."))
                         }
                     }
                 }
@@ -50,30 +51,34 @@ struct LibraryView: View {
             .toolbar {
                 if !store.boxes.isEmpty {
                     ToolbarItem(placement: .primaryAction) {
-                        Button { showInspector.toggle() } label: { Label("详情", systemImage: "sidebar.right") }
-                            .help(showInspector ? "隐藏详情" : "显示详情")
+                        Button { showInspector.toggle() } label: { Label(L("详情", "Details"), systemImage: "sidebar.right") }
+                            .help(showInspector ? L("隐藏详情", "Hide Details") : L("显示详情", "Show Details"))
                     }
                 }
             }
-            .navigationTitle(runningOnly ? "运行中" : "全部应用")
+            .navigationTitle(runningOnly ? L("运行中", "Running") : L("全部应用", "All Apps"))
             .navigationSubtitle(subtitle)
             .onAppear { if store.selection == nil { store.selection = visibleBoxes.first?.id } }
             .confirmationDialog(pendingDelete?.title ?? "", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
                                 titleVisibility: .visible, presenting: pendingDelete) { target in
-                Button("移到废纸篓", role: .destructive) { delete(target) }
+                Button(L("移到废纸篓", "Move to Trash"), role: .destructive) { delete(target) }
+                Button(L("取消", "Cancel"), role: .cancel) {}
             } message: { target in
                 Text(target.message)
             }
-            .alert("无法删除", isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } }),
+            .alert(L("无法删除", "Couldn’t Delete"), isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } }),
                    presenting: actionError) { _ in
-                Button("好") {}
+                Button(L("好", "OK")) {}
             } message: { Text($0) }
     }
 
     private var subtitle: String {
         let running = store.runningBoxes.count
-        if runningOnly { return running > 0 ? "\(running) 个应用正在运行" : "" }
-        return running > 0 ? "\(store.boxes.count) 个应用 · \(running) 个运行中" : "\(store.boxes.count) 个应用"
+        let total = store.boxes.count
+        let runningText = L("\(running) 个应用正在运行", running == 1 ? "1 app running" : "\(running) apps running")
+        if runningOnly { return running > 0 ? runningText : "" }
+        let totalText = L("\(total) 个应用", total == 1 ? "1 app" : "\(total) apps")
+        return running > 0 ? L("\(total) 个应用 · \(running) 个运行中", "\(totalText) · \(running) running") : totalText
     }
 
     @ViewBuilder
@@ -82,14 +87,16 @@ struct LibraryView: View {
             WelcomeView()
         } else if visibleBoxes.isEmpty && visibleBroken.isEmpty && store.importStatus == nil {
             if !query.isEmpty {
-                ContentUnavailableView.search(text: query)
+                ContentUnavailableView(L("没有“\(query)”的结果", "No Results for “\(query)”"),
+                                       systemImage: "magnifyingglass",
+                                       description: Text(L("请检查拼写或换个关键词。", "Check the spelling or try a new search.")))
             } else {
                 ContentUnavailableView {
-                    Label("没有正在运行的应用", systemImage: "play.circle")
+                    Label(L("没有正在运行的应用", "No Apps Running"), systemImage: "play.circle")
                 } description: {
-                    Text("在「全部应用」里双击一个应用即可打开。")
+                    Text(L("在「全部应用」里双击一个应用即可打开。", "Double-click an app in “All Apps” to open it."))
                 } actions: {
-                    Button("查看全部应用") { store.destination = .allApps }
+                    Button(L("查看全部应用", "Show All Apps")) { store.destination = .allApps }
                 }
             }
         } else {
@@ -101,9 +108,9 @@ struct LibraryView: View {
                     ForEach(visibleBroken) { broken in
                         BrokenCard(broken: broken)
                             .contextMenu {
-                                Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([broken.url]) }
+                                Button(L("在访达中显示", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([broken.url]) }
                                 Divider()
-                                Button("删除…", role: .destructive) { pendingDelete = .broken(broken) }
+                                Button(L("删除…", "Delete…"), role: .destructive) { pendingDelete = .broken(broken) }
                             }
                     }
                     if let status = store.importStatus {
@@ -143,21 +150,23 @@ struct LibraryView: View {
             .accessibilityValue(BoxStatusTag.State(box).title)
             .accessibilityAddTraits(store.selection == box.id ? [.isButton, .isSelected] : .isButton)
             .accessibilityAction { store.selection = box.id }
-            .accessibilityAction(named: box.isRunning ? "切换过去" : "打开") { Task { await box.open() } }
+            .accessibilityAction(named: box.isRunning ? L("切换过去", "Switch to App") : L("打开", "Open")) { Task { await box.open() } }
     }
 
     @ViewBuilder
     private func cardMenu(_ box: Box) -> some View {
-        Button(box.isRunning ? "切换到「\(box.config.name)」" : "打开") { Task { await box.open() } }
-        if box.isRunning { Button("退出") { box.quit() } }
+        Button(box.isRunning ? L("切换到「\(box.config.name)」", "Switch to “\(box.config.name)”") : L("打开", "Open")) {
+            Task { await box.open() }
+        }
+        if box.isRunning { Button(L("退出", "Quit")) { box.quit() } }
         Divider()
-        Picker("运行环境", selection: Binding(get: { box.config.runtime }, set: { box.config.runtime = $0 })) {
+        Picker(L("运行环境", "Runtime"), selection: Binding(get: { box.config.runtime }, set: { box.config.runtime = $0 })) {
             ForEach(Runtime.allCases) { Text($0.title).tag($0) }
         }
         .disabled(box.isRunning)
-        Button("在访达中显示应用数据") { NSWorkspace.shared.activateFileViewerSelecting([box.paths.home]) }
+        Button(L("在访达中显示应用数据", "Show App Data in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([box.paths.home]) }
         Divider()
-        Button("删除…", role: .destructive) {
+        Button(L("删除…", "Delete…"), role: .destructive) {
             store.selection = box.id
             pendingDelete = .box(box)
         }
@@ -196,15 +205,17 @@ private enum DeleteTarget {
 
     var title: String {
         switch self {
-        case .box(let box): "删除「\(box.config.name)」？"
-        case .broken: "删除这个无法读取的应用？"
+        case .box(let box): L("删除「\(box.config.name)」？", "Delete “\(box.config.name)”?")
+        case .broken: L("删除这个无法读取的应用？", "Delete this unreadable app?")
         }
     }
 
     var message: String {
         switch self {
-        case .box: "应用和它的全部数据（设置、缓存、钥匙串）会一起移到废纸篓，你的 Mac 上不会留下任何东西。"
-        case .broken: "它的文件夹会移到废纸篓，需要时可以从废纸篓里找回。"
+        case .box: L("应用和它的全部数据（设置、缓存、钥匙串）会一起移到废纸篓，你的 Mac 上不会留下任何东西。",
+                      "The app and all its data (settings, caches, keychain) will be moved to the Trash. Nothing will be left behind on your Mac.")
+        case .broken: L("它的文件夹会移到废纸篓，需要时可以从废纸篓里找回。",
+                        "Its folder will be moved to the Trash, where you can recover it if needed.")
         }
     }
 }
@@ -247,7 +258,8 @@ struct AppCard: View {
         .contentShape(cardShape)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .help(box.isRunning ? "双击切换到「\(box.config.name)」" : "双击打开")
+        .help(box.isRunning ? L("双击切换到「\(box.config.name)」", "Double-click to switch to “\(box.config.name)”")
+                             : L("双击打开", "Double-click to open"))
     }
 
     private var openButton: some View {
@@ -260,7 +272,7 @@ struct AppCard: View {
                 .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
         }
         .buttonStyle(.plain)
-        .help(box.isRunning ? "切换过去" : (box.config.isInstaller ? "运行安装器" : "打开"))
+        .help(box.isRunning ? L("切换过去", "Switch to App") : (box.config.isInstaller ? L("运行安装器", "Run Installer") : L("打开", "Open")))
         .padding(8)
     }
 }
@@ -287,17 +299,17 @@ struct BoxStatusTag: View {
 
         init(_ box: Box) {
             (title, symbol, color) = if box.isRunning {
-                ("运行中", "circle.fill", .green)
+                (L("运行中", "Running"), "circle.fill", .green)
             } else if box.isBusy {
-                ("处理中…", "hourglass", .secondary)
+                (L("处理中…", "Working…"), "hourglass", .secondary)
             } else if box.config.runtime == .virtualMac {
-                ("虚拟 Mac", "desktopcomputer", .secondary)
+                (L("虚拟 Mac", "Virtual Mac"), "desktopcomputer", .secondary)
             } else if box.worstIssue == .needsVirtualMac || box.blocks.contains(where: \.kind.suggestsVirtualMac) {
-                ("可能需要虚拟 Mac", "exclamationmark.triangle.fill", .orange)
+                (L("可能需要虚拟 Mac", "May Need Virtual Mac"), "exclamationmark.triangle.fill", .orange)
             } else if box.config.isInstaller {
-                ("安装器", "shippingbox", .secondary)
+                (L("安装器", "Installer"), "shippingbox", .secondary)
             } else {
-                ("本机隔离", "lock.fill", Color.secondary.opacity(0.8))
+                (L("本机隔离", "Native Isolation"), "lock.fill", Color.secondary.opacity(0.8))
             }
         }
     }
@@ -315,7 +327,7 @@ private struct BrokenCard: View {
                 .frame(width: 72, height: 72)
                 .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             VStack(spacing: 4) {
-                Text("无法读取").font(.system(size: 13, weight: .medium))
+                Text(L("无法读取", "Unreadable")).font(.system(size: 13, weight: .medium))
                 Text(broken.message)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -328,7 +340,8 @@ private struct BrokenCard: View {
         .frame(height: cardHeight)
         .background(cardShape.fill(Color.orange.opacity(0.05)))
         .overlay(cardShape.strokeBorder(Color.orange.opacity(0.35), lineWidth: 1))
-        .help("\(broken.message)\n右键可以在访达中查看或删除")
+        .help(L("\(broken.message)\n右键可以在访达中查看或删除",
+                 "\(broken.message)\nRight-click to show in Finder or delete"))
         .accessibilityElement(children: .combine)
     }
 }
@@ -345,8 +358,8 @@ private struct AddCard: View {
                     .frame(width: 48, height: 48)
                     .background(Color.accentColor.opacity(hovering ? 0.2 : 0.12), in: Circle())
                     .foregroundStyle(.tint)
-                Text("添加应用").font(.system(size: 13, weight: .medium))
-                Text("点击选择或拖入安装包").font(.caption).foregroundStyle(.secondary)
+                Text(L("添加应用", "Add App")).font(.system(size: 13, weight: .medium))
+                Text(L("点击选择或拖入安装包", "Click to choose, or drop an installer")).font(.caption).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
             .frame(height: cardHeight)
@@ -390,14 +403,17 @@ private struct WelcomeView: View {
             VStack(spacing: 22) {
                 dropZone
                 HStack(alignment: .top, spacing: 12) {
-                    FeatureCard(icon: "folder.badge.person.crop", title: "数据留在盒子里",
-                                text: "设置、缓存、登录状态都存在 MacBox，删除应用即清空。")
-                    FeatureCard(icon: "key.fill", title: "独立的钥匙串",
-                                text: "应用保存的密码不会写进你的「登录」钥匙串。")
-                    FeatureCard(icon: "desktopcomputer", title: "虚拟 Mac 兜底",
-                                text: "需要驱动或系统服务的应用，可以放进虚拟 Mac 运行。")
+                    FeatureCard(icon: "folder.badge.person.crop", title: L("数据留在盒子里", "Data Stays in the Box"),
+                                text: L("设置、缓存、登录状态都存在 MacBox，删除应用即清空。",
+                                        "Settings, caches and sign-ins live in MacBox. Delete the app and they’re gone."))
+                    FeatureCard(icon: "key.fill", title: L("独立的钥匙串", "Separate Keychain"),
+                                text: L("应用保存的密码不会写进你的「登录」钥匙串。",
+                                        "Passwords the app saves never go into your “login” keychain."))
+                    FeatureCard(icon: "desktopcomputer", title: L("虚拟 Mac 兜底", "Virtual Mac Fallback"),
+                                text: L("需要驱动或系统服务的应用，可以放进虚拟 Mac 运行。",
+                                        "Apps that need drivers or system services can run in a Virtual Mac."))
                 }
-                Button("了解更多隔离细节，或调整偏好设置 →") { store.destination = .settings }
+                Button(L("了解更多隔离细节，或调整偏好设置 →", "Learn more about isolation, or adjust preferences →")) { store.destination = .settings }
                     .buttonStyle(.link)
                     .font(.callout)
             }
@@ -417,17 +433,18 @@ private struct WelcomeView: View {
                                            startPoint: .top, endPoint: .bottom),
                             in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .shadow(color: Color.accentColor.opacity(0.35), radius: 10, y: 4)
-            Text("把下载的安装包拖到这里").font(.title2.weight(.semibold))
-            Text("MacBox 会把应用装进一个独立的盒子。你照常使用，\n它写下的文件、设置和钥匙串都不会留在你的 Mac 上。")
+            Text(L("把下载的安装包拖到这里", "Drop a Downloaded Installer Here")).font(.title2.weight(.semibold))
+            Text(L("MacBox 会把应用装进一个独立的盒子。你照常使用，\n它写下的文件、设置和钥匙串都不会留在你的 Mac 上。",
+                    "MacBox installs the app in its own box. Use it as usual —\nthe files, settings and keychain items it writes never stay on your Mac."))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
             Button { importApps() } label: {
-                Text("选择文件…").frame(minWidth: 120)
+                Text(L("选择文件…", "Choose Files…")).frame(minWidth: 120)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .padding(.top, 4)
-            Text("支持 .dmg · .app · .pkg · .zip")
+            Text(L("支持 .dmg · .app · .pkg · .zip", "Supports .dmg · .app · .pkg · .zip"))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

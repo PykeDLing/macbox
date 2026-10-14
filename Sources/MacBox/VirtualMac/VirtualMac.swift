@@ -19,15 +19,15 @@ final class VirtualMac: NSObject {
         case unreadable(String)
         var title: String {
             switch self {
-            case .notSetUp: "未设置"
-            case .installing: "正在设置"
-            case .stopped: "已关机"
-            case .starting: "正在启动"
-            case .running: "运行中"
-            case .paused: "已暂停"
-            case .saving: "正在进入睡眠"
-            case .stopping: "正在关机"
-            case .unreadable: "无法读取"
+            case .notSetUp: L("未设置", "Not Set Up")
+            case .installing: L("正在设置", "Setting Up")
+            case .stopped: L("已关机", "Shut Down")
+            case .starting: L("正在启动", "Starting")
+            case .running: L("运行中", "Running")
+            case .paused: L("已暂停", "Paused")
+            case .saving: L("正在进入睡眠", "Going to Sleep")
+            case .stopping: L("正在关机", "Shutting Down")
+            case .unreadable: L("无法读取", "Unreadable")
             }
         }
     }
@@ -77,7 +77,8 @@ final class VirtualMac: NSObject {
         do {
             try bundle.save(config)
         } catch {
-            lastError = "无法保存虚拟 Mac 设置：\(error.localizedDescription)"
+            lastError = L("无法保存虚拟 Mac 设置：\(error.localizedDescription)",
+                          "Couldn’t save Virtual Mac settings: \(error.localizedDescription)")
         }
     }
 
@@ -112,17 +113,18 @@ final class VirtualMac: NSObject {
             }
             try Task.checkCancellation()
 
-            installPhase = "正在读取系统镜像…"
+            installPhase = L("正在读取系统镜像…", "Reading restore image…")
             installProgress = nil
             let image = try await RestoreImageStore.load(ipsw)
             guard let requirements = image.mostFeaturefulSupportedConfiguration,
                   requirements.hardwareModel.isSupported else {
-                throw MacBoxError("这台 Mac 不支持该 macOS 镜像（\(image.buildVersion)），请换一个版本。")
+                throw MacBoxError(L("这台 Mac 不支持该 macOS 镜像（\(image.buildVersion)），请换一个版本。",
+                                    "This Mac doesn’t support this macOS image (\(image.buildVersion)). Choose a different version."))
             }
             config.cpuCount = max(config.cpuCount, requirements.minimumSupportedCPUCount)
             config.memoryGB = max(config.memoryGB, Int((requirements.minimumSupportedMemorySize + (1 << 30) - 1) >> 30))
 
-            installPhase = "正在创建虚拟硬件…"
+            installPhase = L("正在创建虚拟硬件…", "Creating virtual hardware…")
             try bundle.createPlatformFiles(hardwareModel: requirements.hardwareModel)
             try bundle.createDisk(sizeGB: config.diskGB)
             try bundle.ensureExchangeFolders()
@@ -131,16 +133,19 @@ final class VirtualMac: NSObject {
             let vm = VZVirtualMachine(configuration: try VMConfigurationFactory.make(bundle: bundle, config: config))
             let installer = VZMacOSInstaller(virtualMachine: vm, restoringFromImageAt: ipsw)
             let version = image.operatingSystemVersion.displayString
-            installPhase = "正在安装 macOS \(version)…"
+            installPhase = L("正在安装 macOS \(version)…", "Installing macOS \(version)…")
             try await install(installer)
 
             config.osVersion = "macOS \(version) (\(image.buildVersion))"
             config.installed = true
             status = .stopped
-            notice = "设置完成。首次启动请走完 macOS 设置向导（可以不登录 Apple 账户），然后关机并创建还原点。安装镜像缓存已不再需要，可以在下方删除。"
+            notice = L("设置完成。首次启动请走完 macOS 设置向导（可以不登录 Apple 账户），然后关机并创建还原点。安装镜像缓存已不再需要，可以在下方删除。",
+                       "Setup complete. On first startup, go through the macOS Setup Assistant (signing in with an Apple Account is optional), then shut down and create a restore point. The cached restore image is no longer needed and can be deleted below.")
         } catch {
             status = .notSetUp
-            lastError = Self.isCancellation(error) ? "已取消设置" : "设置失败：\(error.localizedDescription)"
+            lastError = Self.isCancellation(error)
+                ? L("已取消设置", "Setup canceled")
+                : L("设置失败：\(error.localizedDescription)", "Setup failed: \(error.localizedDescription)")
         }
     }
 
@@ -196,7 +201,7 @@ final class VirtualMac: NSObject {
         } catch {
             virtualMachine = nil
             status = .stopped
-            lastError = "启动失败：\(error.localizedDescription)"
+            lastError = L("启动失败：\(error.localizedDescription)", "Couldn’t start: \(error.localizedDescription)")
         }
     }
 
@@ -214,7 +219,8 @@ final class VirtualMac: NSObject {
             try? FileOps.removeIfExists(bundle.saveStateURL)
             refreshFlags()
             virtualMachine = nil
-            notice = "无法从睡眠中唤醒（\(error.localizedDescription)），已改为正常开机。"
+            notice = L("无法从睡眠中唤醒（\(error.localizedDescription)），已改为正常开机。",
+                       "Couldn’t wake from sleep (\(error.localizedDescription)). Starting up normally instead.")
             return false
         }
     }
@@ -228,7 +234,11 @@ final class VirtualMac: NSObject {
     /// 让虚拟 Mac 里的系统正常关机
     func requestShutdown() {
         guard let vm = virtualMachine, vm.canRequestStop else { return }
-        do { try vm.requestStop() } catch { lastError = "关机请求失败：\(error.localizedDescription)" }
+        do {
+            try vm.requestStop()
+        } catch {
+            lastError = L("关机请求失败：\(error.localizedDescription)", "Shutdown request failed: \(error.localizedDescription)")
+        }
     }
 
     func forceStop() async {
@@ -240,7 +250,7 @@ final class VirtualMac: NSObject {
             didStop(vm)
         } catch {
             // 没停下来：保留虚拟机，恢复原来的状态
-            lastError = "强制关机失败：\(error.localizedDescription)"
+            lastError = L("强制关机失败：\(error.localizedDescription)", "Force shutdown failed: \(error.localizedDescription)")
             status = Self.status(of: vm) ?? previous
         }
     }
@@ -271,7 +281,7 @@ final class VirtualMac: NSObject {
             didStop(vm)
         } catch {
             try? FileOps.removeIfExists(bundle.saveStateURL)
-            lastError = "进入睡眠失败：\(error.localizedDescription)"
+            lastError = L("进入睡眠失败：\(error.localizedDescription)", "Couldn’t go to sleep: \(error.localizedDescription)")
             if vm.state == .paused { try? await vm.resume() }
             status = Self.status(of: vm) ?? .running
         }
@@ -297,7 +307,7 @@ final class VirtualMac: NSObject {
     // MARK: - 还原点
 
     func createRestorePoint() throws {
-        guard status == .stopped else { throw MacBoxError("请先关闭虚拟 Mac") }
+        guard status == .stopped else { throw MacBoxError(L("请先关闭虚拟 Mac", "Shut down the Virtual Mac first")) }
         let temp = bundle.url.appending(path: "RestorePoint.tmp", directoryHint: .isDirectory)
         try FileOps.removeIfExists(temp)
         try AppPaths.ensure(temp)
@@ -310,8 +320,8 @@ final class VirtualMac: NSObject {
     }
 
     func restoreRestorePoint() throws {
-        guard status == .stopped else { throw MacBoxError("请先关闭虚拟 Mac") }
-        guard restorePointDate != nil else { throw MacBoxError("还没有还原点") }
+        guard status == .stopped else { throw MacBoxError(L("请先关闭虚拟 Mac", "Shut down the Virtual Mac first")) }
+        guard restorePointDate != nil else { throw MacBoxError(L("还没有还原点", "There’s no restore point yet")) }
         for file in bundle.restorableFiles {
             try FileOps.removeIfExists(file)
             let source = bundle.restorePointURL.appending(path: file.lastPathComponent)
@@ -321,15 +331,17 @@ final class VirtualMac: NSObject {
     }
 
     func deleteRestorePoint() throws {
-        guard !isUnreadable else { throw MacBoxError("虚拟 Mac 的配置无法读取，暂不能修改") }
+        guard !isUnreadable else { throw MacBoxError(L("虚拟 Mac 的配置无法读取，暂不能修改",
+                                                       "The Virtual Mac’s configuration can’t be read, so it can’t be changed right now")) }
         try FileOps.removeIfExists(bundle.restorePointURL)
         refreshFlags()
     }
 
     /// 删除整台虚拟 Mac（移到废纸篓）
     func remove() throws {
-        guard !isUnreadable else { throw MacBoxError("虚拟 Mac 的配置无法读取，请在访达中检查后手动处理") }
-        guard !isActive, status != .installing else { throw MacBoxError("请先关闭虚拟 Mac") }
+        guard !isUnreadable else { throw MacBoxError(L("虚拟 Mac 的配置无法读取，请在访达中检查后手动处理",
+                                                       "The Virtual Mac’s configuration can’t be read. Check it in Finder and resolve it manually")) }
+        guard !isActive, status != .installing else { throw MacBoxError(L("请先关闭虚拟 Mac", "Shut down the Virtual Mac first")) }
         if FileManager.default.fileExists(atPath: bundle.url.path) {
             try FileManager.default.trashItem(at: bundle.url, resultingItemURL: nil)
         }
@@ -352,9 +364,10 @@ final class VirtualMac: NSObject {
                 if FileManager.default.fileExists(atPath: existing.path) { continue }
                 try FileOps.clone(url, to: existing)
             }
-            notice = "已放入虚拟 Mac：在虚拟 Mac 的访达中打开 位置 › My Shared Files › 传入，即可安装。"
+            notice = L("已放入虚拟 Mac：在虚拟 Mac 的访达中打开 位置 › My Shared Files › 传入，即可安装。",
+                       "Added to the Virtual Mac. To install, open Locations › My Shared Files › 传入 in the Virtual Mac’s Finder.")
         } catch {
-            lastError = "放入虚拟 Mac 失败：\(error.localizedDescription)"
+            lastError = L("放入虚拟 Mac 失败：\(error.localizedDescription)", "Couldn’t add to the Virtual Mac: \(error.localizedDescription)")
         }
     }
 
@@ -367,7 +380,7 @@ final class VirtualMac: NSObject {
             FileOps.markQuarantined(destination)
             NSWorkspace.shared.activateFileViewerSelecting([destination])
         } catch {
-            lastError = "导出失败：\(error.localizedDescription)"
+            lastError = L("导出失败：\(error.localizedDescription)", "Export failed: \(error.localizedDescription)")
         }
     }
 
@@ -390,10 +403,13 @@ final class VirtualMac: NSObject {
 
     func storageBreakdown() -> [StorageItem] {
         [
-            StorageItem(id: "disk", title: "系统和应用（虚拟硬盘）", bytes: FileOps.allocatedSize(of: bundle.diskURL)),
-            StorageItem(id: "sleep", title: "睡眠状态", bytes: FileOps.allocatedSize(of: bundle.saveStateURL)),
-            StorageItem(id: "restore", title: "还原点（与硬盘共享未改动的数据）", bytes: FileOps.allocatedSize(of: bundle.restorePointURL)),
-            StorageItem(id: "ipsw", title: "macOS 安装镜像缓存", bytes: FileOps.allocatedSize(of: AppPaths.restoreImages)),
+            StorageItem(id: "disk", title: L("系统和应用（虚拟硬盘）", "System and Apps (Virtual Disk)"),
+                        bytes: FileOps.allocatedSize(of: bundle.diskURL)),
+            StorageItem(id: "sleep", title: L("睡眠状态", "Sleep State"), bytes: FileOps.allocatedSize(of: bundle.saveStateURL)),
+            StorageItem(id: "restore", title: L("还原点（与硬盘共享未改动的数据）", "Restore Point (shares unchanged data with the disk)"),
+                        bytes: FileOps.allocatedSize(of: bundle.restorePointURL)),
+            StorageItem(id: "ipsw", title: L("macOS 安装镜像缓存", "Cached macOS Restore Image"),
+                        bytes: FileOps.allocatedSize(of: AppPaths.restoreImages)),
         ].filter { $0.bytes > 0 }
     }
 
@@ -411,7 +427,7 @@ extension VirtualMac: VZVirtualMachineDelegate {
 
     func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {
         guard virtualMachine === self.virtualMachine else { return }
-        lastError = "虚拟 Mac 异常停止：\(error.localizedDescription)"
+        lastError = L("虚拟 Mac 异常停止：\(error.localizedDescription)", "The Virtual Mac stopped unexpectedly: \(error.localizedDescription)")
         didStop(virtualMachine)
     }
 }

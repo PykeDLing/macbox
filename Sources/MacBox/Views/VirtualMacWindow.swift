@@ -23,26 +23,28 @@ struct VirtualMacWindow: View {
                         }
                     }
             } else if vm.status == .starting {
-                ProgressView("正在启动…")
+                ProgressView(L("正在启动…", "Starting…"))
             } else {
                 ContentUnavailableView {
-                    Label(vm.config.installed ? "虚拟 Mac 未运行" : "虚拟 Mac 还没有设置", systemImage: "desktopcomputer")
+                    Label(vm.config.installed ? L("虚拟 Mac 未运行", "Virtual Mac Isn’t Running")
+                                              : L("虚拟 Mac 还没有设置", "Virtual Mac Isn’t Set Up"),
+                          systemImage: "desktopcomputer")
                 } description: {
                     Text(vm.lastError ?? vm.notice ?? "")
                 } actions: {
                     if vm.status == .stopped {
-                        Button(vm.isAsleep ? "唤醒" : "启动") { Task { await vm.start() } }
+                        Button(vm.isAsleep ? L("唤醒", "Wake") : L("启动", "Start")) { Task { await vm.start() } }
                             .buttonStyle(.borderedProminent)
                     } else if vm.status == .notSetUp {
-                        Button("前往设置虚拟 Mac…") { store.show(.virtualMac) }
+                        Button(L("前往设置虚拟 Mac…", "Set Up Virtual Mac…")) { store.show(.virtualMac) }
                     } else if case .unreadable = vm.status {
-                        Button("查看详情…") { store.show(.virtualMac) }
+                        Button(L("查看详情…", "Show Details…")) { store.show(.virtualMac) }
                     }
                 }
             }
         }
         .frame(minWidth: 800, minHeight: 500)
-        .navigationTitle("虚拟 Mac")
+        .navigationTitle(L("虚拟 Mac", "Virtual Mac"))
         .navigationSubtitle(vm.status.title)
         .dropDestination(for: URL.self) { urls, _ in
             vm.sendToGuest(urls)
@@ -51,9 +53,9 @@ struct VirtualMacWindow: View {
         .toolbar {
             ToolbarItemGroup {
                 Button { choosingFiles = true } label: {
-                    Label("放入文件", systemImage: "tray.and.arrow.down")
+                    Label(L("放入文件", "Add Files"), systemImage: "tray.and.arrow.down")
                 }
-                .help("复制到虚拟 Mac 的「传入」文件夹")
+                .help(L("复制到虚拟 Mac 的「传入」文件夹", "Copy to the Virtual Mac’s “传入” (Incoming) folder"))
                 .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item, .folder], allowsMultipleSelection: true) { result in
                     if case .success(let urls) = result { vm.sendToGuest(urls) }
                 }
@@ -61,21 +63,22 @@ struct VirtualMacWindow: View {
                     try? vm.bundle.ensureExchangeFolders()
                     NSWorkspace.shared.open(vm.bundle.outgoingURL)
                 } label: {
-                    Label("传出", systemImage: "tray.and.arrow.up")
+                    Label(L("传出", "Outgoing"), systemImage: "tray.and.arrow.up")
                 }
-                .help("打开虚拟 Mac 的「传出」文件夹")
+                .help(L("打开虚拟 Mac 的「传出」文件夹", "Open the Virtual Mac’s “传出” (Outgoing) folder"))
                 if vm.status == .running || vm.status == .paused {
                     Button { Task { await vm.togglePause() } } label: {
-                        vm.status == .paused ? Label("继续", systemImage: "play.fill") : Label("暂停", systemImage: "pause.fill")
+                        vm.status == .paused ? Label(L("继续", "Resume"), systemImage: "play.fill")
+                                             : Label(L("暂停", "Pause"), systemImage: "pause.fill")
                     }
-                    Button { Task { await vm.sleep() } } label: { Label("睡眠", systemImage: "moon.zzz.fill") }
-                        .help("保存当前状态并关闭，下次几秒内恢复")
+                    Button { Task { await vm.sleep() } } label: { Label(L("睡眠", "Sleep"), systemImage: "moon.zzz.fill") }
+                        .help(L("保存当前状态并关闭，下次几秒内恢复", "Save the current state and close; resumes in seconds next time"))
                     Menu {
-                        Button("关机") { vm.requestShutdown() }
+                        Button(L("关机", "Shut Down")) { vm.requestShutdown() }
                         Divider()
-                        Button("强制关机", role: .destructive) { Task { await vm.forceStop() } }
+                        Button(L("强制关机", "Force Shut Down"), role: .destructive) { Task { await vm.forceStop() } }
                     } label: {
-                        Label("关机", systemImage: "power")
+                        Label(L("关机", "Shut Down"), systemImage: "power")
                     } primaryAction: {
                         vm.requestShutdown()
                     }

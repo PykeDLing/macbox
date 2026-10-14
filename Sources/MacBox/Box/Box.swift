@@ -112,7 +112,7 @@ final class Box: Identifiable {
             })
         } catch {
             activity = .idle
-            lastError = "启动失败：\(error.localizedDescription)"
+            lastError = L("启动失败：\(error.localizedDescription)", "Couldn’t open the app: \(error.localizedDescription)")
             return
         }
         activity = .finishing
@@ -129,7 +129,8 @@ final class Box: Identifiable {
                     handingOver = false
                     return
                 }
-                notice = "安装包已下载完成，MacBox 正在接手安装…"
+                notice = L("安装包已下载完成，MacBox 正在接手安装…",
+                           "The installer package has finished downloading. MacBox is taking over the installation…")
                 try? await Task.sleep(for: .seconds(1))
                 session.terminate()
             }
@@ -153,22 +154,26 @@ final class Box: Identifiable {
         if config.resetOnQuit, restorePointDate != nil {
             do {
                 try await rollBack()
-                notice = "已按设置还原到还原点，本次运行的改动已清除。"
+                notice = L("已按设置还原到还原点，本次运行的改动已清除。",
+                           "Restored to the restore point as set. Changes from this session were discarded.")
             } catch {
-                lastError = "自动还原失败：\(error.localizedDescription)"
+                lastError = L("自动还原失败：\(error.localizedDescription)", "Automatic restore failed: \(error.localizedDescription)")
             }
         }
         guard !terminating else { return }
         let severe = blocks.filter(\.kind.suggestsVirtualMac)
         if !severe.isEmpty {
-            store?.suggestVirtualMac(for: self, reasons: severe.map { "\($0.kind.title)：\($0.target)" })
+            store?.suggestVirtualMac(for: self, reasons: severe.map {
+                L("\($0.kind.title)：\($0.target)", "\($0.kind.title): \($0.target)")
+            })
         }
     }
 
     /// 在线安装器下载完整安装包后，由 MacBox 取出真正的 App 替换安装器，然后直接打开
     private func adoptDownloadedPackage(_ package: URL) async {
         activity = .maintenance
-        notice = "安装器已下载「\(package.lastPathComponent)」，正在完成安装…"
+        notice = L("安装器已下载「\(package.lastPathComponent)」，正在完成安装…",
+                   "The installer downloaded “\(package.lastPathComponent)”. Finishing the installation…")
         do {
             let paths = paths
             let staging = paths.url.appending(path: "App.new", directoryHint: .isDirectory)
@@ -207,12 +212,12 @@ final class Box: Identifiable {
             icon = NSWorkspace.shared.icon(forFile: appURL.path)
             // 安装器尝试写入「应用程序」被拦截是预期内的，安装已由 MacBox 完成
             blocks.removeAll { [.systemInstall, .escapedLaunch, .diskMount].contains($0.kind) }
-            notice = "「\(info.name)」已安装到 MacBox。"
+            notice = L("「\(info.name)」已安装到 MacBox。", "“\(info.name)” was installed in MacBox.")
             activity = .idle
             await open()
         } catch {
             activity = .idle
-            lastError = "完成安装失败：\(error.localizedDescription)"
+            lastError = L("完成安装失败：\(error.localizedDescription)", "Couldn’t finish the installation: \(error.localizedDescription)")
         }
     }
 
@@ -239,7 +244,7 @@ final class Box: Identifiable {
     }
 
     func restoreRestorePoint() async throws {
-        guard restorePointDate != nil else { throw MacBoxError("还没有还原点") }
+        guard restorePointDate != nil else { throw MacBoxError(L("还没有还原点", "There’s no restore point yet")) }
         try beginMaintenance()
         defer { activity = .idle }
         try await rollBack()
@@ -274,8 +279,9 @@ final class Box: Identifiable {
     }
 
     private func beginMaintenance() throws {
-        guard !isRunning else { throw MacBoxError("请先退出应用") }
-        guard activity == .idle else { throw MacBoxError("「\(config.name)」正在处理其他操作，请稍候") }
+        guard !isRunning else { throw MacBoxError(L("请先退出应用", "Quit the app first")) }
+        guard activity == .idle else { throw MacBoxError(L("「\(config.name)」正在处理其他操作，请稍候",
+                                                            "“\(config.name)” is busy with another operation. Try again in a moment.")) }
         activity = .maintenance
     }
 
@@ -306,7 +312,7 @@ final class Box: Identifiable {
         do {
             try paths.save(config)
         } catch {
-            lastError = "无法保存设置：\(error.localizedDescription)"
+            lastError = L("无法保存设置：\(error.localizedDescription)", "Couldn’t save settings: \(error.localizedDescription)")
         }
         if old.name != config.name || old.showInLaunchpad != config.showInLaunchpad
             || old.isInstaller != config.isInstaller || old.appFolderName != config.appFolderName {
@@ -328,7 +334,7 @@ final class Box: Identifiable {
             do {
                 try await Launcher.shared.install(paths: paths, config: config)
             } catch {
-                lastError = "无法创建启动器：\(error.localizedDescription)"
+                lastError = L("无法创建启动器：\(error.localizedDescription)", "Couldn’t create the launcher: \(error.localizedDescription)")
             }
         }
         launcherTask = task

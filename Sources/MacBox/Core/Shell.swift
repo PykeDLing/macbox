@@ -18,7 +18,9 @@ nonisolated enum Shell {
         let result = try await execute(executable, arguments, input: input)
         guard result.status == 0 else {
             let message = result.error.isEmpty ? result.output : result.error
-            throw MacBoxError("\((executable as NSString).lastPathComponent) 失败：\(message.trimmingCharacters(in: .whitespacesAndNewlines))")
+            let tool = (executable as NSString).lastPathComponent
+            let detail = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw MacBoxError(L("\(tool) 失败：\(detail)", "\(tool) failed: \(detail)"))
         }
         return result
     }

@@ -24,7 +24,8 @@ nonisolated enum PackageExtractor {
         case "zip":
             return try await fromZip(package, into: destination)
         default:
-            throw MacBoxError("不支持的文件类型：.\(package.pathExtension)。请拖入 .dmg、.app、.pkg 或 .zip。")
+            throw MacBoxError(L("不支持的文件类型：.\(package.pathExtension)。请拖入 .dmg、.app、.pkg 或 .zip。",
+                                 "Unsupported file type: .\(package.pathExtension). Drag in a .dmg, .app, .pkg or .zip file."))
         }
     }
 
@@ -43,7 +44,7 @@ nonisolated enum PackageExtractor {
                 await DiskImage.detach(mount.device)
                 return result
             }
-            throw MacBoxError("磁盘映像里没有找到 App 或安装包")
+            throw MacBoxError(L("磁盘映像里没有找到 App 或安装包", "No app or installer package was found in the disk image"))
         } catch {
             await DiskImage.detach(mount.device)
             throw error
@@ -59,7 +60,8 @@ nonisolated enum PackageExtractor {
         let hasScripts = FileManager.default.enumerator(atPath: work.path)?
             .contains { ["preinstall", "postinstall"].contains(($0 as? NSString)?.lastPathComponent) } == true
         guard let app = pickApp(findApps(in: work)) else {
-            throw MacBoxError("这个安装包里没有可以直接运行的 App，它需要在系统里安装组件。请改用虚拟 Mac。")
+            throw MacBoxError(L("这个安装包里没有可以直接运行的 App，它需要在系统里安装组件。请改用虚拟 Mac。",
+                                 "This installer package has no app that can run on its own; it needs to install components into the system. Use Virtual Mac instead."))
         }
         var result = Extracted(app: try copyApp(app, into: destination))
         if hasScripts {
@@ -73,7 +75,7 @@ nonisolated enum PackageExtractor {
         let work = FileManager.default.temporaryDirectory.appending(path: "MacBox-zip-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: work) }
         try await Shell.run("/usr/bin/ditto", ["-x", "-k", zip.path, work.path])
-        guard let app = pickApp(findApps(in: work)) else { throw MacBoxError("压缩包里没有找到 App") }
+        guard let app = pickApp(findApps(in: work)) else { throw MacBoxError(L("压缩包里没有找到 App", "No app was found in the archive")) }
         return Extracted(app: try copyApp(app, into: destination))
     }
 

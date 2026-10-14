@@ -6,7 +6,7 @@ import Observation
 enum CompatibilityPolicy: String, CaseIterable, Identifiable {
     case ask, switchAutomatically
     var id: String { rawValue }
-    var title: String { self == .ask ? "询问我" : "自动改用虚拟 Mac" }
+    var title: String { self == .ask ? L("询问我", "Ask Me") : L("自动改用虚拟 Mac", "Switch to Virtual Mac Automatically") }
     static let key = "compatibilityPolicy"
     static var current: CompatibilityPolicy {
         CompatibilityPolicy(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .ask
@@ -121,9 +121,13 @@ final class BoxStore {
     }
 
     private static func describeLoadError(_ error: Error) -> String {
-        if (error as? CocoaError)?.code == .fileReadNoSuchFile { return "缺少配置文件 box.json" }
-        if error is DecodingError { return "配置文件 box.json 格式无法识别，可能来自更新版本的 MacBox 或已损坏" }
-        return "无法读取配置文件 box.json：\(error.localizedDescription)"
+        if (error as? CocoaError)?.code == .fileReadNoSuchFile { return L("缺少配置文件 box.json", "The configuration file box.json is missing") }
+        if error is DecodingError {
+            return L("配置文件 box.json 格式无法识别，可能来自更新版本的 MacBox 或已损坏",
+                     "The configuration file box.json isn’t in a recognized format. It may be from a newer version of MacBox, or damaged.")
+        }
+        return L("无法读取配置文件 box.json：\(error.localizedDescription)",
+                 "Couldn’t read the configuration file box.json: \(error.localizedDescription)")
     }
 
     func box(id: UUID) -> Box? { boxes.first { $0.id == id } }
@@ -139,7 +143,8 @@ final class BoxStore {
         }
         for lease in leases {
             do { try await lease.checkOut() } catch {
-                importError = "无法恢复上次运行留下的偏好设置：\(error.localizedDescription)"
+                importError = L("无法恢复上次运行留下的偏好设置：\(error.localizedDescription)",
+                                "Couldn’t restore preferences left over from the last session: \(error.localizedDescription)")
             }
         }
         for image in await DiskImage.attached(fromImagesUnder: FileOps.realPath(AppPaths.boxes)) {
@@ -152,14 +157,15 @@ final class BoxStore {
     func importItems(_ urls: [URL]) async {
         await ready()
         for url in urls {
-            importStatus = "正在读取「\(url.lastPathComponent)」…"
+            importStatus = L("正在读取「\(url.lastPathComponent)」…", "Reading “\(url.lastPathComponent)”…")
             do {
                 let box = try await makeBox(from: url)
                 selection = box.id
                 importStatus = nil
                 await afterImport(box)
             } catch {
-                importError = "无法添加「\(url.lastPathComponent)」：\(error.localizedDescription)"
+                importError = L("无法添加「\(url.lastPathComponent)」：\(error.localizedDescription)",
+                                "Couldn’t add “\(url.lastPathComponent)”: \(error.localizedDescription)")
             }
         }
         importStatus = nil
@@ -174,11 +180,11 @@ final class BoxStore {
             // 来自其他卷（外接硬盘、网络位置）时是真正的复制，可能很慢
             try await Background.run { try FileOps.clone(url, to: source) }
 
-            importStatus = "正在取出 App…"
+            importStatus = L("正在取出 App…", "Extracting the app…")
             let extracted = try await PackageExtractor.extractApp(from: source, into: paths.appDirectory)
             let info = try AppInspector.info(of: extracted.app)
 
-            importStatus = "正在检查兼容性…"
+            importStatus = L("正在检查兼容性…", "Checking compatibility…")
             var issues = extracted.issues + (await AppInspector.scan(extracted.app))
             issues.insert(await AppInspector.verifyAndTrust(extracted.app), at: 0)
             var config = BoxConfig(id: id, name: info.name, bundleIdentifier: info.bundleIdentifier,
@@ -190,7 +196,7 @@ final class BoxStore {
             config.showInLaunchpad = UserDefaults.standard.object(forKey: "defaultShowInLaunchpad") as? Bool ?? true
             try paths.save(config)
 
-            importStatus = "正在准备独立的钥匙串…"
+            importStatus = L("正在准备独立的钥匙串…", "Preparing a separate keychain…")
             try await BoxKeychain.prepare(paths)
 
             let box = Box(paths: paths, config: config)
@@ -208,7 +214,9 @@ final class BoxStore {
     private func afterImport(_ box: Box) async {
         let blocking = box.config.issues.filter { $0.severity == .needsVirtualMac }
         if !blocking.isEmpty {
-            suggestVirtualMac(for: box, reasons: blocking.map { "\($0.title)：\($0.detail)" })
+            suggestVirtualMac(for: box, reasons: blocking.map {
+                L("\($0.localizedTitle)：\($0.localizedDetail)", "\($0.localizedTitle): \($0.localizedDetail)")
+            })
             return
         }
         // 拖进来的就是安装器：像在访达里双击一样直接运行它
@@ -224,14 +232,16 @@ final class BoxStore {
             prompt = CompatibilityPrompt(boxID: box.id, appName: box.config.name, reasons: reasons)
         case .switchAutomatically:
             box.config.runtime = .virtualMac
-            box.notice = "检测到兼容性问题，已按设置改用虚拟 Mac 运行。"
+            box.notice = L("检测到兼容性问题，已按设置改用虚拟 Mac 运行。",
+                           "Compatibility issues were found. Switched to Virtual Mac as set.")
         }
     }
 
     func openInVirtualMac(_ box: Box) async {
         let vm = VirtualMac.shared
         guard vm.config.installed else {
-            box.notice = "需要先在「虚拟 Mac」页完成一次性设置，之后这个应用就会在虚拟 Mac 中运行。"
+            box.notice = L("需要先在「虚拟 Mac」页完成一次性设置，之后这个应用就会在虚拟 Mac 中运行。",
+                           "Finish the one-time setup on the “Virtual Mac” page first. After that, this app will run in Virtual Mac.")
             show(.virtualMac)
             return
         }
@@ -250,8 +260,9 @@ final class BoxStore {
     // MARK: - 删除
 
     func delete(_ box: Box) throws {
-        guard !box.isRunning else { throw MacBoxError("请先退出「\(box.config.name)」") }
-        guard !box.isBusy else { throw MacBoxError("「\(box.config.name)」正在处理其他操作，请稍候") }
+        guard !box.isRunning else { throw MacBoxError(L("请先退出「\(box.config.name)」", "Quit “\(box.config.name)” first")) }
+        guard !box.isBusy else { throw MacBoxError(L("「\(box.config.name)」正在处理其他操作，请稍候",
+                                                         "“\(box.config.name)” is busy with another operation. Try again in a moment.")) }
         try FileManager.default.trashItem(at: box.paths.url, resultingItemURL: nil)
         box.retire()
         boxes.removeAll { $0.id == box.id }

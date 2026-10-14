@@ -8,11 +8,13 @@ nonisolated enum Runtime: String, Codable, CaseIterable, Identifiable, Sendable 
     case virtualMac
 
     var id: String { rawValue }
-    var title: String { self == .isolated ? "本机隔离" : "虚拟 Mac" }
+    var title: String { self == .isolated ? L("本机隔离", "Native Isolation") : L("虚拟 Mac", "Virtual Mac") }
     var summary: String {
         switch self {
-        case .isolated: "像普通 App 一样运行，写下的文件、设置和钥匙串都收在 MacBox 里，删除即清空。"
-        case .virtualMac: "在一台独立的虚拟 Mac 里运行，与本机完全隔开。兼容性最好，但占用约 30 GB、启动较慢。"
+        case .isolated: L("像普通 App 一样运行，写下的文件、设置和钥匙串都收在 MacBox 里，删除即清空。",
+                          "Runs like a regular app. Files, settings and keychain items it writes stay inside MacBox and are gone when you delete it.")
+        case .virtualMac: L("在一台独立的虚拟 Mac 里运行，与本机完全隔开。兼容性最好，但占用约 30 GB、启动较慢。",
+                            "Runs in a separate virtual Mac, fully walled off from this Mac. Best compatibility, but takes about 30 GB and starts more slowly.")
         }
     }
 }
@@ -25,9 +27,45 @@ nonisolated struct CompatibilityIssue: Codable, Hashable, Identifiable, Sendable
     }
 
     var severity: Severity
+    /// 中文原文，存进 box.json，同时作为识别是哪一类问题的键；显示时用 localizedTitle
     var title: String
     var detail: String
     var id: String { title }
+
+    var localizedTitle: String { Localization.shared.isEnglish ? Self.english[title]?.title ?? title : title }
+
+    var localizedDetail: String {
+        guard Localization.shared.isEnglish else { return detail }
+        switch title {
+        // 这两条的说明带有 spctl 的输出，只翻译固定部分
+        case "已通过 Apple 公证检查":
+            return detail == "来源已验证" ? "Source verified" : detail
+        case "未通过 Apple 公证检查":
+            let source = detail.components(separatedBy: "。打开时").first ?? detail
+            return "\(source == "签名无效" ? "Invalid signature" : source). macOS will ask whether you trust it when you open it; make sure it comes from a source you trust."
+        default:
+            return Self.english[title]?.detail ?? detail
+        }
+    }
+
+    /// 以中文标题为键的英文版本。AppInspector、PackageExtractor 里新增问题时要在这里补上
+    private static let english: [String: (title: String, detail: String)] = [
+        "需要管理员权限的辅助程序": ("Privileged helper tool",
+                             "Installs a resident service that runs as root, which Native Isolation can't contain."),
+        "系统级后台服务": ("System-wide background service", "Registers a system service that runs at startup."),
+        "系统扩展或内核扩展": ("System or kernel extension",
+                      "Needs to be loaded into the kernel or the system extensions framework."),
+        "硬件或音频驱动": ("Hardware or audio driver", "Drivers must be installed into system folders."),
+        "开机自启动": ("Launch at login", "Login items are blocked; it only runs when you open it."),
+        "访达集成": ("Finder integration", "Finder extensions such as sync status badges and context menu items won't work."),
+        "网络扩展": ("Network extension", "Network extensions such as VPNs and proxies require a system-wide install."),
+        "自带苹果沙盒": ("Uses the App Sandbox",
+                   "In MacBox it's confined by MacBox's sandbox instead and its data goes into the box. Always open it through MacBox."),
+        "已通过 Apple 公证检查": ("Passed Apple notarization check", ""),
+        "未通过 Apple 公证检查": ("Failed Apple notarization check", ""),
+        "安装脚本已跳过": ("Installer scripts skipped",
+                     "The package contains installer scripts (usually for installing background services or drivers), which MacBox didn't run. If something doesn't work, switch to Virtual Mac."),
+    ]
 }
 
 /// box.json 的内容。字段只增不改；新增字段必须是可选类型，旧文件才能照常读取

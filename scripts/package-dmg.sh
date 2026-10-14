@@ -1,5 +1,5 @@
 #!/bin/bash
-# 打包发布用的 dmg：release 构建 → 组装（App + 「应用程序」快捷方式 + 卷图标）→ 压缩为 dist/MacBox-<版本>.dmg
+# 打包发布用的 dmg：release 构建 → 组装（App + Applications 快捷方式 + 卷图标）→ 压缩为 dist/MacBox-<版本>.dmg
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,7 +23,7 @@ hdiutil create -quiet -size 200m -fs APFS -volname "MacBox" "$TMP/rw.dmg"
 mkdir -p "$MOUNT"
 hdiutil attach -quiet -nobrowse -noautoopen -mountpoint "$MOUNT" "$TMP/rw.dmg"
 ditto "$APP" "$MOUNT/MacBox.app"
-ln -s /Applications "$MOUNT/应用程序"
+ln -s /Applications "$MOUNT/Applications"
 cp Resources/AppIcon.icns "$MOUNT/.VolumeIcon.icns"
 SetFile -a C "$MOUNT" 2>/dev/null || true # 让访达使用卷图标（需要 Command Line Tools）
 hdiutil detach -quiet "$MOUNT"

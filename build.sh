@@ -28,6 +28,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 mv "$BUILD_DIR/MacBox" "$APP/Contents/MacOS/MacBox"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+# 系统菜单、访达里的文稿类型名称按这里声明的语言显示；界面文字本身见 Localization.swift
+cp -R Resources/*.lproj "$APP/Contents/Resources/"
 if [ -f Resources/AppIcon.icns ]; then
   cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi
