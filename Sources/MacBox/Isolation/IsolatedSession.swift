@@ -198,7 +198,7 @@ final class IsolatedSession {
             for device in image.devices.prefix(1) { await DiskImage.detach(device) }
         }
         await EscapeGuard.refreshVolumes()
-        _ = try? await Shell.run(Shell.lsregister, ["-u", appURL.path])
+        await AppRegistration.unregister(appURL) // App 运行时可能经由系统启动了包里的辅助 App，它们也会被登记
     }
 
     /// 收回偏好设置；返回失败的原因

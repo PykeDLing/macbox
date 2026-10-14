@@ -216,10 +216,6 @@ final class BoxStore {
                 usleep(100_000)
             }
         }
-        // 第 8 步要撤销登记的 App。安装器接手、替换 App 留下的 App.new、App.old 第 2 步就删了，先记下来
-        let apps = boxes.flatMap { box in
-            [box.appURL] + [box.paths.appStaging, box.paths.url.appending(path: "App.old")].flatMap { FileOps.contents(of: $0) }
-        }
         // 2. 替换做到一半的改回原件、删掉残骸；还原点、安装器接手的临时目录，导入到一半的盒子都删掉
         for box in boxes {
             let paths = box.paths
@@ -284,12 +280,9 @@ final class BoxStore {
                 NSLog("MacBox: 无法锁上「\(box.config.name)」：\(error.localizedDescription)")
             }
         }
-        // 8. 撤销系统对盒子里 App 的登记（旧版读图标时会登记，访达、聚焦也可能登记）：登记着的 App 声明的
-        // URL scheme、文档类型都指向它，MacBox 没在运行时点个链接就会在隔离之外打开它。已经删掉的 App.new、App.old 里的
-        // 也要撤销：登记按路径记着，文件没了也照样留着。不影响打开，不必等
-        Task.detached {
-            for app in apps { _ = try? await Shell.run(Shell.lsregister, ["-u", app.path]) }
-        }
+        // 8. 撤销系统对盒子里 App 的登记（旧版读图标时会登记，访达、聚焦、App 自己启动包里的辅助 App 也可能登记），
+        // 连同包里嵌套的 App 和已经删掉的 App.new、App.old、盒子里的：见 AppRegistration。不影响打开，不必等
+        Task.detached { await AppRegistration.unregisterAll(under: root) }
     }
 
     // MARK: - 导入
@@ -378,7 +371,7 @@ final class BoxStore {
         await box.syncLauncher().value
         // 检查、读取 App 时系统可能把它登记进了 LaunchServices（见 recoverInterruptedSessions）
         let app = box.appURL
-        Task.detached { _ = try? await Shell.run(Shell.lsregister, ["-u", app.path]) }
+        Task.detached { await AppRegistration.unregister(app) }
         return box
     }
 
@@ -512,7 +505,7 @@ final class BoxStore {
                                                          "“\(box.config.name)” is busy with another operation. Try again in a moment.")) }
         let paths = box.paths, app = box.appURL
         let trashed = try await box.performMaintenance {
-            _ = try? await Shell.run(Shell.lsregister, ["-u", app.path]) // 不在登记里留下指向废纸篓的 App
+            await AppRegistration.unregister(app) // 不在登记里留下指向废纸篓的 App（文件夹移走后就撤销不了包里面的了）
             return try await Background.run { try Self.moveToTrash(paths.url) }
         }
         box.retire()
