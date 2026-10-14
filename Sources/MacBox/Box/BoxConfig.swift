@@ -94,6 +94,12 @@ nonisolated struct BoxConfig: Codable, Equatable, Sendable {
     var acknowledgedBlocks: [String]?
 }
 
+extension BoxConfig {
+    /// 要不要在聚焦里放启动器。在线安装器在本机隔离里运行时没有：安装由 MacBox 接手，完成后换成真正的 App 才有。
+    /// 在虚拟 Mac 里运行时 MacBox 不接手安装，“在线安装器”不起作用，照常按设置放
+    var wantsLauncher: Bool { showInLaunchpad && !(isInstaller && runtime == .isolated) }
+}
+
 /// 盒子在磁盘上的布局：
 ///
 ///     <uuid>.box/
@@ -118,9 +124,9 @@ nonisolated struct BoxPaths: Hashable, Sendable {
     var restorePoint: URL { url.appending(path: "RestorePoint", directoryHint: .isDirectory) }
     var tmp: URL { url.appending(path: "tmp", directoryHint: .isDirectory) }
     var keychainPassword: URL { url.appending(path: ".keychain-password") }
-    /// 正在用还原点替换数据（见 Box.rollBack）：开始前放下、全部换完才删除。
-    /// MacBox 中途崩溃、被强制退出时，下次启动看到它就把还原重做一遍
-    var rollbackMarker: URL { url.appending(path: ".rollback") }
+    /// 正在用还原点替换数据、正在清除数据（见 Box.rollBack、Box.clear）：开始前放下（内容写着是哪一种）、全部做完才删除。
+    /// 做到一半失败、MacBox 中途崩溃或被强制退出时，下次打开应用前、下次启动 MacBox 时看到它就重做一遍
+    var unfinishedMarker: URL { url.appending(path: ".unfinished") }
     /// 正在创建的还原点：克隆完整之后才整体换上去（见 FileOps.replace(_:withStaged:)）
     var restorePointStaging: URL { url.appending(path: "RestorePoint.tmp", directoryHint: .isDirectory) }
     /// 安装器下载的安装包里取出的 App：取出、检查完才整体换上去

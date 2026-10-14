@@ -53,8 +53,18 @@ final class LifecycleFixture {
         }
         for pid in EscapeGuard.boxProcessesNow() { kill(pid, SIGKILL) }
         for url in boxURLs { try? FileOps.removeTree(url) }
+        // 删除的盒子：设置了 MACBOX_DATA_ROOT 时移到这里，不进真正的废纸篓（见 BoxStore.moveToTrash）
+        try? FileOps.removeTree(AppPaths.root.appending(path: "Trash"))
     }
 }
+
+/// 写一个文本文件（上级目录不存在时创建）
+func writeText(_ text: String, _ url: URL) throws {
+    try AppPaths.ensure(url.deletingLastPathComponent())
+    try text.write(to: url, atomically: true, encoding: .utf8)
+}
+
+func readText(_ url: URL) -> String? { try? String(contentsOf: url, encoding: .utf8) }
 
 /// 读出盒子主目录里 runs 文件的行数：测试用的 App 每启动一次往里写一行
 @MainActor
@@ -219,23 +229,31 @@ struct LifecycleTests {
     func interruptedWorkIsRecovered() async throws {
         let fixture = LifecycleFixture()
         defer { await fixture.cleanup() }
-        func write(_ text: String, _ url: URL) throws {
-            try AppPaths.ensure(url.deletingLastPathComponent())
-            try text.write(to: url, atomically: true, encoding: .utf8)
-        }
-        func read(_ url: URL) -> String? { try? String(contentsOf: url, encoding: .utf8) }
+        let write = writeText, read = readText
 
-        // 还原到一半：主目录已经改名成 .old、新的还没就位，Prefs 的克隆做了一半
+        // 还原到一半：主目录已经改名成 .old、新的还没就位，Prefs 的克隆做了一半。
+        // 标记是空的（读不出是哪一种）：当作还原
         let rolling = try await fixture.makeBox("Rolling", script: "exit 0\n")
         try write("saved", rolling.restorePoint.appending(path: "Home/Documents/note.txt"))
         try AppPaths.ensure(rolling.restorePoint.appending(path: "Prefs"))
         try write("now", rolling.home.appending(path: "Documents/note.txt"))
-        FileManager.default.createFile(atPath: rolling.rollbackMarker.path, contents: nil)
+        FileManager.default.createFile(atPath: rolling.unfinishedMarker.path, contents: nil)
         try FileManager.default.moveItem(at: rolling.home, to: rolling.url.appending(path: "Home.old"))
         try write("half", rolling.url.appending(path: "Prefs.restoring/x.plist"))
         try write("junk", rolling.url.appending(path: "tmp.deleting-\(UUID().uuidString)/junk"))
         try write("junk", rolling.restorePointStaging.appending(path: "Home/x"))
         try write("junk", rolling.appStaging.appending(path: "New.app/x"))
+
+        // 清除数据到一半：主目录已经删了，设置还是登录状态
+        let clearing = try await fixture.makeBox("Clearing", script: "exit 0\n")
+        try write("signed in", clearing.prefs.appending(path: "dev.macboxtest.clearing.plist"))
+        try write("unfinished", clearing.tmp.appending(path: "x"))
+        try write(Box.UnfinishedWork.clear.rawValue, clearing.unfinishedMarker)
+        try FileOps.removeTree(clearing.home)
+
+        // 还原到一半，还原点却已经不在了：没法重做，要说明数据可能只还原了一部分
+        let orphaned = try await fixture.makeBox("Orphaned", script: "exit 0\n")
+        try write(Box.UnfinishedWork.restore.rawValue, orphaned.unfinishedMarker)
 
         // 更新还原点到一半：旧的已改名成 .old，新的还没就位
         let updating = try await fixture.makeBox("Updating", script: "exit 0\n")
@@ -248,7 +266,15 @@ struct LifecycleTests {
 
         let store = await fixture.start()
         #expect(read(rolling.home.appending(path: "Documents/note.txt")) == "saved", "还原没有重做")
-        #expect(!FileOps.exists(rolling.rollbackMarker))
+        #expect(!FileOps.exists(rolling.unfinishedMarker))
+        #expect(store.box(id: try rolling.loadConfig().id)?.notice == Box.UnfinishedWork.restore.redoneNotice)
+        #expect(!FileOps.exists(clearing.prefs.appending(path: "dev.macboxtest.clearing.plist")), "清除数据没有重做")
+        #expect(!FileOps.exists(clearing.tmp.appending(path: "x")) && !FileOps.exists(clearing.unfinishedMarker))
+        #expect(store.box(id: try clearing.loadConfig().id)?.notice == Box.UnfinishedWork.clear.redoneNotice)
+        let orphan = try #require(store.box(id: try orphaned.loadConfig().id))
+        #expect(orphan.notice == nil, "没有重新还原，不能说已重新还原")
+        #expect(orphan.lastError == Box.PartialRestore().localizedDescription)
+        #expect(!FileOps.exists(orphaned.unfinishedMarker))
         let leftovers = FileOps.contents(of: rolling.url).map(\.lastPathComponent)
             .filter { $0.contains(".old") || $0.contains(".restoring") || $0.contains(".deleting-") || $0.hasSuffix(".tmp") || $0 == "App.new" }
         #expect(leftovers.isEmpty, "残留：\(leftovers)")
@@ -290,9 +316,9 @@ struct LifecycleTests {
 
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.prefs.path)
         let trashed = try #require(try await store.delete(box))
-        // 测试自己放进废纸篓的，测试自己清掉。按路径删：废纸篓本身读不了（隐私保护），FileOps.removeTree 要打开上级目录
-        try FileManager.default.removeItem(at: trashed)
-        #expect(!FileOps.exists(trashed), "放进废纸篓的测试盒子没有清掉：\(trashed.path)")
+        // 设置了 MACBOX_DATA_ROOT 时不往真正的废纸篓里放（那里测试读不了也清不掉），放在数据目录里，结束时一起删掉
+        #expect(trashed.path.hasPrefix(AppPaths.root.appending(path: "Trash").path + "/"), "测试的盒子进了真正的废纸篓：\(trashed.path)")
+        #expect(FileOps.exists(trashed.appending(path: "box.json")))
         #expect(try await Shell.run("/usr/bin/defaults", ["read", system, "who"]).output == "native\n", "本机原来的设置没有恢复")
         #expect(!FileOps.exists(paths.url) && store.box(id: box.id) == nil)
     }
@@ -310,13 +336,23 @@ struct LifecycleTests {
 
         store.suggestVirtualMac(for: first, reasons: ["a"])
         store.suggestVirtualMac(for: second, reasons: ["b"])
+        store.suggestVirtualMac(for: second, reasons: ["b", "d"])
+        // 「First」那条正在显示：不并进去（用户看不到），另排一条，只放没说过的
         store.suggestVirtualMac(for: first, reasons: ["a", "c"])
-        #expect(store.prompts.map(\.boxID) == [first.id, second.id], "后一条顶掉了前一条")
-        #expect(store.prompt?.reasons == ["a", "c"])
-        store.dismissPrompt()
+        store.suggestVirtualMac(for: first, reasons: ["a"])
+        let shown = try #require(store.prompt)
+        #expect(shown.boxID == first.id && shown.reasons == ["a"], "正在显示的询问被改了")
+        #expect(store.prompts.map(\.boxID) == [second.id, first.id], "后一条顶掉了前一条")
+        #expect(store.prompts.map(\.reasons) == [["b", "d"], ["c"]], "还在排队的同一个盒子要并成一条")
+
+        store.dismissPrompt(id: shown.id)
+        #expect(await eventually { store.prompt?.boxID == second.id })
+        store.dismissPrompt(id: shown.id) // 同一次关闭又置了一次 false：不能把下一条也关掉
         #expect(store.prompt?.boxID == second.id)
-        store.dismissPrompt()
-        #expect(store.prompt == nil)
+        store.dismissPrompt(id: try #require(store.prompt).id)
+        #expect(await eventually { store.prompt?.reasons == ["c"] })
+        store.dismissPrompt(id: try #require(store.prompt).id)
+        #expect(await eventually { store.prompt == nil && store.prompts.isEmpty })
 
         // 每次运行都写系统目录
         func run(blocking target: String) async {
@@ -329,14 +365,14 @@ struct LifecycleTests {
         let prompt = try #require(store.prompt)
         #expect(prompt.boxID == second.id && prompt.blocks.count == 1)
         store.keepNativeIsolation(prompt)
-        store.dismissPrompt()
+        store.dismissPrompt(id: prompt.id)
         #expect(try secondPaths.loadConfig().acknowledgedBlocks == prompt.blocks, "选择要存进 box.json")
 
         await run(blocking: "/Library/Application Support/dev.macboxtest")
         #expect(store.prompt == nil, "同样的拦截又问了一次")
         await run(blocking: "/Library/LaunchDaemons/dev.macboxtest.plist")
         #expect(store.prompt?.boxID == second.id, "新的拦截要问")
-        store.dismissPrompt()
+        store.dismissPrompt(id: try #require(store.prompt).id)
 
         second.config.runtime = .virtualMac
         #expect(second.config.acknowledgedBlocks == nil, "换了运行环境，之前的选择不再算数")
@@ -417,15 +453,27 @@ struct LifecycleTests {
         let refusing = await quitting.value
         #expect(refusing.map(\.id) == [stubborn.id])
         #expect(stubborn.isRunning, "不能擅自强制结束")
-        #expect(FileOps.exists(stubborn.paths.home.appending(path: "terms")), "退出请求没有送到")
+        let terms = { readText(stubborn.paths.home.appending(path: "terms"))?.split(separator: "\n").count ?? 0 }
+        #expect(terms() == 1, "退出请求要送到，而且只送一次（重复请求会让在问要不要存储的 App 再问一次）")
         #expect(await eventually(.seconds(5)) { stubborn.offersForceQuit }, "要提供强制退出")
+        #expect(!stubborn.isQuitting, "提供强制退出时不再显示“正在退出”")
+        stubborn.quit() // 「退出」一直可以再点
+        #expect(stubborn.isQuitting && stubborn.offersForceQuit)
+        #expect(await eventually { terms() == 2 })
 
         await stubborn.forceQuit()
+        // 强制退出后进程结束、收尾要一点时间：这期间不能又把它当成不肯退出的
         #expect(await store.quitAll(patience: .seconds(2)).isEmpty)
         #expect(store.liveBoxes.isEmpty)
         #expect(!PreferenceLease(box: stubborn.paths, prefixes: stubborn.config.preferencePrefixes).isOutstanding)
 
+        // 等待退出期间添加的不会添加；取消退出后告诉用户哪些没有添加
+        let dropped = URL(fileURLWithPath: "/nonexistent/Dropped.dmg")
+        await store.importItems([dropped])
+        #expect(store.importError == nil)
         store.cancelQuit()
+        #expect(store.importError?.contains("Dropped.dmg") == true, "没有添加的要说出来")
+        store.importError = nil
         await late.open()
         #expect(await eventually(.seconds(10)) { late.isRunning })
     }
@@ -485,28 +533,308 @@ struct LifecycleTests {
     }
 }
 
+extension LifecycleTests {
+    @Test("还原做到一半失败：打开前先做完，做不完就不打开；删除还原点会去掉标记并说明", .timeLimit(.minutes(2)))
+    func unfinishedRestoreBlocksOpen() async throws {
+        let fixture = LifecycleFixture()
+        defer { await fixture.cleanup() }
+        let paths = try await fixture.makeBox(script: "echo run >> \"$HOME/runs\"\nexit 0\n")
+        try writeText("saved", paths.restorePoint.appending(path: "Home/note.txt"))
+        // 还原点里的 Prefs 有一个读不了的文件夹：Home 换好之后，换 Prefs 时克隆失败
+        let locked = paths.restorePoint.appending(path: "Prefs/locked")
+        try writeText("x", locked.appending(path: "x.plist"))
+        try writeText("now", paths.home.appending(path: "note.txt"))
+        try writeText("current", paths.prefs.appending(path: "current.plist"))
+        func lock(_ on: Bool) throws {
+            try FileManager.default.setAttributes([.posixPermissions: on ? 0 : 0o700], ofItemAtPath: locked.path)
+        }
+        try lock(true)
+        defer { try? lock(false) }
+        let store = await fixture.start()
+        let box = try #require(store.box(id: try paths.loadConfig().id))
+        #expect(box.restorePointDate != nil)
+
+        await #expect(throws: (any Error).self) { try await box.restoreRestorePoint() }
+        #expect(Box.unfinishedWork(paths) == .restore, "失败了标记要留着")
+        #expect(readText(paths.home.appending(path: "note.txt")) == "saved" && FileOps.exists(paths.prefs.appending(path: "current.plist")),
+                "这时的数据一半新一半旧")
+
+        await box.open()
+        #expect(box.activity == .idle && box.lastError != nil, "数据只还原了一部分，不能打开")
+        try await Task.sleep(for: .seconds(1))
+        #expect(runs(box) == 0 && !box.isLive)
+
+        try lock(false)
+        await box.open()
+        #expect(box.notice == Box.UnfinishedWork.restore.redoneNotice)
+        #expect(await eventually(.seconds(10)) { runs(box) == 1 && box.activity == .idle }, "做完之后照常打开")
+        #expect(Box.unfinishedWork(paths) == nil)
+        #expect(!FileOps.exists(paths.prefs.appending(path: "current.plist")) && FileOps.exists(paths.prefs.appending(path: "locked/x.plist")))
+
+        // 再失败一次，然后删掉还原点：没法再重做了，去掉标记、说明数据可能只还原了一部分，之后照常打开
+        try lock(true)
+        await #expect(throws: (any Error).self) { try await box.restoreRestorePoint() }
+        #expect(Box.unfinishedWork(paths) == .restore)
+        try await box.deleteRestorePoint()
+        #expect(Box.unfinishedWork(paths) == nil && box.restorePointDate == nil)
+        #expect(box.lastError == Box.PartialRestore().localizedDescription)
+        await box.open()
+        // 主目录在第二次还原时又换成了还原点里的（runs 文件跟着没了），所以又从 1 开始
+        #expect(await eventually(.seconds(10)) { runs(box) == 1 && box.activity == .idle }, "去掉标记之后照常打开")
+    }
+
+    @Test("在线安装器接手前先收回借出的偏好设置：收不回就不接手、前缀不变；本机同一个 App 的设置不会被收进盒子、删掉",
+          .timeLimit(.minutes(3)))
+    func adoptionWaitsForLease() async throws {
+        let fixture = LifecycleFixture()
+        defer { await fixture.cleanup() }
+        let vendor = "dev.macboxtest.lifecycle-adopt-\(UUID().uuidString.prefix(8).lowercased())"
+        let installerDomain = vendor + ".installer"
+        let appID = vendor + ".app"
+        let systemPrefs = AppPaths.realHome.appending(path: "Library/Preferences")
+        func system(_ domain: String) -> String { systemPrefs.appending(path: domain).path }
+        func systemValue(_ domain: String) async -> String? {
+            try? await Shell.run("/usr/bin/defaults", ["read", system(domain), "who"]).output
+        }
+        defer {
+            // 只用 defaults delete 的话，cfprefsd 之后会写回一个空 plist
+            for domain in [installerDomain, installerDomain + ".app", appID, vendor] {
+                _ = try? await Shell.run("/usr/bin/defaults", ["delete", system(domain)])
+                try? FileManager.default.removeItem(atPath: system(domain) + ".plist")
+            }
+        }
+        // 这台 Mac 上直接装着同一个 App（比如本机的夸克网盘），盒子里是第二个账号的在线安装器
+        try await Shell.run("/usr/bin/defaults", ["write", system(appID), "who", "native"])
+
+        // 安装器下载的安装包：里面的 App 比安装器的前缀宽（…installer → …）
+        let root = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appending(path: "payload/Real.app")
+        try makeFakeApp(at: real, identifier: appID, script: "#!/bin/sh\necho run >> \"$HOME/runs\"\nexit 0\n")
+        // 安装器下载的安装包要大于 1 MB 才认（见 IsolatedSession.downloadedPackages）
+        var padding = [UInt8](repeating: 0, count: 2 << 20)
+        arc4random_buf(&padding, padding.count) // 随机内容压缩不了，打包后照样大于 1 MB
+        try AppPaths.ensure(real.appending(path: "Contents/Resources"))
+        try Data(padding).write(to: real.appending(path: "Contents/Resources/padding"))
+        let pkg = root.appending(path: "Real.pkg")
+        try await Shell.run("/usr/bin/pkgbuild", ["--quiet", "--identifier", "dev.macboxtest.lifecycle.adopt", "--version", "1",
+                                                  "--root", root.appending(path: "payload").path, "--install-location", "/Applications", pkg.path])
+
+        let paths = try await fixture.makeBox("Installer", script: """
+        cp "\(pkg.path)" "$HOME/Real-$$.pkg"
+        touch "$HOME/ready"
+        while [ ! -e "$HOME/go" ]; do sleep 0.1; done
+        exit 0
+        """, prefix: installerDomain) { $0.isInstaller = true }
+        try AppPaths.ensure(paths.prefs)
+        try PropertyListSerialization.data(fromPropertyList: ["who": "installer"], format: .binary, options: 0)
+            .write(to: paths.prefs.appending(path: "\(installerDomain).plist"))
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.prefs.path) }
+        let store = await fixture.start()
+        let box = try #require(store.box(id: try paths.loadConfig().id))
+
+        // 这次运行借出的设置收不回（Prefs 写不进去）
+        await box.open()
+        #expect(await eventually(.seconds(10)) { FileOps.exists(paths.home.appending(path: "ready")) })
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: paths.prefs.path)
+        try writeText("", paths.home.appending(path: "go"))
+        #expect(await eventually(.seconds(30)) { box.activity == .idle })
+        let lease = PreferenceLease(box: paths, prefixes: [installerDomain])
+        #expect(lease.isOutstanding)
+        #expect(box.config.isInstaller && box.config.preferencePrefixes == [installerDomain], "借出没收回时不能接手、不能改前缀")
+        #expect(box.lastError != nil, "要说明为什么没完成安装")
+        #expect(runs(box) == 0)
+        #expect(await systemValue(appID) == "native\n")
+
+        // 收得回了：再运行一次安装器，这次接手完成安装、打开真正的 App
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.prefs.path)
+        await box.open()
+        #expect(await eventually(.seconds(60)) { runs(box) == 1 && box.activity == .idle }, "没有完成安装、打开")
+        #expect(!box.config.isInstaller)
+        #expect(PreferenceLease.domain(appID, isCoveredBy: box.config.preferencePrefixes))
+        #expect(!PreferenceLease(box: paths, prefixes: box.config.preferencePrefixes).isOutstanding)
+        #expect(await systemValue(appID) == "native\n", "本机同一个 App 的设置被收进盒子、删掉了")
+        #expect(!FileOps.exists(paths.prefs.appending(path: "\(appID).plist")), "本机的设置不该收进盒子")
+        #expect(await systemValue(installerDomain) == nil, "安装器借出的设置要收回")
+    }
+}
+
 /// 启动器的脚本文件
 private func launchScript(of launcher: URL) -> URL { launcher.appending(path: "Contents/MacOS/launch") }
 
-/// 界面文字的英文版本统一用弯撇号（’），和其余 40 多处一致
+/// 界面文字的英文版本统一用弯撇号（’），和其余几百处一致
 @Suite("界面文字")
 struct InterfaceTextTests {
-    @Test("英文文字里没有直撇号（can't → can’t）")
+    @Test("源代码里的字符串都没有直撇号（can't → can’t）")
     func curlyApostrophes() throws {
         let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appending(path: "Sources")
         let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
             .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
         #expect(!files.isEmpty)
-        // L("中文", "English")：只看第二个参数是字符串字面量的
-        let call = /L\("(?:[^"\\]|\\.)*",\s*"((?:[^"\\]|\\.)*)"/
         var offending: [String] = []
+        var count = 0
         for file in files {
-            let text = try String(contentsOf: file, encoding: .utf8)
-            for match in text.matches(of: call) where match.output.1.contains(/[A-Za-z]'[A-Za-z]/) {
-                offending.append("\(file.lastPathComponent): \(match.output.1.prefix(60))")
+            let literals = StringLiterals.scan(try String(contentsOf: file, encoding: .utf8))
+            count += literals.count
+            for literal in literals where literal.contains(/[A-Za-z]'[A-Za-z]/) {
+                offending.append("\(file.lastPathComponent): \(literal.prefix(60))")
             }
         }
+        #expect(count > 500, "字符串字面量少得不对，扫描可能出错了")
         #expect(offending.isEmpty, "\(offending)")
+    }
+
+    @Test("字符串字面量的扫描：插值里嵌套的字符串、三元表达式、多行和原始字符串都看到，注释不算")
+    func literalScanner() {
+        let source = #"""
+        // don't：注释不算
+        /* it's /* nested */ still a comment */
+        let a = L("中文", "\(n == 1 ? "it's" : "them") here")
+        let b = total == 1 ? "won't" : "x"
+        let c = "escaped \" quote can't"
+        let d = """
+            multi-line doesn't
+            """
+        let e = #"raw "isn't" \(x)"#
+        let f = text.wholeMatch(of: /a\(b\)/)
+        let g = "after"
+        """#
+        let literals = StringLiterals.scan(source)
+        #expect(literals.contains("it's"))
+        #expect(literals.contains("won't"))
+        #expect(literals.contains { $0.contains("can't") })
+        #expect(literals.contains { $0.contains("doesn't") })
+        #expect(literals.contains { $0.contains("isn't") })
+        #expect(literals.contains("after"), "扫描在前面某处走错了")
+        #expect(!literals.contains { $0.contains("don't") || $0.contains("nested") })
+    }
+
+    @Test("被信号结束的说明不带 strsignal 的英文和编号")
+    func signalNames() {
+        let killed = Box.quickExitMessage(name: "X", status: 128 + SIGKILL)
+        #expect(!killed.contains("Killed"))
+        #expect(killed.contains("强制结束") || killed.contains("killed"))
+        let other = Box.quickExitMessage(name: "X", status: 128 + SIGUSR1)
+        #expect(!other.contains("User defined"))
+    }
+
+    @Test("拼接进句子的说明去掉末尾的句号")
+    func finalPeriod() {
+        #expect(BoxStore.withoutFinalPeriod("缺少配置文件 box.json") == "缺少配置文件 box.json")
+        #expect(BoxStore.withoutFinalPeriod("It may be damaged.") == "It may be damaged")
+        #expect(BoxStore.withoutFinalPeriod("无法读取。") == "无法读取")
+    }
+}
+
+/// 找出 Swift 源码里所有字符串字面量的内容（插值 \( … ) 的位置空着，里面嵌套的字符串字面量另外收进来）。
+/// 跳过注释和正则字面量；处理多行字符串和原始字符串（#"…"#）
+enum StringLiterals {
+    static func scan(_ source: String) -> [String] {
+        var scanner = Scanner(chars: Array(source))
+        scanner.code(inInterpolation: false)
+        return scanner.literals
+    }
+
+    private struct Scanner {
+        let chars: [Character]
+        var i = 0
+        var literals: [String] = []
+
+        func at(_ offset: Int) -> Character? { i + offset < chars.count ? chars[i + offset] : nil }
+        func matches(_ text: String) -> Bool {
+            for (k, c) in text.enumerated() where at(k) != c { return false }
+            return true
+        }
+
+        /// 代码。在插值里时，遇到配对的 ) 就返回
+        mutating func code(inInterpolation: Bool) {
+            var depth = 0
+            while i < chars.count {
+                if matches("//") {
+                    while i < chars.count, chars[i] != "\n" { i += 1 }
+                } else if matches("/*") {
+                    blockComment()
+                } else if matches("#/") || (chars[i] == "/" && at(1).map { !$0.isWhitespace && $0 != "=" } == true && previousIsOperand() == false) {
+                    regex()
+                } else if let hashes = stringStart() {
+                    string(hashes: hashes)
+                } else {
+                    if chars[i] == "(" { depth += 1 }
+                    if chars[i] == ")" {
+                        if inInterpolation && depth == 0 { i += 1; return }
+                        depth -= 1
+                    }
+                    i += 1
+                }
+            }
+        }
+
+        /// / 前面是值（标识符、右括号、字面量）时是除号，不是正则
+        func previousIsOperand() -> Bool {
+            var k = i - 1
+            while k >= 0, chars[k] == " " { k -= 1 }
+            guard k >= 0 else { return false }
+            let c = chars[k]
+            return c.isLetter || c.isNumber || c == ")" || c == "]" || c == "_" || c == "\""
+        }
+
+        mutating func blockComment() {
+            var depth = 0
+            while i < chars.count {
+                if matches("/*") { depth += 1; i += 2 } else if matches("*/") {
+                    depth -= 1; i += 2
+                    if depth == 0 { return }
+                } else { i += 1 }
+            }
+        }
+
+        mutating func regex() {
+            let hashes = chars[i] == "#" ? 1 : 0
+            i += hashes + 1
+            while i < chars.count {
+                if chars[i] == "\\" { i += 2; continue }
+                if chars[i] == "/" && (hashes == 0 || at(1) == "#") { i += 1 + hashes; return }
+                if hashes == 0 && chars[i] == "\n" { return }
+                i += 1
+            }
+        }
+
+        /// 当前位置是字符串的开头时返回 # 的个数
+        func stringStart() -> Int? {
+            var k = 0
+            while at(k) == "#" { k += 1 }
+            return at(k) == "\"" ? k : nil
+        }
+
+        mutating func string(hashes: Int) {
+            i += hashes
+            let multiline = matches("\"\"\"")
+            i += multiline ? 3 : 1
+            let closer = (multiline ? "\"\"\"" : "\"") + String(repeating: "#", count: hashes)
+            let escape = "\\" + String(repeating: "#", count: hashes)
+            var text = ""
+            while i < chars.count {
+                if matches(closer) {
+                    i += closer.count
+                    break
+                }
+                if matches(escape) {
+                    i += escape.count
+                    if at(0) == "(" {
+                        i += 1
+                        code(inInterpolation: true)
+                        text += "\u{FFFC}"
+                    } else if i < chars.count {
+                        text.append(chars[i])
+                        i += 1
+                    }
+                    continue
+                }
+                text.append(chars[i])
+                i += 1
+            }
+            literals.append(text)
+        }
     }
 }

@@ -39,6 +39,9 @@ nonisolated struct PreferenceLease: Sendable {
         var nativeDomains: [String]
         /// 放进系统的盒子域
         var lentDomains: [String]
+        /// 借出时的前缀（旧版的日志没有）。收回时只认这个范围里的域：借出没收回期间前缀变宽了（安装器接手后加上真正的 App），
+        /// 用新前缀收回会把本机从没借出、也没备份过的域当成盒子的收进去，再当成“本机原本没有”清空
+        var prefixes: [String]?
     }
 
     private var journalURL: URL { box.leaseJournal }
@@ -59,7 +62,7 @@ nonisolated struct PreferenceLease: Sendable {
 
         let native = systemDomains()
         let lent = boxDomains()
-        var journal = Journal(phase: .lending, nativeDomains: native, lentDomains: lent)
+        var journal = Journal(phase: .lending, nativeDomains: native, lentDomains: lent, prefixes: prefixes)
         do {
             // 先记日志再动任何东西；本机的域全部备份完之后才开始替换
             try write(journal)
@@ -104,7 +107,10 @@ nonisolated struct PreferenceLease: Sendable {
             }
             return
         }
-        let domains = Set(systemDomains()).union(journal.nativeDomains).union(journal.lentDomains)
+        // 只收借出时那组前缀里的（见 Journal.prefixes）。日志在盒子里，只能用来缩小范围，owns 照样按现在的前缀把关
+        let lentScope = journal.prefixes ?? prefixes
+        let domains = Set(systemDomains().filter { Self.domain($0, isCoveredBy: lentScope) })
+            .union(journal.nativeDomains).union(journal.lentDomains)
 
         if journal.phase == .lent {
             for domain in domains {
@@ -238,6 +244,7 @@ nonisolated struct PreferenceLease: Sendable {
         }
         // 旧版 MacBox 崩溃后只留下备份目录：视为已借出
         guard FileManager.default.fileExists(atPath: box.nativePrefsBackup.path) else { return nil }
-        return Journal(phase: .lent, nativeDomains: plistNames(in: box.nativePrefsBackup).filter(owns), lentDomains: boxDomains())
+        return Journal(phase: .lent, nativeDomains: plistNames(in: box.nativePrefsBackup).filter(owns), lentDomains: boxDomains(),
+                       prefixes: nil)
     }
 }

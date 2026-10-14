@@ -109,6 +109,22 @@ struct PreferenceLeaseTests {
         await cleanUp()
     }
 
+    @Test("借出没收回期间前缀变宽（安装器接手后加上真正的 App）：收回只按借出时的前缀，本机新前缀下的域不动")
+    func widenedPrefixesDontPullInNativeDomains() async throws {
+        try await systemWrite(foreign, "who", "native")
+        try saveBox(domain, ["who": "box"])
+        try await lease().checkIn()
+        var wider = PreferenceLease(box: box, prefixes: [domain, foreign])
+        wider.systemPrefs = system
+        #expect(wider.isOutstanding)
+        try await wider.checkOut()
+        #expect(await systemRead(foreign) == ["who": "native"], "本机从没借出的设置被当成“本机原本没有”清空了")
+        #expect(boxContent(foreign) == nil, "本机的设置不该收进盒子")
+        #expect(await systemRead(domain).isEmpty)
+        #expect(boxContent(domain) == ["who": "box"])
+        await cleanUp()
+    }
+
     @Test("MacBox 在借出期间崩溃：下次启动按日志收回并恢复")
     func crashRecovery() async throws {
         try await systemWrite(domain, "who", "native")

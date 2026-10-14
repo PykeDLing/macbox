@@ -88,16 +88,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 返回 false 表示用户取消了退出
     private func prepareToQuit(store: BoxStore, vm: VirtualMac) async -> Bool {
-        if vm.isInstalling { await vm.cancelSetupAndWait() }
         while true {
             let refusing = await store.quitAll()
             if refusing.isEmpty { break }
-            guard confirmForceQuit(refusing) else {
+            // 不抢前台：你可能正在应用的存储面板里输入文件名。在程序坞里提醒，等你切回 MacBox 再问；
+            // 等的时候应用自己退出了就不用问了
+            await waitUntilActive { !refusing.contains(where: \.isRunning) }
+            guard refusing.contains(where: \.isRunning) else { continue }
+            guard confirmForceQuit(refusing.filter(\.isRunning)) else {
                 store.cancelQuit()
                 return false
             }
             for box in refusing { await box.forceQuit() }
         }
+        // 应用都退出了、MacBox 确定要退出了才中断虚拟 Mac 的设置：在上面取消退出的话，设置照常继续，
+        // 不会白白丢掉已经下载、安装了一半的 macOS
+        if vm.isInstalling { await vm.cancelSetupAndWait() }
         if !(await vm.prepareForTermination()) {
             guard confirmForceStop(vm) else {
                 store.cancelQuit()
@@ -120,7 +126,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return alert.runModal() == .alertSecondButtonReturn
     }
 
-    /// 有应用不肯退出：强制退出它们再退出 MacBox，还是取消退出。默认按钮是“取消”：没存的内容会丢
+    /// MacBox 不在前台时，在程序坞里提醒，等到它被切到前台（或者 done 成立）为止
+    private func waitUntilActive(or done: () -> Bool) async {
+        guard let app = NSApp, !app.isActive else { return }
+        let request = app.requestUserAttention(.criticalRequest)
+        defer { app.cancelUserAttentionRequest(request) }
+        while !app.isActive, !done() {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
+    /// 有应用不肯退出：强制退出它们再退出 MacBox，还是取消退出。默认按钮是“取消”：没存的内容会丢。
+    /// 只在 MacBox 已经在前台时调用（见 waitUntilActive），不去抢前台
     private func confirmForceQuit(_ boxes: [Box]) -> Bool {
         let names = boxes.map(\.config.name)
         let alert = NSAlert()
@@ -132,7 +149,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: L("取消", "Cancel"))
         let force = alert.addButton(withTitle: L("强制退出并退出 MacBox", "Force Quit and Quit MacBox"))
         force.hasDestructiveAction = true
-        NSApp.activate()
         return alert.runModal() == .alertSecondButtonReturn
     }
 

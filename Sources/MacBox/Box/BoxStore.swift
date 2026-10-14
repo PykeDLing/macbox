@@ -18,7 +18,7 @@ enum Destination: Hashable {
     case allApps, running, virtualMac, settings
 }
 
-/// 询问要不要改用虚拟 Mac。同一个盒子同时只有一条，新的理由并进去
+/// 询问要不要改用虚拟 Mac。排队中的同一个盒子只有一条，新的理由并进去；正在显示的不再改动
 struct CompatibilityPrompt: Identifiable {
     let id = UUID()
     let boxID: UUID
@@ -73,7 +73,9 @@ final class BoxStore {
     /// 添加应用的进度（几次添加同时进行时显示最新的一条），全部结束才清空
     private(set) var importStatus: String?
     var importError: String?
-    /// 排队的兼容性询问，一次显示一条（见 prompt）
+    /// 正在显示的兼容性询问。已经移出队列，不再并入新的理由：显示着的内容和用户回答的、记下的是同一份
+    private(set) var prompt: CompatibilityPrompt?
+    /// 排队等着显示的兼容性询问
     private(set) var prompts: [CompatibilityPrompt] = []
     /// 排队的“放进虚拟 Mac”建议，一次显示一条
     private(set) var virtualMacOffers: [VirtualMacOffer] = []
@@ -83,8 +85,13 @@ final class BoxStore {
     /// 由 App 场景消费：打开对应窗口
     var windowRequest: WindowRequest?
 
-    /// MacBox 正在退出：不再打开应用、不再开始添加（见 quitAll）
-    @ObservationIgnored private(set) var isTerminating = false
+    /// MacBox 正在退出：不再打开应用、不再开始添加（见 quitAll）。主窗口据此显示“正在退出 MacBox…”、停用打开和添加
+    private(set) var isTerminating = false
+    /// 这次退出 MacBox 时请求过退出的盒子：请求时的会话（启动期间请求的为 nil，启动后由盒子转达）和时间。
+    /// 每次运行只请求一次（重复请求会让在问“是否存储”的 App 再问一次），从各自请求时起等满 patience 才算不肯退出
+    @ObservationIgnored private var quitRequests: [ObjectIdentifier: (session: ObjectIdentifier?, at: ContinuousClock.Instant)] = [:]
+    /// 因为正在退出 MacBox 而没有添加的文件：取消退出时告诉用户
+    @ObservationIgnored private var skippedImports: [URL] = []
     /// 正在进行的添加（一次添加多个文件算一次）。退出 MacBox 前要等它们做完，否则留下半个盒子
     @ObservationIgnored private(set) var activeImports = 0
     @ObservationIgnored private var started = false
@@ -149,13 +156,23 @@ final class BoxStore {
         brokenBoxes = broken
         // 启动器被删掉、被覆盖或者是旧写法的时补上、重写，没有主人的清掉（读不出的盒子也算主人）
         let keep = Set(boxes.map(\.id) + brokenBoxes.map(\.id))
-        let wanted = boxes.filter { $0.config.showInLaunchpad && !$0.config.isInstaller }
+        let wanted = boxes.filter(\.config.wantsLauncher)
         Task {
             await Launcher.shared.removeOrphans(keeping: keep)
             for box in wanted where await Launcher.shared.needsInstall(for: box.id) {
                 box.syncLauncher()
             }
         }
+    }
+
+    /// 启动时收不回偏好设置的提示。一个应用时不用复数
+    static func unreturnedMessage(_ names: [String]) -> String {
+        if names.count == 1 {
+            return L("MacBox 上次没有正常退出，\(chineseList(names))借出的偏好设置没能收回，这台 Mac 上这个应用的设置暂时还是盒子里的内容。详情见它的详情面板；下次打开它或重新打开 MacBox 时会再试。",
+                     "MacBox didn’t quit normally last time, and the preferences lent to \(englishList(names)) couldn’t be returned, so this Mac’s settings for it are still the box’s for now. See the app’s details. MacBox will try again the next time you open it or MacBox.")
+        }
+        return L("MacBox 上次没有正常退出，\(chineseList(names))借出的偏好设置没能收回，这台 Mac 上这些应用的设置暂时还是盒子里的内容。详情见各应用的详情面板；下次打开它们或重新打开 MacBox 时会再试。",
+                 "MacBox didn’t quit normally last time, and the preferences lent to \(englishList(names)) couldn’t be returned, so this Mac’s settings for these apps are still the boxes’ for now. See each app’s details. MacBox will try again the next time you open them or MacBox.")
     }
 
     private static func describeLoadError(_ error: Error) -> String {
@@ -199,6 +216,10 @@ final class BoxStore {
                 usleep(100_000)
             }
         }
+        // 第 8 步要撤销登记的 App。安装器接手、替换 App 留下的 App.new、App.old 第 2 步就删了，先记下来
+        let apps = boxes.flatMap { box in
+            [box.appURL] + [box.paths.appStaging, box.paths.url.appending(path: "App.old")].flatMap { FileOps.contents(of: $0) }
+        }
         // 2. 替换做到一半的改回原件、删掉残骸；还原点、安装器接手的临时目录，导入到一半的盒子都删掉
         for box in boxes {
             let paths = box.paths
@@ -230,23 +251,19 @@ final class BoxStore {
             }
         }
         if !unreturned.isEmpty {
-            alerts.append(StoreAlert(
-                title: L("无法恢复偏好设置", "Couldn’t Restore Preferences"),
-                message: L("MacBox 上次没有正常退出，\(Self.chineseList(unreturned))借出的偏好设置没能收回，这台 Mac 上这些应用的设置暂时还是盒子里的内容。详情见各应用的详情面板；下次打开它们或重新打开 MacBox 时会再试。",
-                           "MacBox didn’t quit normally last time, and the preferences lent to \(Self.englishList(unreturned)) couldn’t be returned, so this Mac’s settings for these apps are still the boxes’ for now. See each app’s details. MacBox will try again the next time you open them or MacBox.")))
+            alerts.append(StoreAlert(title: L("无法收回偏好设置", "Couldn’t Return Preferences"), message: Self.unreturnedMessage(unreturned)))
         }
-        // 4. 做到一半的还原（自动还原、手动还原）重做一遍。设置没收回的不做：还原会整个替换 Prefs，连同借出的日志
-        for box in boxes where FileOps.exists(box.paths.rollbackMarker) {
+        // 4. 做到一半的还原、清除数据（崩溃，或者做到一半失败）重做一遍。设置没收回的这里不做：两者都会整个替换 Prefs，
+        // 连同借出的日志；标记留着，打开应用前会先收回设置再做完（见 Box.open）
+        for box in boxes {
             let paths = box.paths
-            guard !PreferenceLease(box: paths, prefixes: box.config.preferencePrefixes).isOutstanding else { continue }
+            guard let work = Box.unfinishedWork(paths),
+                  !PreferenceLease(box: paths, prefixes: box.config.preferencePrefixes).isOutstanding else { continue }
             do {
-                try await Background.run {
-                    if FileOps.exists(paths.restorePoint) { try Box.rollBack(paths) } else { try FileOps.removeTree(paths.rollbackMarker) }
-                }
-                box.notice = L("上次还原到还原点时 MacBox 没有正常退出，已重新还原。", "MacBox didn’t quit normally during the last restore, so it was restored again.")
+                try await Background.run { try Box.redo(work, paths) }
+                box.notice = work.redoneNotice
             } catch {
-                box.lastError = L("上次没有做完的还原无法完成：\(error.localizedDescription)",
-                                  "Couldn’t finish the restore that was interrupted last time: \(error.localizedDescription)")
+                box.lastError = error is Box.PartialRestore ? error.localizedDescription : work.failedMessage(error.localizedDescription)
             }
         }
         // 5. 盒子里的映像
@@ -268,10 +285,8 @@ final class BoxStore {
             }
         }
         // 8. 撤销系统对盒子里 App 的登记（旧版读图标时会登记，访达、聚焦也可能登记）：登记着的 App 声明的
-        // URL scheme、文档类型都指向它，MacBox 没在运行时点个链接就会在隔离之外打开它。不影响打开，不必等
-        let apps = boxes.flatMap { box in
-            [box.appURL] + [box.paths.appStaging, box.paths.url.appending(path: "App.old")].flatMap { FileOps.contents(of: $0) }
-        }
+        // URL scheme、文档类型都指向它，MacBox 没在运行时点个链接就会在隔离之外打开它。已经删掉的 App.new、App.old 里的
+        // 也要撤销：登记按路径记着，文件没了也照样留着。不影响打开，不必等
         Task.detached {
             for app in apps { _ = try? await Shell.run(Shell.lsregister, ["-u", app.path]) }
         }
@@ -281,14 +296,20 @@ final class BoxStore {
 
     func importItems(_ urls: [URL]) async {
         await ready()
-        guard !isTerminating else { return }
+        guard !isTerminating else {
+            skippedImports += urls
+            return
+        }
         activeImports += 1
         defer {
             activeImports -= 1
             if activeImports == 0 { importStatus = nil } // 同时进行的其他添加还没做完时，进度卡片留着
         }
-        for url in urls {
-            guard !isTerminating else { break }
+        for (index, url) in urls.enumerated() {
+            guard !isTerminating else {
+                skippedImports += urls[index...]
+                break
+            }
             importStatus = L("正在读取「\(url.lastPathComponent)」…", "Reading “\(url.lastPathComponent)”…")
             do {
                 // 先看类型再复制：不支持的大文件、文件夹不必整个复制进来才报错
@@ -380,21 +401,24 @@ final class BoxStore {
 
     // MARK: - 兼容性
 
-    /// 当前要显示的询问
-    var prompt: CompatibilityPrompt? { prompts.first }
-
     /// 建议改用虚拟 Mac。按设置排进询问队列（一次添加多个时每个都要问到，不能后一个顶掉前一个；
-    /// 同一个盒子的并成一条），或者直接改用。blocks 是引起建议的运行时拦截
+    /// 同一个盒子还在排队的并成一条，正在显示的不动、另排一条），或者直接改用。blocks 是引起建议的运行时拦截
     func suggestVirtualMac(for box: Box, reasons: [String], blocks: [String] = []) {
         guard box.config.runtime == .isolated else { return }
         switch CompatibilityPolicy.current {
         case .ask:
+            // 正在显示的那条已经说过的不再说
+            let shown = prompt?.boxID == box.id ? prompt : nil
+            let reasons = reasons.filter { !(shown?.reasons.contains($0) ?? false) }
+            let blocks = blocks.filter { !(shown?.blocks.contains($0) ?? false) }
+            guard !reasons.isEmpty || !blocks.isEmpty else { return }
             if let index = prompts.firstIndex(where: { $0.boxID == box.id }) {
                 prompts[index].reasons += reasons.filter { !prompts[index].reasons.contains($0) }
                 prompts[index].blocks += blocks.filter { !prompts[index].blocks.contains($0) }
             } else {
                 prompts.append(CompatibilityPrompt(boxID: box.id, appName: box.config.name, reasons: reasons, blocks: blocks))
             }
+            if prompt == nil { prompt = prompts.removeFirst() }
         case .switchAutomatically:
             box.config.runtime = .virtualMac
             box.notice = L("检测到兼容性问题，已按设置改用虚拟 Mac 运行。",
@@ -402,16 +426,21 @@ final class BoxStore {
         }
     }
 
-    /// 用户选了“继续使用本机隔离”：记下这次的拦截，同样的拦截以后不再问（询问本身由 dismissPrompt 移出队列）
+    /// 用户选了「继续使用本机隔离」：记下这次的拦截，同样的拦截以后不再问（询问本身由 dismissPrompt 移出）
     func keepNativeIsolation(_ prompt: CompatibilityPrompt) {
         guard let box = box(id: prompt.boxID), !prompt.blocks.isEmpty else { return }
         let acknowledged = box.config.acknowledgedBlocks ?? []
         box.config.acknowledgedBlocks = acknowledged + prompt.blocks.filter { !acknowledged.contains($0) }
     }
 
-    /// 当前的询问已经回答：显示下一条
-    func dismissPrompt() {
-        if !prompts.isEmpty { prompts.removeFirst() }
+    /// 询问已经回答（id 是显示着的那条的，不是的不做任何事：同一次关闭里 SwiftUI 可能再置一次 false）。
+    /// 下一条稍后再显示：关掉一个提示的同一刻又要显示一个，SwiftUI 可能显示不出来
+    func dismissPrompt(id: UUID) {
+        guard prompt?.id == id else { return }
+        prompt = nil
+        Task {
+            if prompt == nil, !prompts.isEmpty { prompt = prompts.removeFirst() }
+        }
     }
 
     func dismissVirtualMacOffer() {
@@ -444,7 +473,7 @@ final class BoxStore {
         let name = offer.file.lastPathComponent
         guard vm.config.installed else {
             vm.notice = L("要在虚拟 Mac 里安装「\(name)」，先完成下面的一次性设置，然后在「文件交换」里点「放入文件…」选择它。",
-                          "To install “\(name)” in the Virtual Mac, finish the one-time setup below, then choose it with Add Files… under File Exchange.")
+                          "To install “\(name)” in the Virtual Mac, finish the one-time setup below, then choose it with “Add Files…” under “File Exchange”.")
             show(.virtualMac)
             return
         }
@@ -484,14 +513,11 @@ final class BoxStore {
         let paths = box.paths, app = box.appURL
         let trashed = try await box.performMaintenance {
             _ = try? await Shell.run(Shell.lsregister, ["-u", app.path]) // 不在登记里留下指向废纸篓的 App
-            return try await Background.run {
-                var trashed: NSURL?
-                try FileManager.default.trashItem(at: paths.url, resultingItemURL: &trashed)
-                return trashed as URL?
-            }
+            return try await Background.run { try Self.moveToTrash(paths.url) }
         }
         box.retire()
         boxes.removeAll { $0.id == box.id }
+        // 正在显示的询问不动：它的按钮对已删除的盒子什么也不做，关掉时按 id 移出（见 dismissPrompt）
         prompts.removeAll { $0.boxID == box.id }
         if selection == box.id { selection = nil }
         return trashed
@@ -499,9 +525,24 @@ final class BoxStore {
 
     /// 把读不出的盒子移到废纸篓（需要时可以从废纸篓找回）
     func deleteBroken(_ broken: BrokenBox) throws {
-        try FileManager.default.trashItem(at: broken.url, resultingItemURL: nil)
+        try Self.moveToTrash(broken.url)
         brokenBoxes.removeAll { $0.id == broken.id }
         Task { await Launcher.shared.remove(boxID: broken.id) }
+    }
+
+    /// 移到废纸篓，返回在废纸篓里的位置。数据放在别处（MACBOX_DATA_ROOT，测试）时移到那里的 Trash 文件夹：
+    /// 不往你真正的废纸篓里放东西，那里的东西测试读不了也清不掉（隐私保护）
+    @discardableResult
+    nonisolated static func moveToTrash(_ url: URL) throws -> URL? {
+        guard AppPaths.override != nil else {
+            var trashed: NSURL?
+            try FileManager.default.trashItem(at: url, resultingItemURL: &trashed)
+            return trashed as URL?
+        }
+        let trash = try AppPaths.ensure(AppPaths.root.appending(path: "Trash", directoryHint: .isDirectory))
+        let destination = trash.appending(path: "\(UUID().uuidString)-\(url.lastPathComponent)")
+        try FileManager.default.moveItem(at: url, to: destination)
+        return destination
     }
 
     // MARK: - 外部事件
@@ -516,8 +557,9 @@ final class BoxStore {
             return
         }
         let message = if let broken = brokenBoxes.first(where: { $0.id == id }) {
-            L("这个启动器对应的应用无法读取：\(broken.message)。可以在「全部应用」里查看或删除它。",
-              "The app for this launcher can’t be read: \(broken.message) You can view or delete it in All Apps.")
+            // 读取失败的说明有的带句号、有的不带（系统的错误信息自己带），统一去掉再加
+            L("这个启动器对应的应用无法读取：\(Self.withoutFinalPeriod(broken.message))。可以在「全部应用」里查看或删除它。",
+              "The app for this launcher can’t be read: \(Self.withoutFinalPeriod(broken.message)). You can view or delete it in “All Apps”.")
         } else {
             L("这个启动器对应的应用已经不在 MacBox 里了。", "The app for this launcher is no longer in MacBox.")
         }
@@ -581,35 +623,64 @@ final class BoxStore {
     }
 
     /// 退出 MacBox 前：请所有应用退出（等待期间才开始运行的也一样），等它们收尾完，也等进行中的维护、添加应用做完。
-    /// 应用可能拒绝退出（在问要不要存储、你点了取消、没有响应）：超过 patience 还有在运行的，返回它们，
+    /// 应用可能拒绝退出（在问要不要存储、你点了取消、没有响应）：从请求它退出时起超过 patience 还在运行的，返回它们，
     /// 由调用方问用户强制退出还是取消退出——绝不擅自强制结束，没存的内容会丢。
     /// 收尾、维护、添加都是本地的磁盘操作，不设时限：打断它们才会留下半截的数据
     func quitAll(patience: Duration = .seconds(10)) async -> [Box] {
+        if !isTerminating { quitRequests = [:] } // 新的一次退出：之前取消掉的那次请求过的不算数
         isTerminating = true
-        var asked = Set<ObjectIdentifier>()
-        let deadline = ContinuousClock.now + patience
         while true {
             for box in liveBoxes {
-                if let session = box.session {
-                    // 每次运行只请求一次：重复请求会让在问“是否存储”的 App 再弹一次
-                    if asked.insert(ObjectIdentifier(session)).inserted { box.quit() }
-                } else if box.activity == .launching {
+                let key = ObjectIdentifier(box)
+                let request = quitRequests[key]
+                if let session = box.session.map(ObjectIdentifier.init) {
+                    switch request?.session {
+                    case .some(let asked) where asked == session:
+                        break // 已经请求过
+                    case .none where request != nil:
+                        // 启动期间请求过，启动时盒子已经转达（见 Box.runIsolated）：不再请求，从现在开始计时
+                        quitRequests[key] = (session, .now)
+                    default:
+                        box.quit()
+                        quitRequests[key] = (session, .now)
+                    }
+                } else if box.activity == .launching, request == nil {
                     box.quit() // 启动后立即转达
+                    quitRequests[key] = (nil, .now)
                 }
             }
             if !hasPendingWork { return [] }
-            let refusing = runningBoxes
-            if !refusing.isEmpty, ContinuousClock.now >= deadline { return refusing }
+            let now = ContinuousClock.now
+            let refusing = runningBoxes.filter { box in
+                guard let request = quitRequests[ObjectIdentifier(box)], let session = box.session,
+                      request.session == ObjectIdentifier(session) else { return false }
+                // 强制退出过的，进程结束、收尾要一点时间：从强制退出时重新计时，不马上又问一遍
+                return now - max(request.at, box.forceQuitAt ?? request.at) >= patience
+            }
+            if !refusing.isEmpty { return refusing }
             try? await Task.sleep(for: .milliseconds(100))
         }
     }
 
-    /// 用户取消了退出 MacBox
+    /// 用户取消了退出 MacBox。因为正在退出而没有添加的文件，告诉用户
     func cancelQuit() {
         isTerminating = false
+        quitRequests = [:]
+        guard !skippedImports.isEmpty else { return }
+        let names = skippedImports.map(\.lastPathComponent)
+        skippedImports = []
+        let message = L("正在退出 MacBox 时，\(Self.chineseList(names))没有添加。需要的话请重新添加。",
+                        "\(Self.englishList(names)) \(names.count == 1 ? "wasn’t" : "weren’t") added because MacBox was quitting. Add \(names.count == 1 ? "it" : "them") again if you still need \(names.count == 1 ? "it" : "them").")
+        importError = importError.map { "\($0)\n\n\(message)" } ?? message
     }
 
     // MARK: - 文字
+
+    static func withoutFinalPeriod(_ text: String) -> String {
+        var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let last = text.last, "。.".contains(last) { text.removeLast() }
+        return text
+    }
 
     static func chineseList(_ names: [String]) -> String { names.map { "「\($0)」" }.joined(separator: "、") }
     static func englishList(_ names: [String]) -> String {

@@ -119,6 +119,7 @@ struct LibraryView: View {
                         ImportingCard(status: status)
                     } else if !runningOnly && query.isEmpty {
                         AddCard { importApps() }
+                            .disabled(store.isTerminating)
                     }
                 }
                 .padding(padding)
@@ -160,12 +161,13 @@ struct LibraryView: View {
         Button(box.isRunning ? L("切换到「\(box.config.name)」", "Switch to “\(box.config.name)”") : L("打开", "Open")) {
             Task { await box.open() }
         }
+        .disabled(store.isTerminating && !box.isRunning) // 正在退出 MacBox：不再打开，切换过去照样可以
         if box.isRunning {
-            // 请求退出几秒后还在运行：提供强制退出（先确认）
+            // 「退出」一直都在（刚请求过的几秒里不能再点）；请求几秒后还在运行时，下面再加一项强制退出（先确认）
+            Button(box.isQuitting ? L("正在退出…", "Quitting…") : L("退出", "Quit")) { box.quit() }
+                .disabled(box.isQuitting)
             if box.offersForceQuit {
                 Button(L("强制退出…", "Force Quit…")) { forceQuitTarget = box }
-            } else {
-                Button(L("退出", "Quit")) { box.quit() }
             }
         }
         Divider()
@@ -243,7 +245,10 @@ private let cardHeight: CGFloat = 158
 struct AppCard: View {
     let box: Box
     let isSelected: Bool
+    @Environment(BoxStore.self) private var store
     @State private var hovering = false
+    /// 正在退出 MacBox：打开不会生效，只给运行中的显示（切换过去）按钮
+    private var terminating: Bool { store.isTerminating }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -268,7 +273,7 @@ struct AppCard: View {
         .background(cardShape.fill(isSelected ? Color.accentColor.opacity(0.14) : Color.primary.opacity(hovering ? 0.07 : 0.035)))
         .overlay(cardShape.strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.07), lineWidth: isSelected ? 2 : 1))
         .overlay(alignment: .topTrailing) {
-            if hovering && !box.isBusy { openButton.transition(.opacity) }
+            if hovering && !box.isBusy && (box.isRunning || !terminating) { openButton.transition(.opacity) }
         }
         .contentShape(cardShape)
         .onHover { hovering = $0 }
@@ -313,7 +318,9 @@ struct BoxStatusTag: View {
         let color: Color
 
         init(_ box: Box) {
-            (title, symbol, color) = if box.isRunning {
+            (title, symbol, color) = if box.isQuitting {
+                (L("正在退出…", "Quitting…"), "hourglass", .secondary)
+            } else if box.isRunning {
                 (L("运行中", "Running"), "circle.fill", .green)
             } else if box.isBusy {
                 (L("处理中…", "Working…"), "hourglass", .secondary)
@@ -456,6 +463,7 @@ private struct WelcomeView: View {
             Button { importApps() } label: {
                 Text(L("选择文件…", "Choose Files…")).frame(minWidth: 120)
             }
+            .disabled(store.isTerminating)
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .padding(.top, 4)

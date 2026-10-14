@@ -57,7 +57,7 @@ struct VirtualMacPage: View {
         .navigationTitle(L("虚拟 Mac", "Virtual Mac"))
         .navigationSubtitle(vm.displayStatus)
         .onAppear { vm.refreshFlags() }
-        .confirmationDialog(L("删除 macOS 安装镜像缓存？", "Delete the Cached macOS Restore Image?"), isPresented: $confirmDeleteCache) {
+        .confirmationDialog(L("删除 macOS 安装镜像缓存？", "Delete the cached macOS restore image?"), isPresented: $confirmDeleteCache) {
             Button(L("删除", "Delete"), role: .destructive) { perform { try vm.deleteInstallerCache() } }
             Button(L("取消", "Cancel"), role: .cancel) {}
         } message: {
@@ -71,27 +71,27 @@ struct VirtualMacPage: View {
             Text(L("虚拟 Mac 里安装的应用和文件会一起移到废纸篓。",
                    "Apps and files installed in the Virtual Mac will be moved to the Trash along with it."))
         }
-        .confirmationDialog(L("删除虚拟 Mac 的还原点？", "Delete the Virtual Mac’s Restore Point?"), isPresented: $confirmDeleteRestorePoint) {
+        .confirmationDialog(L("删除虚拟 Mac 的还原点？", "Delete the Virtual Mac’s restore point?"), isPresented: $confirmDeleteRestorePoint) {
             Button(L("删除", "Delete"), role: .destructive) { perform { try vm.deleteRestorePoint() } }
             Button(L("取消", "Cancel"), role: .cancel) {}
         } message: {
             Text(L("删除后无法再回到这个状态。", "You won’t be able to return to this state."))
         }
-        .confirmationDialog(L("还原到还原点？", "Restore the Virtual Mac to the Restore Point?"), isPresented: $confirmRestore) {
+        .confirmationDialog(L("还原到还原点？", "Restore the Virtual Mac to the restore point?"), isPresented: $confirmRestore) {
             Button(L("还原", "Restore"), role: .destructive) { perform { try vm.restoreRestorePoint() } }
             Button(L("取消", "Cancel"), role: .cancel) {}
         } message: {
             Text(L("还原点之后在虚拟 Mac 里的改动都会丢弃（「传入」「传出」文件夹不受影响）。",
                    "All changes made in the Virtual Mac since the restore point will be discarded. (The shared “传入” (Incoming) and “传出” (Outgoing) folders aren’t affected.)"))
         }
-        .confirmationDialog(L("更新还原点？", "Update the Restore Point?"), isPresented: $confirmUpdateRestorePoint) {
+        .confirmationDialog(L("更新还原点？", "Update the restore point?"), isPresented: $confirmUpdateRestorePoint) {
             Button(L("更新", "Update"), role: .destructive) { perform { try vm.createRestorePoint() } }
             Button(L("取消", "Cancel"), role: .cancel) {}
         } message: {
             Text(L("\(restorePointDateText) 的还原点会被虚拟 Mac 现在的状态替换，之后无法再回到原来那个状态。",
                    "The restore point from \(restorePointDateText) will be replaced with the Virtual Mac’s current state. You won’t be able to return to the earlier state."))
         }
-        .confirmationDialog(L("丢弃睡眠状态？", "Discard the Sleep State?"), isPresented: $confirmDiscardSleep) {
+        .confirmationDialog(L("丢弃睡眠状态？", "Discard the sleep state?"), isPresented: $confirmDiscardSleep) {
             Button(L("丢弃", "Discard"), role: .destructive) { perform { try vm.discardSleepState() } }
             Button(L("取消", "Cancel"), role: .cancel) {}
         } message: {

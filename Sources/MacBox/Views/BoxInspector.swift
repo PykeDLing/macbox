@@ -136,27 +136,34 @@ struct BoxInspector: View {
                             Label(L("切换过去", "Switch to App"), systemImage: "arrow.up.forward").frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
-                        if box.offersForceQuit {
-                            // 请求退出几秒后还在运行：可能在等你存储，也可能没有响应
-                            Button(role: .destructive) { forceQuitTarget = box } label: {
-                                Text(L("强制退出…", "Force Quit…")).frame(maxWidth: .infinity)
-                            }
-                            .help(L("应用没有响应退出请求。强制退出会丢失没有存储的内容",
-                                    "The app hasn’t responded to the request to quit. Forcing it to quit loses any unsaved changes"))
-                        } else {
-                            Button { box.quit() } label: { Text(L("退出", "Quit")).frame(maxWidth: .infinity) }
+                        // 「退出」一直都在：应用问要不要存储、你点了取消接着用，之后照样可以再请求退出。
+                        // 刚请求过的几秒里不能再点：重复请求会让应用再问一次
+                        Button { box.quit() } label: {
+                            Text(box.isQuitting ? L("正在退出…", "Quitting…") : L("退出", "Quit")).frame(maxWidth: .infinity)
                         }
+                        .disabled(box.isQuitting)
                     } else {
                         Button { Task { await box.open() } } label: {
                             Label(box.config.isInstaller ? L("运行安装器", "Run Installer") : L("打开", "Open"), systemImage: "play.fill")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(box.isBusy)
+                        .disabled(box.isBusy || store.isTerminating)
                     }
                 }
                 .controlSize(.large)
                 .padding(.top, 4)
+                if box.isRunning, box.offersForceQuit {
+                    // 请求退出几秒后还在运行：在「退出」之外提供强制退出（先确认）
+                    HStack(spacing: 4) {
+                        Text(L("还没有退出？", "Still running?")).foregroundStyle(.secondary)
+                        Button(L("强制退出…", "Force Quit…")) { forceQuitTarget = box }
+                            .buttonStyle(.link)
+                    }
+                    .font(.callout)
+                    .help(L("它可能在等你存储，也可能没有响应。强制退出会丢失没有存储的内容",
+                            "It may be waiting for you to save changes, or it may not be responding. Force quitting loses any unsaved changes"))
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
@@ -252,23 +259,27 @@ struct BoxInspector: View {
 
     // MARK: - 安装器、聚焦
 
-    /// 是不是在线安装器由文件名、大小猜出来，会猜错（下载器、卸载工具……）：让用户自己改
+    /// 是不是在线安装器由文件名、大小猜出来，会猜错（下载器、卸载工具……）：让用户自己改。
+    /// 只有本机隔离会接手安装；在虚拟 Mac 里运行时安装在虚拟 Mac 里完成，这个开关不起作用，不显示
     private var installerSection: some View {
         Section {
-            Toggle(L("在线安装器", "Online Installer"), isOn: $box.config.isInstaller)
-                .disabled(box.isRunning || box.isBusy)
-            Text(box.config.isInstaller
-                 ? L("运行后会下载完整的安装包，MacBox 取出里面的 App 完成安装。如果这就是应用本身，请关掉。",
-                     "When it runs, it downloads the full installer package, and MacBox finishes the installation with the app inside. If this is the app itself, turn this off.")
-                 : L("如果这是一个运行后才下载完整安装包的小安装器，请打开，由 MacBox 接手安装。",
-                     "If this is a small installer that downloads the full package when it runs, turn this on so MacBox can take over the installation."))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if box.config.runtime == .isolated {
+                Toggle(L("在线安装器", "Online Installer"), isOn: $box.config.isInstaller)
+                    .disabled(box.isRunning || box.isBusy)
+                Text(box.config.isInstaller
+                     ? L("运行后会下载完整的安装包，MacBox 取出里面的 App 完成安装。如果这就是应用本身，请关掉。",
+                         "When it runs, it downloads the full installer package, and MacBox finishes the installation with the app inside. If this is the app itself, turn this off.")
+                     : L("如果这是一个运行后才下载完整安装包的小安装器，请打开，由 MacBox 接手安装。",
+                         "If this is a small installer that downloads the full package when it runs, turn this on so MacBox can take over the installation."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            let waitsForInstall = box.config.isInstaller && box.config.runtime == .isolated
             Toggle(L("在聚焦中显示", "Show in Spotlight"), isOn: $box.config.showInLaunchpad)
-                .disabled(box.config.isInstaller)
+                .disabled(waitsForInstall)
                 .help(L("在 ~/Applications/MacBox 放一个启动器，像普通 App 一样打开",
                         "Put a launcher in ~/Applications/MacBox so you can open it like any other app"))
-            if box.config.isInstaller {
+            if waitsForInstall {
                 Text(L("安装器没有启动器。安装完成后，启动器会按这里的设置创建。",
                        "Installers don’t get a launcher. Once the installation finishes, one is created according to this setting."))
                     .font(.caption)
