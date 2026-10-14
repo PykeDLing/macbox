@@ -11,22 +11,58 @@ nonisolated struct AppInfo: Sendable {
 
 /// 读取 App 信息，并在运行前静态检查它会不会做本机隔离挡不住的事
 nonisolated enum AppInspector {
+    /// 一律直接读 Contents/Info.plist，不用 Bundle(url:)：NSBundle（CFBundle 也一样）按路径缓存实例，
+    /// 同一路径上的 App 被换掉之后（在线安装器被换成真正的 App、App 自我更新改了可执行文件名）
+    /// 仍然返回旧内容，拿旧的可执行文件路径去启动只会让 sandbox-exec 报 execvp 失败
     static func info(of app: URL) throws -> AppInfo {
-        guard let bundle = Bundle(url: app), let info = bundle.infoDictionary else {
+        guard let info = infoDictionary(of: app) else {
             throw MacBoxError(L("「\(app.lastPathComponent)」不是有效的 App", "“\(app.lastPathComponent)” is not a valid app"))
         }
-        guard let identifier = bundle.bundleIdentifier, let executable = bundle.executableURL else {
+        // 可执行文件只能是 Contents/MacOS 里的一个文件名，带路径分隔符的不认；
+        // 和 Bundle 一样：没写 CFBundleExecutable 时用包名，并要求文件真实存在
+        let executableName = (info["CFBundleExecutable"] as? String) ?? app.deletingPathExtension().lastPathComponent
+        let executable = executableName.isEmpty || executableName.contains("/")
+            ? nil : app.appending(path: "Contents/MacOS/\(executableName)")
+        guard let identifier = info["CFBundleIdentifier"] as? String, !identifier.isEmpty,
+              let executable, FileManager.default.fileExists(atPath: executable.path) else {
             throw MacBoxError(L("「\(app.lastPathComponent)」缺少标识符或可执行文件",
                                   "“\(app.lastPathComponent)” is missing a bundle identifier or executable"))
         }
-        let localized = bundle.localizedInfoDictionary ?? [:]
-        let name = (localized["CFBundleDisplayName"] ?? localized["CFBundleName"]
-            ?? info["CFBundleDisplayName"] ?? info["CFBundleName"]) as? String
+        let localized = localizedInfoStrings(of: app)
+        let name = [localized["CFBundleDisplayName"], localized["CFBundleName"], info["CFBundleDisplayName"], info["CFBundleName"]]
+            .lazy.compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
         return AppInfo(url: app,
                        name: name ?? app.deletingPathExtension().lastPathComponent,
                        bundleIdentifier: identifier,
                        version: info["CFBundleShortVersionString"] as? String,
                        executable: executable)
+    }
+
+    /// 包（.app / .appex / .xpc）的 Info.plist，直接读文件，理由见 info(of:)
+    static func infoDictionary(of bundle: URL) -> [String: Any]? {
+        NSDictionary(contentsOf: bundle.appending(path: "Contents/Info.plist")) as? [String: Any]
+    }
+
+    /// 按用户的语言偏好挑出的 InfoPlist 本地化（显示名）。传统格式是各 .lproj/InfoPlist.strings；
+    /// 新格式（String Catalog 的编译产物）是 Resources/InfoPlist.loctable，一个文件里按语言分组。
+    /// 只在真有 InfoPlist 本地化的语言里挑：最匹配的 .lproj 可能只有别的 .strings。
+    /// 语言偏好显式传入 Locale.preferredLanguages（含 MacBox 自己的界面语言设置），
+    /// 不传时还会受测试进程等主程序自身支持哪些语言的影响
+    private static func localizedInfoStrings(of app: URL) -> [String: Any] {
+        let resources = app.appending(path: "Contents/Resources")
+        let table = NSDictionary(contentsOf: resources.appending(path: "InfoPlist.loctable")) as? [String: Any] ?? [:]
+        var available = table.keys.filter { table[$0] is [String: Any] && $0 != "LocProvenance" }
+        available += FileOps.contents(of: resources)
+            .filter { $0.pathExtension == "lproj" && FileManager.default.fileExists(atPath: $0.appending(path: "InfoPlist.strings").path) }
+            .map { $0.deletingPathExtension().lastPathComponent }
+        guard !available.isEmpty else { return [:] }
+        for language in Bundle.preferredLocalizations(from: available, forPreferences: Locale.preferredLanguages) {
+            if let strings = table[language] as? [String: Any] { return strings }
+            if let strings = NSDictionary(contentsOf: resources.appending(path: "\(language).lproj/InfoPlist.strings")) as? [String: Any] {
+                return strings
+            }
+        }
+        return [:]
     }
 
     /// Chromium / Electron 系 App：自带的子进程沙盒无法在 MacBox 的沙盒里再次建立
@@ -47,16 +83,207 @@ nonisolated enum AppInspector {
     /// 要遍历 App 包，在后台调用
     static func launchArguments(for app: URL) -> [String] { isChromium(app) ? ["--no-sandbox"] : [] }
 
-    /// 在线安装器：名字或标识符里带 install/setup/安装
+    // MARK: - 在线安装器
+
+    /// 在线安装器：名字、文件名或标识符里有完整的 install / installer / setup 一词，或中文名里有“安装”。
+    /// 按词而不是按子串匹配：Uninstaller、App Cleaner & Uninstaller、卸载工具都不算。
+    /// 误判的代价很大（导入后立即当安装器运行、不建启动器、禁止挂载磁盘映像、退出时把它新建的
+    /// 安装包当成“下载好的完整安装包”接手），而且没有界面能改回来，所以宁可漏判。
+    /// downloader 本身是一类普通软件（4K Video Downloader+、JDownloader），
+    /// 只有同时像个安装器“桩程序”（没有 Frameworks、整个包很小）时才算
     static func looksLikeInstaller(_ info: AppInfo) -> Bool {
-        let haystack = "\(info.bundleIdentifier) \(info.name) \(info.url.lastPathComponent)".lowercased()
-        return ["install", "setup", "downloader", "安装"].contains { haystack.contains($0) }
+        let texts = [info.name, info.url.deletingPathExtension().lastPathComponent]
+            + info.bundleIdentifier.split(separator: ".").map(String.init)
+        var downloader = false
+        for text in texts {
+            let words = words(in: text)
+            for (index, word) in words.enumerated() {
+                switch word {
+                case "install", "installer":
+                    // “Un Install”“Un-Installer”拆开后仍是卸载
+                    if index == 0 || words[index - 1] != "un" { return true }
+                case "setup":
+                    return true
+                case "downloader":
+                    downloader = true
+                default:
+                    // 中文没有空格，一段连续的汉字算一个词：夸克网盘安装器、微信安装助手
+                    if (word.contains("安装") || word.contains("安裝")) && !word.contains("卸载") && !word.contains("卸載") {
+                        return true
+                    }
+                }
+            }
+        }
+        return downloader && looksLikeStub(info.url)
     }
 
-    /// 偏好设置域前缀：取标识符前三段，覆盖 App、安装器和各种 helper（com.quark.clouddrive.*）
+    /// 把名字拆成小写的词：按非字母数字分隔，再在驼峰（WeChatSetup → we chat setup，
+    /// WPSInstaller → wps installer）、字母与数字、拉丁字母与汉字的交界处拆开
+    static func words(in text: String) -> [String] {
+        var words: [String] = []
+        var current: [Character] = []
+        func flush() {
+            if !current.isEmpty { words.append(String(current).lowercased()) }
+            current = []
+        }
+        func isHan(_ c: Character) -> Bool { c.unicodeScalars.first?.properties.isIdeographic == true }
+        let characters = Array(text)
+        for (index, c) in characters.enumerated() {
+            guard c.isLetter || c.isNumber else {
+                flush()
+                continue
+            }
+            if let last = current.last {
+                let next = index + 1 < characters.count ? characters[index + 1] : nil
+                if (last.isLowercase && c.isUppercase)
+                    || (last.isUppercase && c.isUppercase && next?.isLowercase == true)
+                    || last.isNumber != c.isNumber
+                    || isHan(last) != isHan(c) {
+                    flush()
+                }
+            }
+            current.append(c)
+        }
+        flush()
+        return words
+    }
+
+    /// 安装器桩程序：确实是个 App 包，没有 Frameworks 和 PlugIns，整个包不到 30 MB（只数到超过为止，大 App 不必遍历完）
+    private static func looksLikeStub(_ app: URL) -> Bool {
+        let contents = app.appending(path: "Contents")
+        guard FileManager.default.fileExists(atPath: contents.appending(path: "Info.plist").path),
+              FileOps.contents(of: contents.appending(path: "Frameworks")).isEmpty,
+              FileOps.contents(of: contents.appending(path: "PlugIns")).isEmpty else { return false }
+        let limit: Int64 = 30 << 20
+        var total: Int64 = 0
+        let enumerator = FileManager.default.enumerator(at: app, includingPropertiesForKeys: [.totalFileAllocatedSizeKey])
+        while let item = enumerator?.nextObject() as? URL {
+            total += Int64((try? item.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize ?? 0)
+            if total > limit { return false }
+        }
+        return true
+    }
+
+    // MARK: - 偏好设置域
+
+    /// 旧规则：一律取标识符前三段。com.google.Chrome.canary 会借走正式版 Chrome 的设置，
+    /// com.jetbrains.intellij.ce 会借走 Ultimate 的。新建盒子请用 preferencePrefixes(for:identifier:)
     static func preferencePrefix(for identifier: String) -> String {
         identifier.split(separator: ".").prefix(3).joined(separator: ".")
     }
+
+    /// 多个产品共用前三段标识符的厂商（com.google.Chrome / .canary / .beta、com.apple.dt.Xcode、
+    /// com.microsoft.edgemac.Beta），这些标识符不往上放宽
+    private static let sharedVendors: Set<String> = [
+        "com.apple", "com.google", "com.microsoft", "com.adobe", "org.mozilla", "com.jetbrains",
+        "com.brave", "com.operasoftware", "com.vivaldi", "org.chromium", "com.github", "com.amazon",
+    ]
+
+    /// 借出的偏好设置域前缀，每个前缀覆盖 <前缀> 和 <前缀>.*：
+    /// - App 自己的完整标识符；
+    /// - 包里的登录项、Helpers、XPC 服务、扩展、内嵌 App 各自的标识符：只收同一厂商（前两段相同）、
+    ///   不比 App 自己的更宽、也不与本机安装的其他 App 重叠的。Sparkle、Electron 这类第三方组件的
+    ///   标识符所有用它的 App 都一样，借走会把本机其他 App 的设置一起换掉；
+    /// - 标识符至少四段时放宽到前三段，覆盖同系列的安装器和 helper
+    ///   （com.quark.clouddrive.installer → com.quark.clouddrive），但前三段不能属于共用前缀的厂商，
+    ///   也不能等于、覆盖或落在本机安装的其他 App 的标识符之下。
+    /// 不足三段的标识符（com.foo）只能原样返回，借出时仍会覆盖 com.foo.*。
+    /// 会读本机「应用程序」文件夹里各 App 的 Info.plist，在后台调用
+    static func preferencePrefixes(for app: URL, identifier: String) -> [String] {
+        preferencePrefixes(for: app, identifier: identifier, installed: installedApplicationIdentifiers())
+    }
+
+    /// installed：本机安装的 App 的标识符（测试时可以指定）
+    static func preferencePrefixes(for app: URL, identifier: String, installed: Set<String>) -> [String] {
+        let own = identifier.lowercased()
+        // 同一个 App 的本机副本、以及本来就在 <标识符>.* 之下的，借出范围本来就包含，不算“其他 App”
+        let others = installed.map { $0.lowercased() }.filter { $0 != own && !$0.hasPrefix(own + ".") }
+        func overlapsOthers(_ prefix: String) -> Bool {
+            let prefix = prefix.lowercased()
+            return others.contains { $0 == prefix || $0.hasPrefix(prefix + ".") || prefix.hasPrefix($0 + ".") }
+        }
+        func vendor(_ id: String) -> String { id.lowercased().split(separator: ".").prefix(2).joined(separator: ".") }
+        func covers(_ prefix: String, _ domain: String) -> Bool { domain == prefix || domain.hasPrefix(prefix + ".") }
+
+        var main = identifier
+        let components = identifier.split(separator: ".", omittingEmptySubsequences: false)
+        if components.count >= 4, !components.contains(where: \.isEmpty), !sharedVendors.contains(vendor(identifier)) {
+            let widened = components.prefix(3).joined(separator: ".")
+            if !overlapsOthers(widened) { main = widened }
+        }
+
+        let nested = nestedBundleIdentifiers(in: app).filter { id in
+            isWellFormed(id) && id.split(separator: ".").count >= 3
+                && vendor(id) == vendor(identifier) && !sharedVendors.contains(vendor(id))
+                && !covers(id, main) && !overlapsOthers(id)
+        }
+        // 去掉被其他前缀覆盖的，保持“App 自己的在前”
+        var result: [String] = []
+        for prefix in [main] + nested where !result.contains(where: { covers($0, prefix) }) {
+            result.removeAll { covers(prefix, $0) }
+            result.append(prefix)
+        }
+        return result
+    }
+
+    private static func isWellFormed(_ id: String) -> Bool {
+        let parts = id.split(separator: ".", omittingEmptySubsequences: false)
+        return !parts.contains(where: \.isEmpty)
+            && id.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || $0 == "." || $0 == "-" || $0 == "_" }
+    }
+
+    /// 包里会以独立进程运行、有自己偏好设置域的部件：登录项、Helpers、XPC 服务、扩展、内嵌的 App，
+    /// 以及 Frameworks 里各框架自带的 Helpers / XPC 服务。往下最多三层（内嵌 App 里的登录项等）
+    static func nestedBundleIdentifiers(in app: URL) -> [String] {
+        var identifiers: [String] = []
+        let kinds: Set<String> = ["app", "appex", "xpc"]
+        func visit(_ bundle: URL, depth: Int) {
+            let contents = bundle.appending(path: "Contents")
+            var places = ["Library/LoginItems", "Helpers", "XPCServices", "PlugIns", "Frameworks", "Resources",
+                          "MacOS", "SharedSupport"].map { contents.appending(path: $0) }
+            for framework in FileOps.contents(of: contents.appending(path: "Frameworks")) where framework.pathExtension == "framework" {
+                let current = framework.appending(path: "Versions/Current")
+                places += [current, current.appending(path: "Helpers"), current.appending(path: "XPCServices"),
+                           current.appending(path: "Resources")]
+            }
+            for place in places {
+                for item in FileOps.contents(of: place) where kinds.contains(item.pathExtension.lowercased()) && !FileOps.isSymlink(item) {
+                    if let id = infoDictionary(of: item)?["CFBundleIdentifier"] as? String, !identifiers.contains(id) {
+                        identifiers.append(id)
+                    }
+                    if depth < 3 { visit(item, depth: depth + 1) }
+                }
+            }
+        }
+        visit(app, depth: 1)
+        return identifiers
+    }
+
+    /// 本机安装的 App 的标识符：/Applications、/System/Applications、~/Applications 顶层，
+    /// 以及其中普通文件夹里的一层（Utilities、厂商文件夹）。直接读 Info.plist：不经过 Bundle 缓存，也不碰 LaunchServices
+    static func installedApplicationIdentifiers(in directories: [URL]? = nil) -> Set<String> {
+        let directories = directories ?? [
+            URL(fileURLWithPath: "/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Applications", isDirectory: true),
+            FileManager.default.homeDirectoryForCurrentUser.appending(path: "Applications", directoryHint: .isDirectory),
+        ]
+        var identifiers: Set<String> = []
+        func add(_ app: URL) {
+            if let id = infoDictionary(of: app)?["CFBundleIdentifier"] as? String, !id.isEmpty { identifiers.insert(id) }
+        }
+        for directory in directories {
+            for item in FileOps.contents(of: directory) {
+                if item.pathExtension == "app" {
+                    add(item)
+                } else if (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                    FileOps.contents(of: item).filter { $0.pathExtension == "app" }.forEach(add)
+                }
+            }
+        }
+        return identifiers
+    }
+
+    // MARK: - 兼容性
 
     /// 问题的标题和说明以中文存进 box.json，英文版本见 CompatibilityIssue.english
     @concurrent
@@ -67,7 +294,7 @@ nonisolated enum AppInspector {
             !FileOps.contents(of: contents.appending(path: relative)).isEmpty
         }
 
-        if has("Library/LaunchServices") || Bundle(url: app)?.object(forInfoDictionaryKey: "SMPrivilegedExecutables") != nil {
+        if has("Library/LaunchServices") || infoDictionary(of: app)?["SMPrivilegedExecutables"] != nil {
             issues.append(.init(severity: .needsVirtualMac, title: "需要管理员权限的辅助程序",
                                 detail: "会以 root 身份在系统里安装常驻服务，本机隔离无法容纳。"))
         }
@@ -88,8 +315,7 @@ nonisolated enum AppInspector {
                                 detail: "自启动项会被阻止，只有你打开时它才运行。"))
         }
         for appex in FileOps.contents(of: contents.appending(path: "PlugIns")) where appex.pathExtension == "appex" {
-            let point = Bundle(url: appex)?.object(forInfoDictionaryKey: "NSExtension")
-                .flatMap { ($0 as? [String: Any])?["NSExtensionPointIdentifier"] as? String } ?? ""
+            let point = (infoDictionary(of: appex)?["NSExtension"] as? [String: Any])?["NSExtensionPointIdentifier"] as? String ?? ""
             if point.contains("FinderSync") || point.contains("fileprovider") {
                 issues.append(.init(severity: .limited, title: "访达集成",
                                     detail: "同步状态图标、右键菜单等访达扩展不可用。"))
