@@ -97,19 +97,27 @@ final class IsolatedSession {
     /// 主进程已退出（会话可能还在：辅助进程还在运行）
     var mainHasExited: Bool { process.hasExited }
 
-    /// 让窗口回到前台。主进程不是普通的带界面的 App 时（启动器式的主程序、在后台运行的辅助程序，
-    /// 或者已经退出、重启以生效后换了新实例），切到盒子里还在运行的普通 App；一个都没有时才切到主进程
-    func activate() {
+    /// 让窗口回到前台。返回 false 表示没有可以切过去的 App（例如主进程已退出、只剩后台程序）。
+    /// 协作式激活下，只有前台的 App 让出前台，别的 App 的激活请求才会被接受：MacBox 自己在前台时
+    /// （在 MacBox 里点的、聚焦里的启动器把 MacBox 叫到了前台）先让给它
+    @discardableResult
+    func activate() -> Bool {
+        guard let target = activationTarget() else { return false }
+        NSApp?.yieldActivation(to: target)
+        target.activate()
+        return true
+    }
+
+    /// 切到前台时切到哪个 App。主进程不是普通的带界面的 App 时（启动器式的主程序、在后台运行的辅助程序，
+    /// 或者已经退出、重启以生效后换了新实例），是盒子里还在运行的普通 App；一个都没有时才是主进程
+    func activationTarget() -> NSRunningApplication? {
         let main = process.hasExited ? nil : NSRunningApplication(processIdentifier: mainPID)
-        if let main, main.activationPolicy == .regular {
-            main.activate()
-            return
-        }
+        if let main, main.activationPolicy == .regular { return main }
         let boxRoot = boxRoot
         let regular = NSWorkspace.shared.runningApplications.first { app in
             app.activationPolicy == .regular && app.bundleURL.map { FileOps.realPath($0).hasPrefix(boxRoot) } == true
         }
-        (regular ?? main)?.activate()
+        return regular ?? main
     }
 
     /// 请求退出，像 ⌘Q 一样。只是请求：App 可能弹出“是否存储”，用户也可能点“取消”继续使用，

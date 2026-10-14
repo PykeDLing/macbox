@@ -151,6 +151,24 @@ nonisolated enum FileOps {
         if hadTarget { try? discard(old, as: target) }
     }
 
+    /// 用已经在同一目录下准备好的 staged 换掉 target：和 replace(_:withCloneOf:) 的第 2、3 步一样（target 改名为 .old、
+    /// staged 改名为 target、删除 .old），只是新内容不用再克隆一遍。用于先在旁边慢慢建好、再整体换上去的东西
+    /// （新的还原点、安装器下载后取出的 App）：克隆一份再删掉 staged，等于把整棵树多删一遍。
+    /// 两次改名之间崩溃时，recoverReplacements 把 .old 改回来，等于没换；staged 由调用方在下次开始前或启动时删除
+    static func replace(_ target: URL, withStaged staged: URL) throws {
+        try recoverReplacement(of: target)
+        let old = sibling(of: target, suffix: "old")
+        let hadTarget = exists(target)
+        do {
+            if hadTarget { try move(target, to: old) }
+            try move(staged, to: target)
+        } catch {
+            if hadTarget, !exists(target) { try? move(old, to: target) }
+            throw error
+        }
+        if hadTarget { try? discard(old, as: target) }
+    }
+
     /// 启动时收拾 replace 中途崩溃留下的残局（items 是 directory 里的名字，如 "Home"、"Prefs"）：
     /// target 缺失而「.old」还在，说明崩溃在两次改名之间，.old 是完整的原件，改回去；
     /// 其余的「.restoring」「.old」「.deleting-…」都是残留，删除。
@@ -201,7 +219,7 @@ nonisolated enum FileOps {
     }
 
     /// 按 lstat 判断：悬空的符号链接也算存在
-    private static func exists(_ url: URL) -> Bool {
+    static func exists(_ url: URL) -> Bool {
         var info = stat()
         return lstat(fileSystemPath(url), &info) == 0
     }
