@@ -1,0 +1,63 @@
+name: Deploy website to GitHub Pages
+
+# 网站源码在 website/；App 版本号取自 Resources/Info.plist，改了也要重新部署
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'Resources/Info.plist'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
+        with:
+          working-directory: website
+          require-lockfile: true
+      - run: pnpm format:check
+      - name: Read Pages configuration
+        id: pages
+        uses: actions/configure-pages@v6
+      - name: Build and verify
+        env:
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          SITE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          pnpm build
+          pnpm test
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: website/dist/client
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

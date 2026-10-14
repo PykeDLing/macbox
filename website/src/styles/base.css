@@ -1,0 +1,195 @@
+/* 配色、尺寸、元素默认样式和排版规则。深色模式跟随系统 */
+:root {
+  color-scheme: light dark;
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --surface-2: #fbfbfd;
+  --ink: #1d1d1f;
+  --ink-2: #6e6e73;
+  --ink-3: #86868b;
+  --line: rgba(0, 0, 0, 0.08);
+  --accent: #0071e3;
+  --accent-ink: #ffffff;
+  /* 按钮、徽章的填充色两种模式都用深一点的蓝，白字才够对比度 */
+  --accent-fill: #0071e3;
+  --link: #0066cc;
+  --red: #ff5f57;
+  --yellow: #febc2e;
+  --green: #28c840;
+  /* “运行中”这类小字用的绿，浅色背景上要深一点才看得清 */
+  --run: #1f9d3a;
+  /* 示意窗口里控件的底色：叠在面板上，两种模式下都比面板深一点 / 亮一点 */
+  --fill: rgba(0, 0, 0, 0.055);
+  --fill-2: rgba(0, 0, 0, 0.14);
+  --warn: #c56a00;
+  --danger: #d70015;
+  --seg-on: #ffffff;
+  --glow: rgba(0, 113, 227, 0.2);
+  --metal-1: #f2f2f4;
+  --metal-2: #d9dadf;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 40px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.05), 0 40px 100px rgba(0, 0, 0, 0.14);
+  --code-bg: #f0f0f3;
+  --radius: 22px;
+  --gutter: 22px;
+  --max: 1080px;
+  --nav-h: 52px;
+  --sec-pad: 120px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --surface: #161617;
+    --surface-2: #1d1d1f;
+    --ink: #f5f5f7;
+    --ink-2: #a1a1a6;
+    --ink-3: #86868b;
+    --line: rgba(255, 255, 255, 0.1);
+    --accent: #0a84ff;
+    --link: #2997ff;
+    --run: #30d158;
+    --fill: rgba(255, 255, 255, 0.08);
+    --fill-2: rgba(255, 255, 255, 0.2);
+    --warn: #ff9f0a;
+    --danger: #ff453a;
+    --seg-on: #5a5a5e;
+    --glow: rgba(10, 132, 255, 0.38);
+    --metal-1: #2c2c2e;
+    --metal-2: #1c1c1e;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 40px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.5), 0 40px 100px rgba(0, 0, 0, 0.7);
+    --code-bg: #1d1d1f;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font:
+    17px/1.6 -apple-system,
+    BlinkMacSystemFont,
+    'SF Pro Text',
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Helvetica Neue',
+    'Microsoft YaHei',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+/* 断行：标题两行尽量等长，正文避免最后一行只剩一个字 */
+h1,
+h2,
+h3,
+.verdict,
+.lede,
+.center .intro,
+.alert b {
+  text-wrap: balance;
+}
+p,
+li,
+dd {
+  text-wrap: pretty;
+}
+/* 中文标题只在标点和空格处断行，不把一个词拆到两行；实在放不下再随处断 */
+html:lang(zh) :is(h1, h2, h3, .verdict, .lede, .center .intro) {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+/* 中文全角标点的字形只占左半边，右边是空白。居中的文字遇到行尾标点会整体看着偏左，
+   所以确定落在行尾的标点收掉这块空白（约 0.6 个字宽，按苹方实测） */
+.pe {
+  margin-right: -0.6em;
+}
+.ln {
+  display: block;
+}
+/* 中文导语两句话各占一行（宽屏时），窄了再在标点处折行 */
+html:lang(zh) .lede {
+  max-width: 37.5em;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+a:not(.btn):focus-visible {
+  border-radius: 4px;
+}
+code,
+pre {
+  font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.86em;
+}
+:not(pre) > code {
+  background: var(--code-bg);
+  padding: 0.12em 0.4em;
+  border-radius: 6px;
+}
+.wrap {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+.dots {
+  display: inline-flex;
+  gap: 7px;
+}
+.dots i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: block;
+}
+.dots i:nth-child(1) {
+  background: var(--red);
+}
+.dots i:nth-child(2) {
+  background: var(--yellow);
+}
+.dots i:nth-child(3) {
+  background: var(--green);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.skip {
+  position: absolute;
+  left: 12px;
+  top: -60px;
+  z-index: 20;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font-size: 14px;
+}
+.skip:focus {
+  top: 10px;
+}
