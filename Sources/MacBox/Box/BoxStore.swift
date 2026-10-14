@@ -264,7 +264,7 @@ final class BoxStore {
             show(.virtualMac)
             return
         }
-        vm.sendToGuest([box.paths.source(box.config) ?? box.appURL])
+        await vm.sendToGuest([box.paths.source(box.config) ?? box.appURL])
         windowRequest = WindowRequest(window: .virtualMac)
         if vm.status == .stopped { await vm.start() }
     }
