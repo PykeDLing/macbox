@@ -72,6 +72,52 @@ struct ChildProcessTests {
         #expect(await child.waitForExit() == 128 + SIGTERM)
     }
 
+    @Test("组长退出后，发给进程组的信号仍能到达组里留下的进程")
+    func signalReachesGroupAfterLeaderExit() async throws {
+        var options = ChildProcess.Options()
+        options.newProcessGroup = true
+        options.output = .pipe
+        let leader = try ChildProcess.spawn("/bin/sh", ["-c", "/bin/sleep 30 >/dev/null 2>&1 & echo $!"], options: options)
+        var lines = leader.standardOutput.lines().makeAsyncIterator()
+        let member = try #require(await lines.next().flatMap { pid_t($0) })
+        _ = await leader.waitForExit()
+        #expect(isRunning(member))
+
+        leader.signal(SIGKILL)
+        #expect(await eventually { !isRunning(member) }, "组长已退出，组里的进程没收到信号")
+        if isRunning(member) { kill(member, SIGKILL) }
+    }
+
+    /// 内核在子进程变成僵尸之前就发出退出事件，那一刻的 WNOHANG 回收会落空，而退出事件只有一次。
+    /// 并发大量启动时才容易碰上（修复前约一半的运行会留下回收不了的僵尸进程，等它的地方永远等下去）
+    @Test("并发大量启动的短命进程都能等到退出", .timeLimit(.minutes(2)))
+    func reapUnderConcurrency() async throws {
+        let width = 64, perWorker = 100
+        let missed = await withTaskGroup(of: [pid_t].self) { group in
+            for worker in 0..<width {
+                group.addTask {
+                    var missed: [pid_t] = []
+                    for index in 0..<perWorker {
+                        var options = ChildProcess.Options()
+                        if (worker + index) % 2 == 0 {
+                            options.output = .pipe
+                            options.error = .pipe
+                        }
+                        guard let child = try? ChildProcess.spawn("/usr/bin/true", [], options: options) else { continue }
+                        let deadline = ContinuousClock.now + .seconds(3)
+                        while !child.hasExited, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(2)) }
+                        if !child.hasExited { missed.append(child.pid) }
+                    }
+                    return missed
+                }
+            }
+            var all: [pid_t] = []
+            for await missed in group { all += missed }
+            return all
+        }
+        #expect(missed.isEmpty, "没有回收的进程：\(missed)")
+    }
+
     @Test("任务取消时结束子进程")
     func cancellation() async throws {
         let task = Task { try await Shell.execute("/bin/sleep", ["10"]) }

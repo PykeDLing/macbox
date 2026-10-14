@@ -1,22 +1,40 @@
 import Foundation
 
 /// 生成本机隔离用的 Seatbelt 规则：
-/// - 写：默认全部禁止，只放行盒子目录和系统临时目录（可选放行「下载」）
-/// - 读：挡住其他 App 的数据、邮件信息、密钥等私人目录
+/// - 写：默认全部禁止，只放行盒子的主目录、临时目录、App 目录和系统临时目录（可选放行「下载」）
+/// - 读：挡住其他 App 的数据、邮件信息、密钥等私人目录，以及盒子里 MacBox 自己的记录
 /// - 系统服务：禁止注册登录项/后台服务、发送通知、用 Apple 事件遥控其他 App
+///
+/// Seatbelt 按规则先后匹配，后面的规则覆盖前面的（同一个操作名之间）
 nonisolated enum SandboxProfile {
     static func make(box: BoxPaths, config: BoxConfig) -> String {
         let boxRoot = FileOps.realPath(box.url)
         let home = FileOps.realPath(AppPaths.realHome)
 
-        var writable = [boxRoot, "/private/var/folders", "/private/tmp", "/dev"]
-        if config.shareDownloads { writable.append("\(home)/Downloads") }
+        var systemWritable = ["/private/var/folders", "/private/tmp", "/dev"]
+        if config.shareDownloads { systemWritable.append("\(home)/Downloads") }
+        // 盒子里只有这几处可写。盒子根目录下其余的是 MacBox 自己的记录：偏好设置借出的日志和本机设置的备份（Prefs）、
+        // box.json、钥匙串密码、还原点。App 改了它们，MacBox 收尾时会照着改过的内容替它删改沙盒外的文件
+        // （都是盒子目录的直接子项，在真实路径后面拼名字；它们可能还不存在，不能逐个解析）
+        func inBox(_ url: URL) -> String { boxRoot + "/" + url.lastPathComponent }
+        let boxWritable = [box.home, box.tmp, box.appDirectory].map(inBox)
+        // 可写的只是这几个文件夹里面，文件夹本身不能删、不能改名、不能换成符号链接：
+        // subpath 也包括它自己，App 可以清空 App 文件夹后 rmdir，再在原处放一个指向 /Applications 的链接，
+        // MacBox 在沙盒外上锁、解锁、找安装包、准备主目录时就会顺着链接改到别处（去掉你自己装的同名 App 的执行权限、
+        // 把你真实的「下载」移走）。主目录里的 Library、Library/Keychains 同理：MacBox 每次启动前会在里面
+        // 替换 login.keychain-db，顺着链接替换的会是你自己的「登录」钥匙串
+        let boxSkeleton = boxWritable + ["Library", "Library/Keychains"].map { inBox(box.home) + "/" + $0 }
+        // 盒子里 App 不该看到的：本机原来的偏好设置备份（登录状态、设备 ID）、钥匙串密码、还原点
+        let boxPrivate = [box.prefs, box.restorePoint].map { "(subpath \(quote(inBox($0))))" }
+            + ["(literal \(quote(inBox(box.keychainPassword))))"]
 
         let privateReads = [
             "Library/Application Support", "Library/Containers", "Library/Group Containers",
             "Library/Mail", "Library/Messages", "Library/Safari", "Library/Cookies", "Library/Keychains",
             "Library/Mobile Documents", "Library/Accounts", "Library/Calendars", "Library/Biome",
-            "Library/HTTPStorages", ".ssh", ".gnupg", ".aws", ".kube",
+            "Library/HTTPStorages", "Library/WebKit", "Library/Caches", "Library/Saved Application State",
+            ".ssh", ".gnupg", ".aws", ".kube", ".config", ".netrc", ".git-credentials", ".docker", ".npmrc",
+            ".codex", ".claude", ".zsh_history", ".bash_history",
         ].map { "\(home)/\($0)" }
 
         let blockedServices = [
@@ -30,7 +48,13 @@ nonisolated enum SandboxProfile {
 
         (deny file-write*)
         (allow file-write*
-        \(writable.map { "  (subpath \(quote($0)))" }.joined(separator: "\n")))
+        \(systemWritable.map { "  (subpath \(quote($0)))" }.joined(separator: "\n")))
+        ; 盒子可能就在系统临时目录下（测试时），先整个挡住再放行，不依赖盒子的位置
+        (deny file-write* (subpath \(quote(boxRoot))))
+        (allow file-write*
+        \(boxWritable.map { "  (subpath \(quote($0)))" }.joined(separator: "\n")))
+        (deny file-write*
+        \(boxSkeleton.map { "  (literal \(quote($0)))" }.joined(separator: "\n")))
 
         ; 只挡内容读取（file-read-data），不挡元数据：App 启动时要逐级解析自身路径
         (deny file-read-data
@@ -38,6 +62,8 @@ nonisolated enum SandboxProfile {
         ; 盒子本身也在 Application Support 下，必须重新放行。
         ; 要用与拒绝规则相同的操作名：通配的 file-read* 压不过具体的 file-read-data
         (allow file-read-data (subpath \(quote(boxRoot))))
+        (deny file-read-data
+        \(boxPrivate.map { "  \($0)" }.joined(separator: "\n")))
 
         (deny appleevent-send)
         (deny mach-lookup

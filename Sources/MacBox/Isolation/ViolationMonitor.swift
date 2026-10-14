@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// 被拦截的一次行为（来自系统日志里的沙盒拒绝记录）
 nonisolated struct BlockEvent: Identifiable, Hashable, Sendable {
@@ -32,6 +33,19 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Sendable {
     var id: String { "\(kind.rawValue)|\(target)" }
 }
 
+/// 会话主进程的 pid：订阅拦截记录（见 ViolationMonitor.events）要在启动 App 之前，启动后再填上
+nonisolated final class SessionPID: Sendable {
+    private let value = Mutex<pid_t?>(nil)
+
+    init() {}
+
+    func set(_ pid: pid_t) {
+        value.withLock { $0 = pid }
+    }
+
+    var pid: pid_t? { value.withLock { $0 } }
+}
+
 /// 系统日志里的沙盒拒绝记录。
 ///
 /// 整个 MacBox 只开一个 `log stream`：第一个订阅者到来时启动，最后一个离开时结束，
@@ -42,11 +56,14 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Sendable {
 nonisolated enum ViolationMonitor {
     /// 本盒子进程的拦截记录；停止迭代（任务取消）时退订。
     /// 返回前等日志流真正开始输出（最多 3 秒），App 启动时的拦截不会因为日志进程还没就绪而漏掉
+    /// - processNames：盒子里各个可执行文件的名字，只用来认已经退出的进程
     /// - installer：盒子里是在线安装器（它的规则禁止挂载磁盘映像，见 SandboxProfile）
-    static func events(boxPrefix: String, processNames: Set<String>, installer: Bool = false) async -> AsyncStream<BlockEvent> {
+    /// - session：会话主进程。订阅要在启动 App 之前，所以先给一个空的，启动后再填上
+    static func events(boxPrefix: String, processNames: Set<String>, installer: Bool = false,
+                       session: SessionPID) async -> AsyncStream<BlockEvent> {
         let (stream, continuation) = AsyncStream.makeStream(of: BlockEvent.self)
         let parser = Parser(boxPrefix: boxPrefix, processNames: processNames, installer: installer,
-                            home: FileOps.realPath(AppPaths.realHome))
+                            home: FileOps.realPath(AppPaths.realHome), session: session)
         let id = UUID()
         continuation.onTermination = { _ in Task { await hub.unsubscribe(id) } }
         await hub.subscribe(id, parser: parser, continuation: continuation)
@@ -157,11 +174,12 @@ nonisolated enum ViolationMonitor {
         }
     }
 
-    private struct Parser: Sendable {
+    struct Parser: Sendable {
         let boxPrefix: String
         let processNames: Set<String>
         let installer: Bool
         let home: String
+        let session: SessionPID
 
         /// 一行日志解析出的拒绝记录
         struct Message: Sendable {
@@ -187,10 +205,50 @@ nonisolated enum ViolationMonitor {
             // “挂载磁盘映像”，正在运行的安装器还会被误判为下载完成、被提前结束
             let mountByHelper = installer && (name == "hdiutil" || name.hasPrefix("diskimages"))
                 && target.contains("DiskArbitration")
-            let belongs = processNames.contains { ViolationMonitor.loggedName(name, matches: $0) }
-                || ProcessTable.path(of: message.pid)?.hasPrefix(boxPrefix) == true || mountByHelper
-            guard belongs else { return nil }
+            guard mountByHelper || Self.belongs(Identity.of(message.pid), main: session.pid, boxPrefix: boxPrefix,
+                                                loggedName: name, processNames: processNames) else { return nil }
             return categorize(operation: message.operation, target: target)
+        }
+
+        /// 判断归属要用的进程信息。取信息（读进程表、问守卫）和判断分开，判断是纯函数，便于测试
+        struct Identity: Sendable {
+            /// 可执行文件路径；nil 表示进程已经退出
+            var path: String?
+            var parent: pid_t?
+            var group: pid_t?
+            /// 负责进程。只记下、不作为依据（见 belongs）
+            var responsible: pid_t?
+            /// 守卫记下的归属：继承了盒子沙盒规则的成员所属的会话主进程（见 EscapeGuard.session(of:)）
+            var guardSession: pid_t?
+
+            static func of(_ pid: pid_t) -> Identity {
+                let lineage = ProcessTable.lineage(of: pid)
+                return Identity(path: ProcessTable.path(of: pid), parent: lineage?.parent, group: lineage?.group,
+                                responsible: ProcessTable.responsiblePID(of: pid),
+                                guardSession: EscapeGuard.shared.session(of: pid))
+            }
+        }
+
+        /// 这条记录是不是本盒子的进程报告的。按进程身份认，名字只用来认已经退出的进程：
+        /// 本机同时开着同名的 App（盒子里第二个微信账号、本机的微信）、名字很普通的辅助程序
+        /// （Sparkle 的 Installer、Updater），按名字认会把别人的拦截算到盒子头上；
+        /// 反过来，盒子里的 App 调用的系统工具（cp、launchctl、defaults）名字不在盒子里，按名字认不出来。
+        ///
+        /// 只认继承了盒子沙盒规则的进程：位于盒子里的、守卫记下的会话成员、在会话进程组里的、父进程是会话主进程的。
+        /// 不看负责进程：系统代 App 启动的 XPC 服务（WebKit 的 WebContent、GPU、Networking）负责进程也是 App，
+        /// 但它们由 launchd 启动、带的是自己的沙盒，报告的拒绝不是盒子的规则挡的
+        /// （每个 WebContent 启动时都会被拒绝读取 /dev/dtracehelper，算进来就成了“读取私人数据”）
+        static func belongs(_ identity: Identity, main: pid_t?, boxPrefix: String,
+                            loggedName: String, processNames: Set<String>) -> Bool {
+            if let main, identity.guardSession == main { return true } // 守卫第一次看到它时就确认过归属
+            guard let path = identity.path else {
+                // 已经退出：只能看名字
+                return processNames.contains { ViolationMonitor.loggedName(loggedName, matches: $0) }
+            }
+            if path.hasPrefix(boxPrefix) { return true }
+            guard let main else { return false }
+            // 在会话的进程组里（主进程退出后留下的进程派生的也在），或者是会话主进程直接派生、离开了进程组的
+            return identity.group == main || identity.parent == main
         }
 
         private func categorize(operation: String, target: String) -> BlockEvent? {
