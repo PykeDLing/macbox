@@ -22,6 +22,7 @@ import desktopFill from '@phosphor-icons/core/fill/desktop-fill.svg?raw';
 import doneFill from '@phosphor-icons/core/fill/check-circle-fill.svg?raw';
 import downloadFill from '@phosphor-icons/core/fill/download-simple-fill.svg?raw';
 import eyeFill from '@phosphor-icons/core/fill/eye-fill.svg?raw';
+import eyeSlashFill from '@phosphor-icons/core/fill/eye-slash-fill.svg?raw';
 import githubFill from '@phosphor-icons/core/fill/github-logo-fill.svg?raw';
 import handFill from '@phosphor-icons/core/fill/hand-fill.svg?raw';
 import houseFill from '@phosphor-icons/core/fill/house-fill.svg?raw';
@@ -75,6 +76,7 @@ export const icons = {
   key: keyFill,
   swap: swapFill,
   hand: handFill,
+  eyeSlash: eyeSlashFill,
   shield: shieldFill,
   restore: restoreFill,
   eye: eyeFill,

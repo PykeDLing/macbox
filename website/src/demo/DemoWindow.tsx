@@ -502,8 +502,8 @@ const facts: readonly (readonly [string, string, string])[] = [
   ],
   [
     icons.shield,
-    '运行时守卫：盒子里的程序一旦在沙盒外被启动，立即结束',
-    'Runtime guard: any program from a box launched outside the sandbox is ended immediately',
+    '运行时守卫：MacBox 打开期间，盒子里的程序一旦在沙盒外被启动，立即结束',
+    'Runtime guard: while MacBox is open, any program from a box launched outside the sandbox is ended immediately',
   ],
 ];
 

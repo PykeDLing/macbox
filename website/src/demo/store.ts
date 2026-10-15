@@ -156,9 +156,10 @@ export function createDemo(state: DemoState = initialState()): DemoStore {
       spare: [{ ...app, removing: false, blocks: [], restore: null }, ...s.spare],
       selected: next ? next.id : null,
     }));
+    // 和 App 的删除确认一致：默认共享「下载」，存进那里的文件不在盒子里
     toast('trash', [
-      `「${app.name[0]}」和它的全部数据已移到废纸篓。`,
-      `“${app.name[1]}” and all its data were moved to the Trash.`,
+      `「${app.name[0]}」和它的全部数据已移到废纸篓。它存进「下载」的文件会保留。`,
+      `“${app.name[1]}” and all its data were moved to the Trash. Files it saved to Downloads stay.`,
     ]);
   };
 

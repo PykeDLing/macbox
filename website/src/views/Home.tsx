@@ -86,10 +86,30 @@ const features: readonly {
     icon: icons.hand,
     tint: 'g5',
     wide: true,
-    title: ['沙盒挡住乱写、乱读', 'A sandbox against stray writes and reads'],
+    title: ['沙盒挡住乱写', 'A sandbox against stray writes'],
     text: [
-      '写入默认全部禁止，只放行盒子和系统临时目录（可选放行「下载」）。读不到邮件、信息、Safari、其他 App 的 Application Support 和容器、SSH 密钥；不能注册开机自启和后台服务、发通知、遥控其他 App。子进程自动继承。',
-      'Writes are denied except to the box and system temp folders (and optionally Downloads). No reading Mail, Messages, Safari, other apps’ Application Support and containers, or SSH keys; no login items, background services, notifications or controlling other apps. Child processes inherit it all.',
+      '写入默认全部禁止，只放行盒子里 App 的主目录、App 本身和临时目录；「下载」默认共享，可以在详情面板里按应用关闭。盒子里 MacBox 自己的记录（偏好设置的借出日志和本机设置备份、钥匙串密码、还原点），App 读不到也改不了。不能注册开机自启和后台服务、发通知、遥控其他 App。子进程自动继承。',
+      'Writes are denied except to the app’s home folder in the box, the app itself and temp folders. Downloads is shared by default, and you can turn that off for each app in the details panel. MacBox’s own records in the box — the preferences journal and the backup of your settings, the keychain password, restore points — can’t be read or changed by the app. No login items, background services, notifications or controlling other apps. Child processes inherit it all.',
+    ],
+  },
+  {
+    icon: icons.eyeSlash,
+    tint: 'g1',
+    wide: true,
+    title: ['也挡住乱读', 'And against stray reads'],
+    // 字符串里的 \u2060 让路径不在连字符处折行
+    text: [
+      '读不到邮件、信息、Safari、Cookie、iCloud 云盘，其他 App 的 Application Support、容器、缓存和 WebKit 网站数据，SSH、GPG、AWS、Kubernetes 的密钥，以及 ~/.config、~/.netrc、~/.git-\u2060credentials、~/.docker 等处命令行工具的凭证。别处照常读得到，例如文稿、桌面。',
+      'No reading Mail, Messages, Safari, cookies or iCloud Drive; other apps’ Application Support, containers, caches or WebKit website data; SSH, GPG, AWS or Kubernetes keys; or command-line credentials in ~/.config, ~/.netrc, ~/.git-\u2060credentials, ~/.docker and the like. Everything else, such as Documents and Desktop, can still be read.',
+    ],
+  },
+  {
+    icon: icons.eye,
+    tint: 'g3',
+    title: ['拦截记录', 'See what was blocked'],
+    text: [
+      '详情面板里列出本次运行被挡下的行为：自启、后台服务、读取私人数据……',
+      'The details panel lists what was stopped this session: login items, background services, private data reads…',
     ],
   },
   {
@@ -97,27 +117,28 @@ const features: readonly {
     tint: 'g2',
     title: ['运行时守卫', 'Runtime guard'],
     text: [
-      '每 50 毫秒检查一次新进程。盒子里的程序一旦在沙盒外被启动，立即结束。',
-      'Checks new processes every 50 ms. Anything from a box that starts outside the sandbox is stopped at once.',
+      'MacBox 打开期间，每 50 毫秒检查一次新进程。盒子里的程序一旦在沙盒外被启动，立即结束。',
+      'While MacBox is open, it checks new processes every 50 ms. Anything from a box that starts outside the sandbox is stopped at once.',
+    ],
+  },
+  {
+    icon: icons.lock,
+    tint: 'g4',
+    wide: true,
+    title: ['App 平时上锁', 'Locked outside MacBox'],
+    text: [
+      '不在 MacBox 里运行时，盒子里 App 的程序没有执行权限：即使 MacBox 没开，从程序坞、登录时自动重新打开、点链接或双击文档都启动不了它。MacBox 还会撤销系统对它（连同包里的辅助程序）的登记。',
+      'When an app isn’t running in MacBox, its executables have no execute permission. Even with MacBox closed, it can’t be started from the Dock, by reopening at login, from a link or by double-clicking a document. MacBox also removes the system’s registration of the app and the helpers inside it.',
     ],
   },
   {
     icon: icons.restore,
     tint: 'g1',
+    wide: true,
     title: ['还原点', 'Restore points'],
     text: [
-      'APFS 克隆，几乎不占空间。一键回到之前的状态，或设为每次退出自动还原。',
-      'APFS clones that take almost no space. Roll back in one click, or restore automatically every time you quit.',
-    ],
-  },
-  {
-    icon: icons.eye,
-    tint: 'g3',
-    wide: true,
-    title: ['拦截记录', 'See what was blocked'],
-    text: [
-      '详情面板里列出本次运行被挡下的行为：自启、后台服务、读取私人数据……',
-      'The details panel lists what was stopped this session: login items, background services, private data reads…',
+      'APFS 克隆，几乎不占空间，连同钥匙串一起保存。一键回到之前的状态，或设为每次退出自动还原；不需要了可以删除。',
+      'APFS clones that take almost no space, keychain included. Roll back in one click, restore automatically every time you quit, or delete one you no longer need.',
     ],
   },
   {
@@ -258,11 +279,14 @@ export default function Home({ locale }: { locale: Locale }) {
                   像普通 App 一样打开，有自己的窗口，待在程序坞里<Pe>。</Pe>
                 </Ln>
                 <Ln>
-                  但它写下的文件、设置和钥匙串会留在盒子里{'⁠'}——删掉盒子，你的 Mac 干干净净
+                  但它的数据、设置和钥匙串
+                  {/* 手机上从这里折行，第一行不只剩“但它的数据、” */}
+                  <wbr />
+                  留在盒子里{'⁠'}——删掉盒子，不在你的 Mac 上乱留东西
                   <Pe>。</Pe>
                 </Ln>
               </>,
-              'They open like any other app, with their own windows and a place in the Dock. But the files, settings and keychain items they write stay in the box. Delete the box and your Mac is clean.',
+              'They open like any other app, with their own windows and a place in the Dock. But their data, settings and keychain items stay in the box. Delete the box, and they leave no mess on your Mac.',
             )}
           </p>
           <div className="cta">
@@ -372,8 +396,8 @@ export default function Home({ locale }: { locale: Locale }) {
                 <h3>{t('照常打开', 'Use it normally')}</h3>
                 <p>
                   {t(
-                    '在 MacBox 里双击，或者从聚焦打开。它有自己的窗口和程序坞图标，用起来和普通 App 没有区别，性能也几乎没有损失。',
-                    'Double-click it in MacBox, or open it from Spotlight. It gets its own windows and Dock icon, and runs at essentially native speed.',
+                    '在 MacBox 里双击，或者从聚焦打开。它有自己的窗口和程序坞图标，用起来和普通 App 没有区别，性能也几乎没有损失。MacBox 里的「退出」和 ⌘Q 一样只是请它退出，不会到时间就强制结束、丢掉没存的内容。',
+                    'Double-click it in MacBox, or open it from Spotlight. It gets its own windows and Dock icon, and runs at essentially native speed. Quit in MacBox works like ⌘Q: it asks the app to quit rather than force-quitting it after a timeout, so unsaved work isn’t lost.',
                   )}
                 </p>
               </div>
@@ -381,8 +405,8 @@ export default function Home({ locale }: { locale: Locale }) {
                 <h3>{t('删掉就干净', 'Delete it, clean')}</h3>
                 <p>
                   {t(
-                    '删除盒子，应用连同它的全部数据一起移到废纸篓。它的设置和数据不会留在系统里（系统临时目录除外），后悔了也能从废纸篓找回。',
-                    'Delete the box and the app goes to the Trash together with all of its data. Nothing else is left behind (apart from system temp files) — and you can still put it back.',
+                    '删除盒子，应用连同它的全部数据一起移到废纸篓，后悔了也能找回。「下载」默认共享，它存进那里的文件会保留；系统临时目录里的文件和少数收不进盒子的偏好设置也会留下。',
+                    'Delete the box and the app goes to the Trash together with all of its data — and you can still put it back. Downloads is shared by default, so files it saved there stay, as do system temp files and a few preferences that can’t be kept in the box.',
                   )}
                 </p>
               </div>
@@ -489,8 +513,8 @@ export default function Home({ locale }: { locale: Locale }) {
             </div>
             <p className="note reveal">
               {t(
-                '虚拟 Mac 不会默认安装。添加应用时检查到它需要驱动或系统扩展，或者运行时它被挡住了写系统目录、安装系统服务，MacBox 会建议你改用虚拟 Mac。随时可以在详情面板里切换。',
-                'The Virtual Mac isn’t installed by default. If an app turns out to need a driver or system extension — at import or while running — MacBox suggests switching, and you can change runtimes any time in the details panel.',
+                '虚拟 Mac 不会默认安装。添加应用时检查到它需要驱动或系统扩展，或者运行时它被挡住了写系统目录、安装系统服务，MacBox 会建议你改用虚拟 Mac。安装包里只有驱动这类系统组件、没有 App 的，MacBox 会提出把它放进虚拟 Mac 安装。随时可以在详情面板里切换。',
+                'The Virtual Mac isn’t installed by default. If an app turns out to need a driver or system extension — at import or while running — MacBox suggests switching. For an installer with only drivers or other system components and no app, MacBox offers to install it in the Virtual Mac. You can change runtimes any time in the details panel.',
               )}
             </p>
           </div>
@@ -516,6 +540,29 @@ export default function Home({ locale }: { locale: Locale }) {
                 {t(
                   '：开机自启、通知、访达扩展、需要驱动的功能。',
                   ': launch at login, notifications, Finder extensions and anything that needs a driver.',
+                )}
+              </li>
+              <li>
+                <strong>{t('MacBox 没开时没有守卫', 'No guard while MacBox is closed')}</strong>
+                {t(
+                  '：这时只靠「App 平时上锁」挡住直接打开。MacBox 在应用运行时异常退出的话，这个应用要等下次打开 MacBox 才重新上锁。',
+                  ': then only “Locked outside MacBox” keeps box apps from being opened directly. If MacBox quits unexpectedly while an app is running, that app stays unlocked until you next open MacBox.',
+                )}
+              </li>
+              <li>
+                <strong>{t('两份不能同时运行', 'Two copies can’t run at once')}</strong>
+                {t(
+                  '：同一个应用的两份（两个盒子，或者盒子和直接装在 Mac 上的那份）共用一组偏好设置。MacBox 会拒绝同时打开，并告诉你先退出哪一个；但盒子运行期间再去打开本机那份，它拦不住，请避免。',
+                  ': two copies of the same app (in two boxes, or in a box and installed directly on your Mac) share one set of preferences. MacBox won’t open both, and tells you which one to quit first — but it can’t stop you from opening the copy on your Mac while the box is running, so please don’t.',
+                )}
+              </li>
+              <li>
+                <strong>
+                  {t('有些偏好设置不进盒子', 'Some preferences stay outside the box')}
+                </strong>
+                {t(
+                  '：MacBox 按 bundle ID 认定哪些偏好设置属于这个 App。认定范围以外的（厂商的更新程序、第三方 SDK、App Group 共享设置等）和“仅限本机”的 ByHost 设置，会直接写进你真实的 ~/Library/Preferences，删除盒子后仍然留着。',
+                  ': MacBox decides which preferences belong to an app by its bundle ID. Anything outside that (a vendor’s updater, third-party SDKs, App Group shared settings and so on) and this-Mac-only ByHost settings are written straight to your real ~/Library/Preferences and stay after you delete the box.',
                 )}
               </li>
               <li>
@@ -634,6 +681,25 @@ export default function Home({ locale }: { locale: Locale }) {
                     )}
                   </li>
                 </ol>
+                <p className="upgrade">
+                  {t(
+                    <>
+                      <strong>从旧版升级</strong>
+                      ：退出 MacBox，用新版替换「应用程序」里的
+                      MacBox，盒子和数据都会保留。新版同样要按第 2 步确认一次。从 0.3.0
+                      之前的版本升级时，新版第一次打开会给盒子里的 App 上锁：程序坞里固定的盒子 App
+                      图标从此不能直接打开，请从 MacBox 或聚焦里的启动器打开。
+                    </>,
+                    <>
+                      <strong>Upgrading</strong>: quit MacBox and replace it in Applications with
+                      the new version; your boxes and their data are kept. The new version needs to
+                      be approved once, as in step 2. When you upgrade from a version before 0.3.0,
+                      the first launch locks the apps in your boxes: Dock icons pinned for box apps
+                      no longer open them directly, so open them from MacBox or their Spotlight
+                      launcher.
+                    </>,
+                  )}
+                </p>
               </div>
             </div>
           </div>

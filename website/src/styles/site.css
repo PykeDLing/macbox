@@ -555,6 +555,16 @@ h2 {
 .install li strong {
   color: var(--ink);
 }
+.upgrade {
+  margin: 24px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: 15px;
+}
+.upgrade strong {
+  color: var(--ink);
+}
 .req {
   display: flex;
   flex-wrap: wrap;
