@@ -13,8 +13,8 @@ export function homeHead(locale: Locale) {
   const t = translate(locale);
   const url = absoluteUrl(homePath(locale));
   const description = t(
-    'MacBox 让不放心的 Mac 软件在隔离的盒子里运行：照常使用，它写下的文件、设置和钥匙串都留在盒子里。免费开源。',
-    'MacBox runs the Mac apps you’re wary of in an isolated box: use them as usual while their files, settings and keychain items stay in the box. Free and open source.',
+    'MacBox 让不放心的 Mac 软件在隔离的盒子里运行：照常使用，它的数据、设置和钥匙串留在盒子里。免费开源。',
+    'MacBox runs the Mac apps you’re wary of in an isolated box: use them as usual while their data, settings and keychain items stay in the box. Free and open source.',
   );
   return {
     meta: [
@@ -24,8 +24,8 @@ export function homeHead(locale: Locale) {
       {
         property: 'og:description',
         content: t(
-          '把不放心的 Mac 软件装进盒子里：照常使用，删掉就干干净净。',
-          'Run the Mac apps you don’t trust inside a box. Delete the box and your Mac is clean.',
+          '把不放心的 Mac 软件装进盒子里：照常使用，删掉盒子也不在你的 Mac 上乱留东西。',
+          'Run the Mac apps you don’t trust inside a box. Delete the box, and they leave no mess on your Mac.',
         ),
       },
       { property: 'og:url', content: url },
