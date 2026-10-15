@@ -687,6 +687,8 @@ button.danger:not(:disabled):hover {
   left: calc(50% - 25px);
   bottom: 16px;
   transform: translateX(-50%);
+  /* 宽度按文字算：不写的话可用宽度只到 left 右边那一截，窄屏上（left: 50%）只有半个窗口宽 */
+  width: max-content;
   max-width: min(360px, 86%);
   display: flex;
   align-items: center;
@@ -700,6 +702,12 @@ button.danger:not(:disabled):hover {
   box-shadow: var(--shadow);
   pointer-events: none;
   animation: toast 0.3s ease;
+}
+/* 中文提示只在标点处折行，不把「下载」这样的词拆到两行；两行尽量等长，通常就在句号处分开 */
+html:lang(zh) .toast {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 .toast svg {
   width: 13px;
