@@ -34,7 +34,7 @@ struct SessionTests {
     func start(_ paths: BoxPaths, _ config: BoxConfig) -> (Holder, Task<IsolatedSession.Outcome, Error>) {
         let holder = Holder()
         let task = Task {
-            try await IsolatedSession.run(paths: paths, config: config, onStart: { holder.session = $0 }, onBlock: { _ in })
+            try await IsolatedSession.run(paths: paths, config: config, onStart: { holder.session = $0 }, onActivity: { _ in })
         }
         return (holder, task)
     }
@@ -160,7 +160,7 @@ struct SessionTests {
         }
 
         let error = await #expect(throws: MacBoxError.self) {
-            try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onBlock: { _ in })
+            try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onActivity: { _ in })
         }
         #expect(error?.message.contains("link") == true || error?.message.contains("链接") == true)
         if folder == "App" {
@@ -178,13 +178,63 @@ struct SessionTests {
         exit 3
         """, installer: installer)
         defer { try? FileManager.default.removeItem(at: paths.url) }
-        let outcome = try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onBlock: { _ in })
+        let outcome = try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onActivity: { _ in })
         #expect(outcome.mainExitStatus == 3)
         #expect(outcome.mainRanFor < 3)
         #expect(outcome.downloadedPackages.map(\.lastPathComponent) == (installer ? ["big.dmg"] : []))
         #expect(outcome.preferencesReturnError == nil)
         #expect(!lease(paths, config).isOutstanding)
         #expect(AppLock.isLocked(paths.app(config)), "运行结束后 App 要重新锁上")
+    }
+
+    @Test("运行报告：对比出这次写下的文件、改了的设置；MacBox 自己的准备不算", .timeLimit(.minutes(1)))
+    func reportChanges() async throws {
+        // 偏好设置域就是 App 的标识符（从 Info.plist 读，测试专用的前缀）：写进系统里借出的域，收回时进盒子
+        let (paths, config) = try await makeBox(script: """
+        mkdir -p "$HOME/Library/Application Support/Fake"
+        echo data > "$HOME/Library/Application Support/Fake/state.db"
+        domain=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$(dirname "$0")/../Info.plist")
+        /usr/bin/defaults write "$domain" reportKey -string yes
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(at: paths.url) }
+        let outcome = try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onActivity: { _ in })
+        let changes = try #require(outcome.changes)
+        let fake = try #require(changes.files.first { $0.path == "~/Library/Application Support/Fake" })
+        #expect(fake.totals.created == 1 && fake.examples == ["state.db"])
+        #expect(!changes.files.contains { $0.path.hasPrefix("~/Library/Keychains") || $0.path.hasPrefix("~/Downloads") },
+                "MacBox 启动前准备的钥匙串、「下载」算到了应用头上：\(changes.files.map(\.path))")
+        #expect(changes.preferences == [PreferenceChange(domain: config.bundleIdentifier, isNew: true, added: ["reportKey"],
+                                                         changed: [], removed: [])])
+        #expect(!lease(paths, config).isOutstanding)
+    }
+
+    @Test("运行报告：运行期间看得到会话里的进程连了哪里", .timeLimit(.minutes(1)))
+    func reportConnections() async throws {
+        var options = ChildProcess.Options()
+        options.output = .pipe
+        let listener = try ChildProcess.spawn("/usr/bin/python3", ["-I", "-c", """
+        import socket, time
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(8)
+        print(s.getsockname()[1], flush=True)
+        time.sleep(60)
+        """], options: options)
+        defer { listener.signal(SIGKILL) }
+        var lines = listener.standardOutput.lines().makeAsyncIterator()
+        let port = try #require(await lines.next().flatMap { Int($0) })
+        // 主程序启动的系统程序连上去，连着不放一会儿（采样每秒一次）
+        let (paths, config) = try await makeBox(script: """
+        /usr/bin/python3 -I -c 'import socket, time; c = socket.create_connection(("127.0.0.1", \(port))); time.sleep(2.5)'
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(at: paths.url) }
+        var contacts: [ServerContact] = []
+        _ = try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onActivity: { activity in
+            if case .connected(let contact) = activity { contacts.append(contact) }
+        })
+        let contact = try #require(contacts.first { $0.port == port }, "\(contacts.map(\.endpoint))")
+        #expect(contact.address == "127.0.0.1" && contact.transport == "tcp")
+        #expect(contacts.filter { $0.id == contact.id }.count == 1, "同一个连接只报一次")
     }
 
     @Test("主程序启动不了时给出原因，而不是“点了没反应”", arguments: [
@@ -195,7 +245,7 @@ struct SessionTests {
         let (paths, config) = try await makeBox(script: "", rawExecutable: executable)
         defer { try? FileManager.default.removeItem(at: paths.url) }
         let error = await #expect(throws: MacBoxError.self) {
-            try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onBlock: { _ in })
+            try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onActivity: { _ in })
         }
         #expect(error?.message.contains(mentions) == true)
         #expect(!lease(paths, config).isOutstanding)

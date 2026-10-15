@@ -1,10 +1,13 @@
 import Foundation
 import Synchronization
 
-/// 被拦截的一次行为（来自系统日志里的沙盒拒绝记录）
-nonisolated struct BlockEvent: Identifiable, Hashable, Sendable {
-    nonisolated enum Kind: String, Sendable {
-        case autostart, backgroundService, systemInstall, escapedLaunch, diskMount, personalFiles, privacyRead, notification, appleEvent, other
+/// 被拦截的一次行为（来自系统日志里的沙盒拒绝记录）。存进运行报告（见 RunReport），字段只增不改
+nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
+    nonisolated enum Kind: String, Codable, Sendable {
+        case autostart, backgroundService, systemInstall, escapedLaunch, diskMount, personalFiles, privacyRead, notification, appleEvent
+        /// 不许联网时的连接、域名解析（见 SandboxProfile.offlineRules）
+        case network
+        case other
 
         var title: String {
             switch self {
@@ -17,6 +20,7 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Sendable {
             case .privacyRead: L("读取私人数据", "Read private data")
             case .notification: L("发送通知", "Send notifications")
             case .appleEvent: L("控制其他 App", "Control other apps")
+            case .network: L("联网", "Access the network")
             case .other: L("其他系统操作", "Other system operations")
             }
         }
@@ -46,7 +50,11 @@ nonisolated final class SessionPID: Sendable {
     var pid: pid_t? { value.withLock { $0 } }
 }
 
-/// 系统日志里的沙盒拒绝记录。
+/// 系统日志里的沙盒记录：拒绝记录，以及规则要求放行时也记一笔的启动程序、写「下载」（见 SandboxProfile）。
+///
+/// 记录有两个来源：命令行程序这类的由内核直接写进日志；带 App 包的进程（应用本身、它的辅助程序）由 sandboxd
+/// 生成一份完整的违规报告（第一行是同样格式的记录，后面是进程信息和调用栈）。实测同一条不会两边都报。
+/// 只看内核的话，带界面的应用发通知、启动程序这些都看不到。
 ///
 /// 整个 MacBox 只开一个 `log stream`：第一个订阅者到来时启动，最后一个离开时结束，
 /// 每行日志只解析一次，再按盒子分发。同时运行多个应用时不会有多份日志进程各自解析全部日志。
@@ -54,14 +62,14 @@ nonisolated final class SessionPID: Sendable {
 /// 这是**尽力而为**的信号：内核对沙盒拒绝报告做全局限流（其他进程大量报告时，盒子里的报告会被丢弃），
 /// 所以“没有记录”不代表“没有被拦截”。只能用于提示，不能作为安全或流程判断的唯一依据。
 nonisolated enum ViolationMonitor {
-    /// 本盒子进程的拦截记录；停止迭代（任务取消）时退订。
+    /// 本盒子进程的拦截记录和启动的程序；停止迭代（任务取消）时退订。
     /// 返回前等日志流真正开始输出（最多 3 秒），App 启动时的拦截不会因为日志进程还没就绪而漏掉
     /// - processNames：盒子里各个可执行文件的名字，只用来认已经退出的进程
     /// - installer：盒子里是在线安装器（它的规则禁止挂载磁盘映像，见 SandboxProfile）
     /// - session：会话主进程。订阅要在启动 App 之前，所以先给一个空的，启动后再填上
     static func events(boxPrefix: String, processNames: Set<String>, installer: Bool = false,
-                       session: SessionPID) async -> AsyncStream<BlockEvent> {
-        let (stream, continuation) = AsyncStream.makeStream(of: BlockEvent.self)
+                       session: SessionPID) async -> AsyncStream<RunActivity> {
+        let (stream, continuation) = AsyncStream.makeStream(of: RunActivity.self)
         let parser = Parser(boxPrefix: boxPrefix, processNames: processNames, installer: installer,
                             home: FileOps.realPath(AppPaths.realHome), session: session)
         let id = UUID()
@@ -87,7 +95,7 @@ nonisolated enum ViolationMonitor {
     private static let hub = Hub()
 
     private actor Hub {
-        private var subscribers: [UUID: (parser: Parser, continuation: AsyncStream<BlockEvent>.Continuation)] = [:]
+        private var subscribers: [UUID: (parser: Parser, continuation: AsyncStream<RunActivity>.Continuation)] = [:]
         private var reader: Task<Void, Never>?
         private var process: ChildProcess?
         /// 订阅还没登记就已退订的（两个 Task 到达顺序不定）
@@ -119,7 +127,7 @@ nonisolated enum ViolationMonitor {
             waiters.forEach { $0.resume() }
         }
 
-        func subscribe(_ id: UUID, parser: Parser, continuation: AsyncStream<BlockEvent>.Continuation) {
+        func subscribe(_ id: UUID, parser: Parser, continuation: AsyncStream<RunActivity>.Continuation) {
             guard departed.remove(id) == nil else { return }
             subscribers[id] = (parser, continuation)
             if reader == nil { startReading() }
@@ -138,7 +146,7 @@ nonisolated enum ViolationMonitor {
             options.output = .pipe
             guard let process = try? ChildProcess.spawn("/usr/bin/log", [
                 "stream", "--style", "ndjson", "--predicate",
-                #"senderImagePath ENDSWITH "/Sandbox" AND eventMessage BEGINSWITH "Sandbox: ""#,
+                #"(senderImagePath ENDSWITH "/Sandbox" OR (subsystem == "com.apple.sandbox.reporting" AND category == "violation")) AND eventMessage BEGINSWITH "Sandbox: ""#,
             ], options: options) else { return }
             self.process = process
             streaming = false
@@ -161,7 +169,7 @@ nonisolated enum ViolationMonitor {
 
         private func deliver(_ message: Parser.Message) {
             for subscriber in subscribers.values {
-                if let event = subscriber.parser.event(from: message) { subscriber.continuation.yield(event) }
+                if let activity = subscriber.parser.activity(from: message) { subscriber.continuation.yield(activity) }
             }
         }
 
@@ -181,24 +189,42 @@ nonisolated enum ViolationMonitor {
         let home: String
         let session: SessionPID
 
-        /// 一行日志解析出的拒绝记录
+        /// 一行日志解析出的记录
         struct Message: Sendable {
             let process: String
             let pid: pid_t
             let operation: String
             let target: String
+            /// 规则放行、只是要求记一笔的（见 SandboxProfile 里带 report 的规则），不是拒绝
+            var allowed = false
         }
 
         // "Sandbox: QuarkCloudDrive(15215) deny(1) file-write-create /Users/x/Library/LaunchAgents/a.plist"
+        // "Sandbox: bash(30453) allow process-exec* /usr/sbin/ioreg"
+        // sandboxd 的报告只看第一行，后面是进程信息和调用栈
         static func message(fromLine line: String) -> Message? {
             guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  let text = json["eventMessage"] as? String,
-                  let match = text.wholeMatch(of: /Sandbox: (.+?)\((\d+)\) deny\(\d+\) (\S+)\s*(.*)/) else { return nil }
+                  let report = json["eventMessage"] as? String,
+                  let text = report.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first,
+                  let match = text.wholeMatch(of: /Sandbox: (.+?)\((\d+)\) (deny|allow)(?:\(\d+\))? (\S+)\s*(.*)/) else { return nil }
             return Message(process: String(match.1), pid: pid_t(match.2) ?? 0,
-                           operation: String(match.3), target: String(match.4))
+                           operation: String(match.4), target: String(match.5), allowed: match.3 == "allow")
         }
 
+        /// 这条记录对本盒子意味着什么：被挡住的行为、启动了程序、在共享的「下载」里写了东西；不是本盒子的、不关心的为 nil
+        func activity(from message: Message) -> RunActivity? {
+            guard message.allowed else { return event(from: message).map(RunActivity.blocked) }
+            // 带 report 的规则只有启动程序、写「下载」两条。启动程序记下的是启动后的程序，进程名是启动它的那个（exec 前的名字）
+            let launch = message.operation.hasPrefix("process-exec"), write = message.operation.hasPrefix("file-write")
+            guard launch || write, message.target.hasPrefix("/"),
+                  Self.belongs(Identity.of(message.pid), main: session.pid, boxPrefix: boxPrefix,
+                               loggedName: message.process, processNames: processNames) else { return nil }
+            return launch ? .launched(message.target) : .wroteDownload(path: message.target, operation: message.operation)
+        }
+
+        /// 拒绝记录对应的拦截；放行的记录、不是本盒子的为 nil
         func event(from message: Message) -> BlockEvent? {
+            guard !message.allowed else { return nil }
             let name = message.process, target = message.target
             // 安装器调用 hdiutil 挂载被挡（实际由它拉起的 diskimages-helper 报告，进程不在盒子里）。
             // 只算到安装器头上：其他沙盒里的 hdiutil 也可能被拒绝，算给每个盒子的话，普通应用会冒出
@@ -266,9 +292,16 @@ nonisolated enum ViolationMonitor {
                 return BlockEvent(kind: .other, target: target)
             }
             if operation.hasPrefix("file-read") { return BlockEvent(kind: .privacyRead, target: target) }
+            if operation.hasPrefix("network") { return Self.networkEvent(operation: operation, target: target) }
             if operation == "mach-lookup" {
                 if target.contains("usernot") || target.contains("UNCUserNotification") {
                     return BlockEvent(kind: .notification, target: L("通知中心", "Notification Center"))
+                }
+                if target == "com.apple.dnssd.service" {
+                    return BlockEvent(kind: .network, target: L("域名解析（DNS）", "Name lookups (DNS)"))
+                }
+                if target.hasPrefix("com.apple.nsurlsessiond") {
+                    return BlockEvent(kind: .network, target: L("后台下载服务", "Background download service"))
                 }
                 if target.contains("DiskArbitration") || target.contains("diskarbitrationd") {
                     return BlockEvent(kind: .diskMount, target: L("安装器自己下载的安装包", "Installer package downloaded by the installer"))
@@ -281,6 +314,27 @@ nonisolated enum ViolationMonitor {
             }
             if operation.hasPrefix("appleevent") { return BlockEvent(kind: .appleEvent, target: target) }
             return nil
+        }
+
+        /// 不许联网时被挡住的连接（见 SandboxProfile.offlineRules）。日志里看不到对方的地址，只有端口：
+        /// “network-outbound remote:*:443”；等别人连进来是 “network-inbound local:*:8080”（bind 也报这个）；
+        /// 域名解析是连 mDNSResponder 的套接字。其他本地套接字规则没挡，不是盒子的规则报告的
+        static func networkEvent(operation: String, target: String) -> BlockEvent? {
+            if target == "/private/var/run/mDNSResponder" {
+                return BlockEvent(kind: .network, target: L("域名解析（DNS）", "Name lookups (DNS)"))
+            }
+            let outbound = operation == "network-outbound"
+            guard let address = target.wholeMatch(of: outbound ? /remote:(.+)/ : /local:(.+)/)?.1,
+                  let separator = address.lastIndex(of: ":") else { return nil }
+            let host = address[..<separator], port = address[address.index(after: separator)...]
+            let anyPort = port == "*"
+            if !outbound {
+                return BlockEvent(kind: .network, target: anyPort ? L("等待别的设备连进来", "Wait for other devices to connect")
+                                                                   : L("在 \(port) 端口等待别的设备连进来", "Wait for other devices to connect on port \(port)"))
+            }
+            if host != "*" { return BlockEvent(kind: .network, target: String(address)) }
+            return BlockEvent(kind: .network, target: anyPort ? L("连接服务器", "Connect to a server")
+                                                               : L("连接服务器的 \(port) 端口", "Connect to a server on port \(port)"))
         }
     }
 }

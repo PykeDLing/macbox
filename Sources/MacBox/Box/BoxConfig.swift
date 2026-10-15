@@ -92,12 +92,20 @@ nonisolated struct BoxConfig: Codable, Equatable, Sendable {
     /// 同样的拦截以后不再问：每次运行都写系统目录的 App，否则每次退出都会弹一次。
     /// 只记具体的拦截而不是一个“别再问”：出现新的一类拦截时仍然要问。换了运行环境、换了 App 时清空
     var acknowledgedBlocks: [String]?
+    /// 不让应用联网（见 SandboxProfile.offlineRules）。没有这个字段（旧文件）、nil 都是允许
+    var blockNetwork: Bool?
 }
 
 extension BoxConfig {
     /// 要不要在聚焦里放启动器。在线安装器在本机隔离里运行时没有：安装由 MacBox 接手，完成后换成真正的 App 才有。
     /// 在虚拟 Mac 里运行时 MacBox 不接手安装，“在线安装器”不起作用，照常按设置放
     var wantsLauncher: Bool { showInLaunchpad && !(isInstaller && runtime == .isolated) }
+
+    /// 详情面板里「允许联网」开关的值。允许时不写这个字段，box.json 和旧版一样
+    nonisolated var allowsNetwork: Bool {
+        get { blockNetwork != true }
+        set { blockNetwork = newValue ? nil : true }
+    }
 }
 
 /// 盒子在磁盘上的布局：
@@ -109,6 +117,7 @@ extension BoxConfig {
 ///       Home/              App 看到的“主目录”（文档、设置、缓存、钥匙串都在这里）
 ///       Prefs/             收回的偏好设置（运行时临时放回系统，退出后收回）
 ///       RestorePoint/      还原点（APFS 克隆）
+///       Reports/           运行报告
 ///       tmp/
 nonisolated struct BoxPaths: Hashable, Sendable {
     let url: URL
@@ -122,6 +131,8 @@ nonisolated struct BoxPaths: Hashable, Sendable {
     var leaseJournal: URL { url.appending(path: "Prefs/.lease.json") }
     var nativePrefsBackup: URL { url.appending(path: "Prefs/.native", directoryHint: .isDirectory) }
     var restorePoint: URL { url.appending(path: "RestorePoint", directoryHint: .isDirectory) }
+    /// 运行报告（见 RunReport），每次运行一个 JSON，只留最近的几份
+    var reports: URL { url.appending(path: "Reports", directoryHint: .isDirectory) }
     var tmp: URL { url.appending(path: "tmp", directoryHint: .isDirectory) }
     var keychainPassword: URL { url.appending(path: ".keychain-password") }
     /// 正在用还原点替换数据、正在清除数据（见 Box.rollBack、Box.clear）：开始前放下（内容写着是哪一种）、全部做完才删除。

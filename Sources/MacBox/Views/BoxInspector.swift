@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// 右侧详情：打开/退出、运行环境、文件、还原点
+/// 右侧详情：打开/退出、运行环境、运行报告、网络、文件、还原点
 struct BoxInspector: View {
     @Bindable var box: Box
     /// 删除确认由应用页统一处理
@@ -13,6 +13,7 @@ struct BoxInspector: View {
     @State private var confirmClear = false
     @State private var forceQuitTarget: Box?
     @State private var showAllBlocks = false
+    @State private var showReport = false
     @State private var nameDraft = ""
     @State private var dataSize: Int64?
 
@@ -22,6 +23,8 @@ struct BoxInspector: View {
             banners
             runtimeSection
             if box.config.runtime == .isolated {
+                reportSection
+                networkSection
                 filesSection
                 restoreSection
             }
@@ -40,6 +43,9 @@ struct BoxInspector: View {
             guard !Task.isCancelled else { return } // 状态又变了：以新的一次为准，旧的结果不再覆盖它
             dataSize = size
         }
+        // 重新打开 MacBox 后内存里没有报告：读出最近一次的
+        .task(id: box.id) { await box.loadLatestReport() }
+        .sheet(isPresented: $showReport) { ReportView(box: box) }
         .forceQuitConfirmation($forceQuitTarget)
         .confirmationDialog(L("还原到还原点？", "Restore to the restore point?"), isPresented: $confirmRestore) {
             Button(L("还原", "Restore"), role: .destructive) {
@@ -204,37 +210,6 @@ struct BoxInspector: View {
             }
 
             if box.config.runtime == .isolated {
-                if !box.blocks.isEmpty {
-                    // Form 里的 DisclosureGroup 在 macOS 上点不开，自己做展开行
-                    Button {
-                        withAnimation(.easeOut(duration: 0.15)) { showAllBlocks.toggle() }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.right")
-                                .rotationEffect(.degrees(showAllBlocks ? 90 : 0))
-                                .font(.caption.weight(.semibold))
-                            let total = box.blocks.reduce(0) { $0 + $1.count }
-                            Label(L("本次已拦截 \(total) 次越界行为",
-                                    total == 1 ? "Blocked 1 out-of-bounds attempt this session"
-                                               : "Blocked \(total) out-of-bounds attempts this session"),
-                                  systemImage: "hand.raised.fill")
-                            Spacer()
-                        }
-                        .contentShape(Rectangle())
-                        .foregroundStyle(box.blocks.contains(where: \.kind.suggestsVirtualMac) ? .orange : .secondary)
-                    }
-                    .buttonStyle(.plain)
-                    if showAllBlocks {
-                        ForEach(box.blocks) { block in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("\(block.kind.title)\(block.count > 1 ? " ×\(block.count)" : "")")
-                                    .font(.callout)
-                                Text(block.target).font(.caption2).foregroundStyle(.secondary)
-                                    .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
-                            }
-                        }
-                    }
-                }
                 Button(L("软件不正常？改用虚拟 Mac 运行", "Not working right? Run in Virtual Mac instead")) { box.config.runtime = .virtualMac }
                     .buttonStyle(.link)
                     .disabled(box.isRunning || box.isBusy)
@@ -255,6 +230,103 @@ struct BoxInspector: View {
         } header: {
             Text(L("运行环境", "Runtime"))
         }
+    }
+
+    // MARK: - 运行报告
+
+    /// 这次（或上次）运行的概要，拦截记录可以展开，完整的报告在单独的窗口里
+    private var reportSection: some View {
+        Section {
+            if let report = box.currentReport {
+                Text(report.isRunning ? L("正在运行，边运行边记录。", "Running. Recording as it goes.")
+                                      : L("上次运行：\(RunReportLabel.time(report))", "Last run: \(RunReportLabel.time(report))"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LabeledContent(L("写入文件", "Files Written")) {
+                    Text(report.fileTotals.map { L("\($0.count) 个 · \(FileOps.formatBytes($0.bytes))", "\($0.count) · \(FileOps.formatBytes($0.bytes))") }
+                         ?? (report.isRunning ? L("退出后统计", "Counted after quitting") : L("没能统计", "Not counted")))
+                }
+                LabeledContent(L("改动设置", "Settings Changed")) {
+                    Text(report.preferenceKeyCount.map { L("\($0) 项", "\($0)") }
+                         ?? (report.isRunning ? L("退出后统计", "Counted after quitting") : L("没能统计", "Not counted")))
+                }
+                LabeledContent(L("连接服务器", "Servers Contacted")) {
+                    Text(report.networkBlocked ? L("不联网", "Offline") : L("\(report.servers.count) 个", "\(report.servers.count)"))
+                }
+                LabeledContent(L("启动程序", "Programs Launched")) {
+                    Text(L("\(report.programs.count) 个", "\(report.programs.count)"))
+                }
+                if !report.blocks.isEmpty { blockRows(report) }
+                Button(L("查看完整报告…", "View Full Report…")) { showReport = true }
+            } else {
+                Text(L("打开应用后，这里会记下它写了哪些文件、改了哪些设置、连了哪些服务器、启动了哪些程序，以及哪些行为被拦下，可以导出分享。",
+                       "Once you open the app, this records which files it writes, which settings it changes, which servers it contacts, which programs it launches and what gets blocked. You can export and share it."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text(L("运行报告", "Run Report"))
+        }
+    }
+
+    /// 拦截记录：一行总数，点开逐条列出
+    @ViewBuilder
+    private func blockRows(_ report: RunReport) -> some View {
+        // Form 里的 DisclosureGroup 在 macOS 上点不开，自己做展开行
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) { showAllBlocks.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .rotationEffect(.degrees(showAllBlocks ? 90 : 0))
+                    .font(.caption.weight(.semibold))
+                let total = report.blockCount
+                Label(report.isRunning
+                      ? L("本次已拦截 \(total) 次越界行为",
+                          total == 1 ? "Blocked 1 out-of-bounds attempt this session" : "Blocked \(total) out-of-bounds attempts this session")
+                      : L("拦截了 \(total) 次越界行为", total == 1 ? "Blocked 1 out-of-bounds attempt" : "Blocked \(total) out-of-bounds attempts"),
+                      systemImage: "hand.raised.fill")
+                Spacer()
+            }
+            .contentShape(Rectangle())
+            .foregroundStyle(report.blocks.contains(where: \.kind.suggestsVirtualMac) ? .orange : .secondary)
+        }
+        .buttonStyle(.plain)
+        if showAllBlocks {
+            ForEach(report.blocks) { block in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(block.kind.title)\(block.count > 1 ? " ×\(block.count)" : "")")
+                        .font(.callout)
+                    Text(block.target).font(.caption2).foregroundStyle(.secondary)
+                        .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    // MARK: - 网络
+
+    private var networkSection: some View {
+        Section(L("网络", "Network")) {
+            Toggle(L("允许联网", "Allow Network Access"), isOn: $box.config.allowsNetwork)
+                .disabled(box.isRunning || box.isBusy)
+            Text(networkCaption)
+                .font(.caption)
+                .foregroundStyle(box.config.isInstaller && !box.config.allowsNetwork ? .orange : .secondary)
+        }
+    }
+
+    private var networkCaption: String {
+        if box.config.allowsNetwork {
+            return L("关掉后，应用连不上任何服务器，在本机上的代理也连不上。下次打开时生效。",
+                     "When off, the app can’t reach any server, not even a proxy on this Mac. Takes effect the next time it opens.")
+        }
+        if box.config.isInstaller {
+            return L("在线安装器要联网才能下载安装包，不联网时它装不了。",
+                     "Online installers need the network to download the installer package, so this one can’t install while offline.")
+        }
+        return L("应用连不上任何服务器，在本机上的代理也连不上；它显示的网页也打不开，用网页做的界面会是空白。登录、同步、更新都用不了。",
+                 "The app can’t reach any server, not even a proxy on this Mac. Web pages it shows won’t load either, so parts built from web pages stay blank. Signing in, syncing and updates won’t work.")
     }
 
     // MARK: - 安装器、聚焦

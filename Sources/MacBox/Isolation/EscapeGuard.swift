@@ -153,6 +153,14 @@ nonisolated final class EscapeGuard: Sendable {
         }
     }
 
+    /// 会话里还在运行的进程，包括没继承沙盒规则的（系统代 App 启动的 XPC 服务，比如替 WKWebView 联网的
+    /// WebKit 网络进程）。运行报告看它们连了哪些服务器（见 ConnectionMonitor）
+    func members(of session: pid_t) -> [pid_t] {
+        state.withLock { state in
+            state.members.compactMap { pid, member in member.membership.session == session && !member.exited ? pid : nil }
+        }
+    }
+
     /// 重新读取由盒子里的映像挂载出来的卷；列表变化时所有进程重新检查一遍
     @concurrent
     static func refreshVolumes() async {

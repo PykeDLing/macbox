@@ -16,6 +16,8 @@ final class IsolatedSession {
     private let boxRoot: String
     /// 所有进程都已退出：之后的强制结束不能波及同一盒子里新开的会话
     private var exited = false
+    /// 还没解析完的服务器名字（见 watchConnections）
+    private var pendingNames = 0
 
     struct Outcome {
         /// 安装器下载的完整安装包（在盒子里）。只有在线安装器才找
@@ -26,6 +28,8 @@ final class IsolatedSession {
         var mainRanFor: TimeInterval = 0
         /// 收回偏好设置失败的原因。日志还在，下次启动 MacBox 时会再次尝试
         var preferencesReturnError: String?
+        /// 这次写下的文件、改了的设置（对比运行前后，见 RunSnapshot）
+        var changes: RunChanges?
     }
 
     /// 启动前在后台准备好的内容
@@ -45,26 +49,40 @@ final class IsolatedSession {
 
     /// 运行 App，直到它和它的辅助进程全部退出、收尾完成才返回。
     /// - onStart：App 已启动，交出会话（切到前台、请求退出）
-    /// - onBlock：新的拦截记录
+    /// - onActivity：运行期间陆续得到的记录：拦截、启动的程序、连到的服务器（运行报告用）
     static func run(paths: BoxPaths, config: BoxConfig,
                     onStart: (IsolatedSession) -> Void,
-                    onBlock: @escaping (BlockEvent) -> Void) async throws -> Outcome {
+                    onActivity: @escaping (RunActivity) -> Void) async throws -> Outcome {
         let plan = try await prepare(paths, config: config)
         try await BoxKeychain.prepare(paths)
+        // 运行前的样子，退出后对比出这次写了哪些文件、改了哪些设置（运行报告）。主目录、钥匙串由 MacBox 准备好之后再记。
+        // 文件多的 App 要走一会儿，和借出偏好设置、等日志流同时做，不拖慢启动
+        async let files = RunSnapshot.files(of: paths, config: config)
 
         let lease = PreferenceLease(box: paths, prefixes: config.preferencePrefixes)
         try await lease.checkIn() // 失败时自己回滚
         // 正常结束时，所有进程一退出就先收回（见下面）；这里是出错、取消时的保底。收回可以重复调用
         defer { await returnPreferences(lease) }
+        let preferences = await RunSnapshot.savedPreferences(of: paths, config: config)
 
         // 先订阅拦截记录、等日志流就绪，再启动 App：很多 App 一启动就注册自启动、写系统目录
         let sessionPID = SessionPID()
         let events = await ViolationMonitor.events(boxPrefix: FileOps.realPath(paths.url), processNames: plan.processNames,
                                                   installer: config.isInstaller, session: sessionPID)
+        // 写「下载」的记录留在这里，退出后和主目录的改动一起汇总
+        let downloads = DownloadWrites()
         let monitor = Task {
-            for await event in events { onBlock(event) }
+            for await activity in events {
+                if case .wroteDownload(let path, let operation) = activity {
+                    downloads.note(path, operation: operation)
+                } else {
+                    onActivity(activity)
+                }
+            }
         }
         defer { monitor.cancel() }
+
+        let before = RunSnapshot(files: await files, preferences: preferences)
 
         let profile = SandboxProfile.make(box: paths, config: config)
         try? profile.write(to: paths.url.appending(path: "sandbox.sb"), atomically: true, encoding: .utf8) // 便于排查
@@ -84,14 +102,22 @@ final class IsolatedSession {
 
         let session = IsolatedSession(process: process, paths: paths, appURL: app)
         onStart(session)
+        // 不联网时连不上任何地方，不用看
+        let connections = Task { if config.allowsNetwork { await session.watchConnections(onActivity) } }
+        defer { connections.cancel() }
 
         let main = await session.waitUntilAllExited()
+        connections.cancel()
         // 先把偏好设置还回去，再做可能较慢的收尾（卸载映像、在主目录里找安装包），尽量缩短借出的时间：
         // 这期间 MacBox 可能正在退出，来不及做完的收尾下次还能补，借出的设置留在系统里却会被本机的 App 读到
         let preferencesError = await returnPreferences(lease)
         await session.cleanUpSystemTraces()
+        let changes = await before.changes(paths, config: config, preferencesReturned: preferencesError == nil,
+                                           downloads: downloads.areas)
+        await session.finishNameLookups(timeout: .seconds(2))
         return Outcome(downloadedPackages: config.isInstaller ? await session.downloadedPackages() : [],
-                       mainExitStatus: main.status, mainRanFor: main.ranFor, preferencesReturnError: preferencesError)
+                       mainExitStatus: main.status, mainRanFor: main.ranFor, preferencesReturnError: preferencesError,
+                       changes: changes)
     }
 
     /// 主进程已退出（会话可能还在：辅助进程还在运行）
@@ -160,6 +186,47 @@ final class IsolatedSession {
     func downloadedPackages() async -> [URL] {
         await Self.findPackages(in: [paths.home, paths.tmp], skipping: FileOps.realPath(paths.downloads),
                                 since: startedAt.addingTimeInterval(-2))
+    }
+
+    // MARK: - 连接
+
+    /// 定时看一眼会话里的进程连了哪些服务器（见 ConnectionMonitor），第一次看到的交给 onActivity，公网地址再反向解析名字。
+    /// 刚启动时连得最多，连接也短（WKWebView 加载完一个页面，一秒内就断开了）：前 15 秒每半秒看一次，
+    /// 一分钟内每秒一次，之后每 3 秒一次。看一次约 30 毫秒 CPU。任务取消时停止
+    private func watchConnections(_ onActivity: @escaping (RunActivity) -> Void) async {
+        var seen: Set<String> = []
+        var looked: Set<String> = []
+        let started = ContinuousClock.now
+        while !Task.isCancelled {
+            for contact in await ConnectionMonitor.connections(of: await networkMembers()) where seen.insert(contact.id).inserted {
+                onActivity(.connected(contact))
+                guard contact.scope == .internet, looked.insert(contact.address).inserted else { continue }
+                pendingNames += 1
+                Task {
+                    if let name = await ConnectionMonitor.reverseName(contact.address) {
+                        onActivity(.named(address: contact.address, name: name))
+                    }
+                    pendingNames -= 1
+                }
+            }
+            let elapsed = ContinuousClock.now - started
+            try? await Task.sleep(for: elapsed < .seconds(15) ? .milliseconds(500) : elapsed < .seconds(60) ? .seconds(1) : .seconds(3))
+        }
+    }
+
+    /// 要看连接的进程：会话里的（见 members），加上守卫记下的、系统代它启动的 XPC 服务（WebKit 的网络进程替 WKWebView 联网）
+    private func networkMembers() async -> [pid_t] {
+        var pids = await Self.members(boxRoot: boxRoot, group: mainPID)
+        pids.formUnion(EscapeGuard.shared.members(of: mainPID))
+        return Array(pids)
+    }
+
+    /// 等还没解析完的服务器名字，最多等 timeout：报告里尽量都有名字。解析不出的不会一直等（DNS 超时要好几秒）
+    private func finishNameLookups(timeout: Duration) async {
+        let deadline = ContinuousClock.now + timeout
+        while pendingNames > 0, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     // MARK: - 生命周期内部

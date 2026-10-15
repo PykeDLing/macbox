@@ -19,6 +19,9 @@ final class Box: Identifiable {
         didSet { if activity == .idle, oldValue != .idle { becameIdle() } }
     }
     private(set) var blocks: [BlockEvent] = []
+    /// 这次运行的报告（运行中陆续记下），或者最近一次运行的（见 loadLatestReport）。拦截记录运行中在 blocks 里，
+    /// 收尾时才抄进来；界面用 currentReport
+    private(set) var report: RunReport?
     private(set) var restorePointDate: Date?
     var lastError: String?
     var notice: String?
@@ -80,6 +83,7 @@ final class Box: Identifiable {
     @ObservationIgnored private var quitGeneration = 0
     /// “主程序已退出、正在让后台程序退出”的说明：重新打开时清掉，不留着一条已经过去的事
     @ObservationIgnored private var reopenNotice: String?
+    @ObservationIgnored private var cachedTidier: PathTidier?
 
     init(paths: BoxPaths, config: BoxConfig) {
         self.id = config.id
@@ -201,6 +205,7 @@ final class Box: Identifiable {
         }
         activity = .launching
         blocks.removeAll()
+        report = RunReport(config: config)
         handingOver = false
         quitRequested = false
         pendingOpen = nil
@@ -254,11 +259,13 @@ final class Box: Identifiable {
                 } else if activateOnStart {
                     bringToFront(session)
                 }
-            }, onBlock: { [weak self] event in
-                self?.record(event)
+            }, onActivity: { [weak self] activity in
+                self?.record(activity)
             })
         } catch {
             pendingOpen = nil // 启动不了：不再重试
+            report = nil // 没有运行，没有报告：换回最近一次的
+            Task { await loadLatestReport() }
             activity = .idle
             lastError = L("启动失败：\(error.localizedDescription)", "Couldn’t open the app: \(error.localizedDescription)")
             store?.reveal(self) // 从聚焦打开时主窗口可能关着，失败了要让人看到
@@ -310,6 +317,64 @@ final class Box: Identifiable {
         }
     }
 
+    /// 运行期间的记录。运行已经结束（晚到的连接、名字）的不再改动存好的报告
+    func record(_ activity: RunActivity) {
+        if case .blocked(let event) = activity {
+            record(event)
+            return
+        }
+        guard report?.isRunning == true else { return }
+        switch activity {
+        case .blocked: break
+        case .launched(let path): report?.noteLaunch(tidier(path))
+        case .connected(let contact): report?.note(contact)
+        case .named(let address, let name): report?.name(address, name)
+        case .wroteDownload: break // 会话自己汇总（见 IsolatedSession.run）
+        }
+    }
+
+    /// 详情、报告页显示的报告：运行中的，随时抄上拦截记录
+    var currentReport: RunReport? {
+        guard var report else { return nil }
+        if report.isRunning { report.blocks = blocks.map(tidier.callAsFunction) }
+        return report
+    }
+
+    /// 打开详情时读出最近一次运行的报告（重新打开 MacBox 后内存里没有）
+    func loadLatestReport() async {
+        guard report == nil else { return }
+        let latest = await RunReport.load(from: paths).first
+        if report == nil { report = latest }
+    }
+
+    /// 盒子里存着的报告，最近的在前
+    func savedReports() async -> [RunReport] {
+        await RunReport.load(from: paths)
+    }
+
+    /// 运行结束：补上文件和设置的改动，抄上拦截记录，存进盒子。等存好再往下：MacBox 可能正在退出
+    private func finishReport(_ outcome: IsolatedSession.Outcome) async {
+        guard var report, report.isRunning else { return }
+        report.endedAt = Date()
+        report.files = outcome.changes?.files
+        report.fileTotals = outcome.changes?.fileTotals
+        report.preferences = outcome.changes?.preferences
+        report.blocks = blocks.map(tidier.callAsFunction)
+        self.report = report
+        do {
+            try await RunReport.save(report, in: paths)
+        } catch {
+            NSLog("MacBox: 无法保存运行报告：\(error.localizedDescription)")
+        }
+    }
+
+    private var tidier: PathTidier {
+        if let cachedTidier { return cachedTidier }
+        let tidier = PathTidier(paths: paths)
+        cachedTidier = tidier
+        return tidier
+    }
+
     /// 守卫在这次运行期间结束了一个沙盒外的主程序实例（见 BoxStore.handleEscape）：这次运行结束后在隔离中重新打开
     func relaunchWhenIdle(_ event: BlockEvent) {
         if case .user = pendingOpen { return } // 已经要重新打开了
@@ -349,6 +414,7 @@ final class Box: Identifiable {
         // MacBox 正在退出：只做必要的收尾，不再接手安装、不再弹建议
         let terminating = store?.isTerminating == true
         offersForceQuit = false
+        await finishReport(outcome)
         var errors: [String] = []
         if let reason = outcome.preferencesReturnError {
             errors.append(L("无法收回偏好设置，这台 Mac 上这个应用的设置暂时还是盒子里的内容。下次打开它或重新打开 MacBox 时会再试。原因：\(reason)",
