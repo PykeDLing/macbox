@@ -40,9 +40,13 @@ describe('copy command', () => {
     Effect.gen(function* () {
       clipboard(() => Promise.reject(new Error('denied')));
       execCommand(true);
+      const button = document.body.appendChild(document.createElement('button'));
+      button.focus();
       assert.isTrue(yield* copyText('xattr -dr'));
       assert.deepStrictEqual(vi.mocked(document.execCommand).mock.calls, [['copy']]);
       assert.strictEqual(document.querySelectorAll('textarea').length, 0);
+      assert.strictEqual(document.activeElement, button, 'focus goes back to the copy button');
+      button.remove();
     }),
   );
 

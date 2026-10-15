@@ -2,6 +2,7 @@ import { assert, describe, it } from '@effect/vitest';
 import { Effect, Exit, Scope } from 'effect';
 import { TestClock } from 'effect/testing';
 import { initialState, visibleApps, type DemoState } from '../src/demo/model';
+import { reportMarkdown } from '../src/demo/report';
 import { createDemo } from '../src/demo/store';
 
 const app = (state: DemoState, id: string) => {
@@ -165,6 +166,89 @@ describe('demo timeline', () => {
       assert.strictEqual(app(demo.getState(), 'dl').status, 'launching');
     }),
   );
+});
+
+describe('demo run report', () => {
+  it.effect('records servers and programs as it runs, files and settings once it quits', () =>
+    Effect.gen(function* () {
+      const demo = createDemo();
+      yield* demo.attach;
+      assert.isNull(app(demo.getState(), 'dl').report, 'never run yet');
+      demo.open('dl');
+      assert.deepInclude(app(demo.getState(), 'dl').report!, {
+        running: true,
+        offline: false,
+        servers: 0,
+        programs: 0,
+      });
+      yield* TestClock.adjust('800 millis');
+      yield* TestClock.adjust('1500 millis');
+      assert.strictEqual(app(demo.getState(), 'dl').report?.servers, 1);
+      yield* TestClock.adjust('10 seconds');
+      assert.deepInclude(app(demo.getState(), 'dl').report!, { servers: 2, programs: 2 });
+      demo.quit('dl');
+      yield* TestClock.adjust('700 millis');
+      assert.isFalse(app(demo.getState(), 'dl').report?.running);
+    }),
+  );
+
+  it.effect('offline apps get each connection attempt blocked', () =>
+    Effect.gen(function* () {
+      const demo = createDemo();
+      yield* demo.attach;
+      demo.setNetwork('dl', false);
+      demo.open('dl');
+      demo.setNetwork('dl', true);
+      assert.isTrue(app(demo.getState(), 'dl').offline, 'the switch is locked while running');
+      yield* TestClock.adjust('800 millis');
+      yield* TestClock.adjust('10 seconds');
+      assert.deepStrictEqual(blocks(demo.getState(), 'dl'), [
+        'autostart',
+        'network×2',
+        'personal',
+        'notify',
+      ]);
+      assert.deepInclude(app(demo.getState(), 'dl').report!, { offline: true, servers: 0 });
+    }),
+  );
+
+  it.effect('the Virtual Mac keeps the last Native Isolation report as it was', () =>
+    Effect.gen(function* () {
+      const demo = createDemo();
+      yield* demo.attach;
+      const before = app(demo.getState(), 'meet').report;
+      demo.setRuntime('meet', 'vm');
+      demo.open('meet');
+      yield* TestClock.adjust('10 seconds');
+      assert.strictEqual(app(demo.getState(), 'meet').report, before);
+    }),
+  );
+
+  it('the full report opens only for apps that have one', () => {
+    const demo = createDemo();
+    demo.showReport('music');
+    assert.isNull(demo.getState().report);
+    demo.showReport('meet');
+    assert.strictEqual(demo.getState().report, 'meet');
+    demo.closeReport();
+    assert.isNull(demo.getState().report);
+  });
+
+  it('copies as Markdown in the page language, marked as made up', () => {
+    const meet = app(initialState(), 'meet');
+    const en = reportMarkdown(meet, 'en');
+    assert.include(en, '# Run report: Meetings');
+    assert.include(en, 'made up');
+    assert.include(en, '| ~/Library/Caches/com.example.meetings | 56 | 0 | 12 | 9.1 MB |');
+    assert.include(en, '  - Added: `CameraID`, `MicrophoneID`, `LastMeetingID`');
+    assert.include(en, '| This Mac (possibly a proxy) | 127.0.0.1:7890 | TCP |');
+    assert.include(en, '| Read private data | 2 |');
+    assert.isNull(en.match(/[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]/));
+    const zh = reportMarkdown(app(initialState(), 'drive'), 'zh');
+    assert.include(zh, '# 「某某网盘」运行报告');
+    assert.include(zh, '- 时间：今天 9:41（运行中）');
+    assert.include(zh, '应用退出后统计。');
+  });
 });
 
 describe('demo library filters', () => {

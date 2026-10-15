@@ -1,8 +1,8 @@
-// 首屏演示窗口的数据。文字、状态标签和行为照着 App 做：拦截记录、兼容性提示、虚拟 Mac、删除后移到废纸篓
+// 首屏演示窗口的数据。文字、状态标签和行为照着 App 做：运行报告、联网开关、兼容性提示、虚拟 Mac、删除后移到废纸篓
 import type { Pair } from '../lib/i18n';
 
 export type BlockKind =
-  'autostart' | 'service' | 'system' | 'personal' | 'privacy' | 'notify' | 'control';
+  'autostart' | 'service' | 'system' | 'personal' | 'privacy' | 'notify' | 'control' | 'network';
 
 export const blockLabels: Record<BlockKind, Pair> = {
   autostart: ['注册开机自启动', 'Register to open at login'],
@@ -12,6 +12,7 @@ export const blockLabels: Record<BlockKind, Pair> = {
   privacy: ['读取私人数据', 'Read private data'],
   notify: ['发送通知', 'Send notifications'],
   control: ['控制其他 App', 'Control other apps'],
+  network: ['联网', 'Access the network'],
 };
 
 // 和 App 里的 suggestsVirtualMac 一致：被挡下这两类，退出后建议改用虚拟 Mac
@@ -31,6 +32,21 @@ export interface Block {
   fresh: boolean;
 }
 
+/**
+ * 一次运行的报告。写了哪些文件、改了哪些设置要等退出后对比才知道；连了哪些服务器、启动了哪些程序
+ * 边运行边记（演示里按 report.ts 里这个应用的记录依次“看到”）。被拦下的行为就是应用的 blocks
+ */
+export interface Report {
+  running: boolean;
+  /** 这次运行时关着「允许联网」 */
+  offline: boolean;
+  /** 什么时候运行的（演示里只写个大概） */
+  when: Pair;
+  /** 看到了前几个服务器、前几个程序 */
+  servers: number;
+  programs: number;
+}
+
 export interface DemoApp {
   id: string;
   name: Pair;
@@ -42,6 +58,10 @@ export interface DemoApp {
   script: readonly BlockKind[];
   runtime: Runtime;
   status: AppStatus;
+  /** 详情面板 › 网络 ›「允许联网」关着，下次打开时生效 */
+  offline: boolean;
+  /** 最近一次在本机隔离中运行的报告；没运行过时为 null */
+  report: Report | null;
   blocks: Block[];
   restore: Pair | null;
   fresh: boolean;
@@ -70,6 +90,8 @@ export interface DemoState {
   spotlight: boolean;
   /** 正在提示“可能无法正常使用”的应用 */
   alert: string | null;
+  /** 正在看完整运行报告的应用 */
+  report: string | null;
   toast: Toast | null;
   /** 点“切换过去”时图标跳一下；n 每次加一，让动画重新播放 */
   hop: { id: string; n: number } | null;
@@ -93,6 +115,8 @@ function app(
     script,
     runtime: 'native',
     status: 'idle',
+    offline: false,
+    report: null,
     blocks: [],
     restore: null,
     fresh: false,
@@ -114,6 +138,13 @@ export function initialState(): DemoState {
         {
           status: 'running',
           restore: ['昨天', 'Yesterday'],
+          report: {
+            running: true,
+            offline: false,
+            when: ['今天 9:41', 'Today, 9:41 AM'],
+            servers: 3,
+            programs: 1,
+          },
           blocks: [
             { kind: 'autostart', n: 1, fresh: false },
             { kind: 'notify', n: 1, fresh: false },
@@ -135,6 +166,19 @@ export function initialState(): DemoState {
         ['control', 'privacy', 'notify'],
         {
           restore: ['3 天前', '3 days ago'],
+          // 上次在本机隔离里运行留下的报告
+          report: {
+            running: false,
+            offline: false,
+            when: ['3 天前 · 42 分钟', '3 days ago · 42 minutes'],
+            servers: 4,
+            programs: 2,
+          },
+          blocks: [
+            { kind: 'control', n: 1, fresh: false },
+            { kind: 'privacy', n: 2, fresh: false },
+            { kind: 'notify', n: 1, fresh: false },
+          ],
         },
       ),
       app('music', ['音乐播放器', 'Music Player'], 'music', 'g5', 86, ['notify', 'control']),
@@ -162,6 +206,7 @@ export function initialState(): DemoState {
     policy: 'ask',
     spotlight: true,
     alert: null,
+    report: null,
     toast: null,
     hop: null,
   };

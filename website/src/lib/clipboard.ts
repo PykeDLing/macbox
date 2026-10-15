@@ -3,6 +3,8 @@ import { Effect } from 'effect';
 // 剪贴板 API 不可用（非 HTTPS、部分 App 内置浏览器）或被拒绝时的退路
 const copyWithSelection = (text: string) =>
   Effect.sync(() => {
+    // 选中文字要先把焦点给临时的 textarea，拷完还给原来的按钮，键盘操作（比如 Esc 关掉报告）才接得上
+    const focused = document.activeElement;
     const area = document.createElement('textarea');
     area.value = text;
     area.setAttribute('readonly', '');
@@ -16,6 +18,7 @@ const copyWithSelection = (text: string) =>
       return false;
     } finally {
       area.remove();
+      if (focused instanceof HTMLElement) focused.focus({ preventScroll: true });
     }
   });
 

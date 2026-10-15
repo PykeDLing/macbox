@@ -16,7 +16,16 @@ describe('demo window text', () => {
 
   it('renders the Chinese demo with the app’s Chinese labels', () => {
     const zh = text('zh');
-    for (const label of ['全部应用', '运行中', '虚拟 Mac', '本次已拦截', '某某网盘']) {
+    for (const label of [
+      '全部应用',
+      '运行中',
+      '虚拟 Mac',
+      '某某网盘',
+      '运行报告',
+      '本次已拦截 5 次越界行为',
+      '查看完整报告…',
+      '允许联网',
+    ]) {
       assert.include(zh, label);
     }
   });

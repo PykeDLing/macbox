@@ -104,12 +104,12 @@ const features: readonly {
     ],
   },
   {
-    icon: icons.eye,
+    icon: icons.offline,
     tint: 'g3',
-    title: ['拦截记录', 'See what was blocked'],
+    title: ['联网开关', 'Network switch'],
     text: [
-      '详情面板里列出本次运行被挡下的行为：自启、后台服务、读取私人数据……',
-      'The details panel lists what was stopped this session: login items, background services, private data reads…',
+      '在详情面板里关掉「允许联网」，应用就连不上任何服务器，本机上的代理也连不上；查不了域名，它显示的网页也打不开。',
+      'Turn off “Allow Network Access” in the details panel, and the app can’t reach any server — not even a proxy on your Mac. It can’t look up names or load the web pages it shows, either.',
     ],
   },
   {
@@ -132,9 +132,18 @@ const features: readonly {
     ],
   },
   {
+    icon: icons.report,
+    tint: 'g5',
+    wide: true,
+    title: ['运行报告', 'Run reports'],
+    text: [
+      '每次在本机隔离中运行，MacBox 都记下它写了哪些文件、改了哪些设置（只记名字）、连了哪些服务器、启动了哪些程序、哪些行为被拦下。报告可以拷贝成文字、存储为 Markdown 或图片，也可以直接分享图片；路径写成应用眼里的样子，不带你的用户名。',
+      'Each time an app runs in Native Isolation, MacBox records which files it wrote, which settings it changed (names only), which servers it contacted, which programs it launched and what was blocked. Copy the report as text, save it as Markdown or an image, or share the image. Paths are shown the way the app sees them, without your user name.',
+    ],
+  },
+  {
     icon: icons.restore,
     tint: 'g1',
-    wide: true,
     title: ['还原点', 'Restore points'],
     text: [
       'APFS 克隆，几乎不占空间，连同钥匙串一起保存。一键回到之前的状态，或设为每次退出自动还原；不需要了可以删除。',
@@ -144,7 +153,6 @@ const features: readonly {
   {
     icon: icons.checked,
     tint: 'g2',
-    wide: true,
     title: ['添加前先检查', 'Checked before it runs'],
     text: [
       '检查驱动、系统扩展、特权辅助程序和 Apple 公证，提前告诉你本机隔离装不装得下。',
@@ -309,9 +317,10 @@ export default function Home({ locale }: { locale: Locale }) {
           <p className="try">
             {t(
               <>
-                这个窗口可以操作：选中一个应用，打开、退出、切换运行环境或者删除试试<Pe>。</Pe>
+                这个窗口可以操作：选中一个应用，打开、退出、查看运行报告、关掉联网、切换运行环境或者删除试试
+                <Pe>。</Pe>
               </>,
-              'This window is live. Pick an app and try opening, quitting, switching runtimes or deleting it.',
+              'This window is live. Pick an app and try opening and quitting it, viewing its run report, turning off its network access, switching runtimes or deleting it.',
             )}
           </p>
         </div>
@@ -566,19 +575,29 @@ export default function Home({ locale }: { locale: Locale }) {
                 )}
               </li>
               <li>
+                <strong>{t('运行报告是尽力而为', 'Run reports are best effort')}</strong>
+                {t(
+                  '：启动的程序、被拦下的行为、在共享的「下载」里写的文件来自系统日志，系统会限流，没有记录不代表没有发生。连接是定时看一眼得到的，很短的连接会漏掉；服务器名字来自反向解析，常常是云服务商的机器名；经由代理的连接只显示为连到本机上的代理。',
+                  ': launched programs, blocked attempts and files written to the shared Downloads folder come from the system log, which is rate-limited, so no entry doesn’t mean nothing happened. Connections are sampled periodically, so very short ones can be missed; server names come from reverse DNS and are often cloud providers’ machine names; connections through a proxy only show up as connections to the proxy on your Mac.',
+                )}
+              </li>
+              <li>
                 <strong>
-                  {t('「本次已拦截」是尽力而为', '“Blocked This Session” is best effort')}
+                  {t(
+                    '不联网挡不住由系统代办的事',
+                    'Offline doesn’t cover what the system does for an app',
+                  )}
                 </strong>
                 {t(
-                  '：它来自系统日志，系统会限流。没有记录不代表没有被拦截。',
-                  ': it comes from the system log, which is rate-limited. No entry doesn’t mean nothing was blocked.',
+                  '：例如让你的默认浏览器打开一个网址（网址里可以带数据）、iCloud 同步、推送通知。',
+                  ': for example, opening a link in your default browser (the link can carry data), iCloud sync or push notifications.',
                 )}
               </li>
               <li>
                 <strong>{t('系统临时目录可写', 'System temp folders stay writable')}</strong>
                 {t(
-                  '：很多系统框架依赖它们，App 可以在这里留下文件。',
-                  ': many frameworks rely on them, so apps can leave files there.',
+                  '：很多系统框架依赖它们，App 可以在这里留下文件，运行报告也不统计这里。',
+                  ': many frameworks rely on them, so apps can leave files there, and run reports don’t count them.',
                 )}
               </li>
               <li>

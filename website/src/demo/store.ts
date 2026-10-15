@@ -1,5 +1,5 @@
 // 演示窗口的状态和操作。界面通过 subscribe / getState 读状态（useSyncExternalStore）；
-// 需要等一会儿才发生的事（打开要时间、运行中陆续被拦截、提示几秒后消失）都是 Effect fiber，
+// 需要等一会儿才发生的事（打开要时间、运行中陆续被拦截、连上服务器、提示几秒后消失）都是 Effect fiber，
 // 按 key 放在一个 FiberMap 里：同一个 key 再运行会中断上一个（退出应用就中断它还没走完的启动和拦截流程），
 // 作用域关闭时全部中断，页面卸载后不会再有定时器回调改状态。
 import { Duration, Effect, FiberMap, type Fiber, type Scope } from 'effect';
@@ -16,6 +16,7 @@ import {
   type Runtime,
   type Toast,
 } from './model';
+import { traceOf } from './report';
 
 type Run = (key: string, effect: Effect.Effect<void>) => Fiber.Fiber<void, never>;
 
@@ -35,6 +36,10 @@ export interface DemoStore {
   remove(id: string): void;
   add(): void;
   setRuntime(id: string, runtime: Runtime): void;
+  /** 详情面板 › 网络 ›「允许联网」 */
+  setNetwork(id: string, allowed: boolean): void;
+  showReport(id: string): void;
+  closeReport(): void;
   wake(): void;
   sleep(): void;
   resolveAlert(useVirtualMac: boolean): void;
@@ -47,6 +52,8 @@ export const timing = {
   launch: Duration.millis(800),
   launchInVM: Duration.millis(1400),
   blockEvery: Duration.millis(1200),
+  serverEvery: Duration.millis(1500),
+  programEvery: Duration.millis(2600),
   quit: Duration.millis(700),
   wake: Duration.millis(1100),
   add: Duration.millis(1000),
@@ -118,20 +125,40 @@ export function createDemo(state: DemoState = initialState()): DemoStore {
     );
   };
 
-  // 本机隔离里运行时，App 试图越界的行为一条条被挡下
+  // 运行报告陆续“看到”这个应用连上的服务器、启动的程序
+  const see = (id: string, what: 'servers' | 'programs') =>
+    updateApp(id, (a) => (a.report ? { report: { ...a.report, [what]: a.report[what] + 1 } } : {}));
+
+  // 每隔一会儿做一件事，做完为止
+  const every = <A>(interval: Duration.Duration, items: readonly A[], step: (item: A) => void) =>
+    Effect.forEach(items, (item) => after(interval, () => step(item)), { discard: true });
+
+  // 本机隔离里运行时，App 试图越界的行为一条条被挡下；同时陆续连上服务器、启动程序。
+  // 不联网时连不上，每次尝试都记成被拦下的“联网”
   const launch = (app: DemoApp) =>
     Effect.gen(function* () {
       yield* Effect.sleep(app.runtime === 'vm' ? timing.launchInVM : timing.launch);
       updateApp(app.id, () => ({ status: 'running' }));
       if (app.runtime !== 'native') return;
-      for (const kind of app.script) {
-        yield* Effect.sleep(timing.blockEvery);
-        addBlock(app.id, kind);
-      }
+      const trace = traceOf(app.id);
+      yield* Effect.all(
+        [
+          every(timing.blockEvery, app.script, (kind) => addBlock(app.id, kind)),
+          every(timing.serverEvery, trace.servers, () =>
+            app.offline ? addBlock(app.id, 'network') : see(app.id, 'servers'),
+          ),
+          every(timing.programEvery, trace.programs, () => see(app.id, 'programs')),
+        ],
+        { concurrency: 'unbounded', discard: true },
+      );
     });
 
   const afterQuit = (id: string) => {
-    updateApp(id, () => ({ status: 'idle' }));
+    // 退出后报告才统计写了哪些文件、改了哪些设置
+    updateApp(id, (a) => ({
+      status: 'idle',
+      report: a.report && a.runtime === 'native' ? { ...a.report, running: false } : a.report,
+    }));
     const app = find(id);
     if (!app || app.runtime !== 'native' || !isSevere(app)) return;
     if (state.policy === 'auto') {
@@ -153,7 +180,11 @@ export function createDemo(state: DemoState = initialState()): DemoStore {
     const next = apps[Math.min(index, apps.length - 1)];
     update((s) => ({
       apps,
-      spare: [{ ...app, removing: false, blocks: [], restore: null }, ...s.spare],
+      // 再加回来是个新盒子：没有报告、还原点，联网照默认打开
+      spare: [
+        { ...app, removing: false, blocks: [], restore: null, report: null, offline: false },
+        ...s.spare,
+      ],
       selected: next ? next.id : null,
     }));
     // 和 App 的删除确认一致：默认共享「下载」，存进那里的文件不在盒子里
@@ -191,7 +222,22 @@ export function createDemo(state: DemoState = initialState()): DemoStore {
     open(id) {
       const app = find(id);
       if (!app || app.status !== 'idle' || app.removing) return;
-      updateApp(id, () => ({ status: 'launching', blocks: [] }));
+      // 在本机隔离中运行，每次开一份新报告；虚拟 Mac 里的不记
+      updateApp(id, (a) =>
+        a.runtime === 'native'
+          ? {
+              status: 'launching',
+              blocks: [],
+              report: {
+                running: true,
+                offline: a.offline,
+                when: ['刚才', 'Just now'],
+                servers: 0,
+                programs: 0,
+              },
+            }
+          : { status: 'launching' },
+      );
       if (app.runtime === 'vm') wake();
       fork(`app:${id}`, launch(app));
     },
@@ -244,6 +290,15 @@ export function createDemo(state: DemoState = initialState()): DemoStore {
       const app = find(id);
       if (app && !isLocked(app)) updateApp(id, () => ({ runtime }));
     },
+    // 和 App 一样，运行时不能改，下次打开时生效
+    setNetwork(id, allowed) {
+      const app = find(id);
+      if (app && !isLocked(app)) updateApp(id, () => ({ offline: !allowed }));
+    },
+    showReport(id) {
+      if (find(id)?.report) update(() => ({ report: id }));
+    },
+    closeReport: () => update(() => ({ report: null })),
     wake,
     sleep: () => update(() => ({ vm: 'asleep' })),
     resolveAlert(useVirtualMac) {

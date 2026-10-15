@@ -6,9 +6,13 @@ import copy from '@phosphor-icons/core/bold/copy-bold.svg?raw';
 import desktop from '@phosphor-icons/core/bold/desktop-bold.svg?raw';
 import download from '@phosphor-icons/core/bold/download-simple-bold.svg?raw';
 import gear from '@phosphor-icons/core/bold/gear-six-bold.svg?raw';
+import globe from '@phosphor-icons/core/bold/globe-simple-bold.svg?raw';
+import handBold from '@phosphor-icons/core/bold/hand-bold.svg?raw';
 import playCircle from '@phosphor-icons/core/bold/play-circle-bold.svg?raw';
 import search from '@phosphor-icons/core/bold/magnifying-glass-bold.svg?raw';
+import sliders from '@phosphor-icons/core/bold/sliders-horizontal-bold.svg?raw';
 import squares from '@phosphor-icons/core/bold/squares-four-bold.svg?raw';
+import terminal from '@phosphor-icons/core/bold/terminal-window-bold.svg?raw';
 import backgroundServices from '@phosphor-icons/core/bold/gear-fine-bold.svg?raw';
 import launchAtLogin from '@phosphor-icons/core/bold/rocket-launch-bold.svg?raw';
 import scatteredFiles from '@phosphor-icons/core/bold/files-bold.svg?raw';
@@ -23,7 +27,10 @@ import doneFill from '@phosphor-icons/core/fill/check-circle-fill.svg?raw';
 import downloadFill from '@phosphor-icons/core/fill/download-simple-fill.svg?raw';
 import eyeFill from '@phosphor-icons/core/fill/eye-fill.svg?raw';
 import eyeSlashFill from '@phosphor-icons/core/fill/eye-slash-fill.svg?raw';
+import fileSearchFill from '@phosphor-icons/core/fill/file-magnifying-glass-fill.svg?raw';
 import githubFill from '@phosphor-icons/core/fill/github-logo-fill.svg?raw';
+import globeFill from '@phosphor-icons/core/fill/globe-simple-fill.svg?raw';
+import globeXFill from '@phosphor-icons/core/fill/globe-simple-x-fill.svg?raw';
 import handFill from '@phosphor-icons/core/fill/hand-fill.svg?raw';
 import houseFill from '@phosphor-icons/core/fill/house-fill.svg?raw';
 import hourglassFill from '@phosphor-icons/core/fill/hourglass-medium-fill.svg?raw';
@@ -63,6 +70,14 @@ export const icons = {
   blocked: blockedFill,
   trash: trashFill,
   done: doneFill,
+  online: globeFill,
+  offline: globeXFill,
+  // 运行报告的几节
+  reportFiles: scatteredFiles,
+  reportSettings: sliders,
+  reportServers: globe,
+  reportPrograms: terminal,
+  reportBlocked: handBold,
   // 空状态
   cursorClick,
   emptyPlay,
@@ -81,6 +96,7 @@ export const icons = {
   restore: restoreFill,
   eye: eyeFill,
   checked: checkedFill,
+  report: fileSearchFill,
   // 演示窗口里的应用
   cloud: cloudFill,
   downloadApp: downloadFill,
