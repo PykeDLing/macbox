@@ -297,7 +297,7 @@ struct BoxInspector: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(block.kind.title)\(block.count > 1 ? " ×\(block.count)" : "")")
                         .font(.callout)
-                    Text(block.target).font(.caption2).foregroundStyle(.secondary)
+                    Text(block.targetText).font(.caption2).foregroundStyle(.secondary)
                         .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
                 }
             }

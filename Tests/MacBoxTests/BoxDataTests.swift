@@ -132,6 +132,104 @@ struct BoxDataTests {
 
     // MARK: - 匹配规则
 
+    @Test("0.4.0 及以前的 box.json：兼容性问题按中文标题认出代码，公证检查的来源从说明里拆出；两种语言都照常显示，存回去不丢旧字段")
+    func legacyIssues() throws {
+        let paths = BoxPaths(url: root.appending(path: "\(UUID().uuidString).box"))
+        defer { try? FileManager.default.removeItem(at: root) }
+        // 旧版本写下的问题只有中文的标题和说明
+        let old: [(title: String, detail: String, code: CompatibilityIssue.Code?, source: String?)] = [
+            ("已通过 Apple 公证检查", "Developer ID Application: Example Ltd (ABCDE12345)", .notarized,
+             "Developer ID Application: Example Ltd (ABCDE12345)"),
+            ("已通过 Apple 公证检查", "来源已验证", .notarized, nil),
+            ("未通过 Apple 公证检查", "Unnotarized Developer ID。打开时 macOS 会询问你是否信任它，请确认来源可靠。", .notNotarized,
+             "Unnotarized Developer ID"),
+            ("未通过 Apple 公证检查", "签名无效。打开时 macOS 会询问你是否信任它，请确认来源可靠。", .notNotarized, nil),
+            ("需要管理员权限的辅助程序", "会以 root 身份在系统里安装常驻服务，本机隔离无法容纳。", .privilegedHelper, nil),
+            ("系统级后台服务", "会注册开机即运行的系统服务。", .systemService, nil),
+            ("系统扩展或内核扩展", "需要加载到系统内核或系统扩展框架中。", .systemExtension, nil),
+            ("硬件或音频驱动", "驱动需要安装到系统目录。", .driver, nil),
+            ("开机自启动", "自启动项会被阻止，只有你打开时它才运行。", .loginItem, nil),
+            ("访达集成", "同步状态图标、右键菜单等访达扩展不可用。", .finderIntegration, nil),
+            ("网络扩展", "VPN、代理等网络扩展需要系统级安装。", .networkExtension, nil),
+            ("自带苹果沙盒", "在 MacBox 中它改由 MacBox 的沙盒约束，数据存进盒子；请经由 MacBox 打开它。", .appSandbox, nil),
+            ("安装脚本已跳过", "安装包带有安装脚本（通常用于安装后台服务或驱动），MacBox 没有执行它们。功能异常时请改用虚拟 Mac。",
+             .installerScriptsSkipped, nil),
+            // 认不出的（比如更新的版本加的）照常读取，显示原文
+            ("以后才有的问题", "它的说明", nil, nil),
+        ]
+        let config: [String: Any] = [
+            "id": UUID().uuidString, "name": "Old", "bundleIdentifier": "x", "appFolderName": "Old.app", "runtime": "isolated",
+            "shareDownloads": true, "showInLaunchpad": true, "resetOnQuit": false, "preferencePrefixes": [String](),
+            "isInstaller": false, "createdAt": 0,
+            "issues": old.map { ["severity": $0.code?.severity.rawValue ?? "info", "title": $0.title, "detail": $0.detail] },
+        ]
+        try AppPaths.ensure(paths.url)
+        try JSONSerialization.data(withJSONObject: config).write(to: paths.config)
+
+        let issues = try paths.loadConfig().issues
+        #expect(issues.map(\.code) == old.map(\.code))
+        #expect(issues.map(\.source) == old.map(\.source))
+        Localization.$testLanguage.withValue(.chinese) {
+            #expect(issues.map(\.localizedTitle) == old.map(\.title))
+            #expect(issues.map(\.localizedDetail) == old.map(\.detail))
+        }
+        Localization.$testLanguage.withValue(.english) {
+            #expect(issues[0].localizedTitle == "Passed Apple notarization check")
+            #expect(issues[0].localizedDetail == "Developer ID Application: Example Ltd (ABCDE12345)")
+            #expect(issues[1].localizedDetail == "Source verified")
+            #expect(issues[2].localizedDetail.hasPrefix("Unnotarized Developer ID. macOS will ask whether you trust it"))
+            #expect(issues[3].localizedDetail.hasPrefix("Invalid signature. macOS will ask whether you trust it"))
+            #expect(issues[5].localizedTitle == "System-wide background service")
+            #expect(issues[5].localizedDetail == "Registers a system service that runs at startup.")
+            #expect(issues.dropLast().allSatisfy { !$0.localizedTitle.contains(where: \.isHan) && !$0.localizedDetail.contains(where: \.isHan) })
+            #expect(issues.last?.localizedTitle == "以后才有的问题" && issues.last?.localizedDetail == "它的说明")
+        }
+
+        // 存回去：补上代码，旧版本要读的中文标题、说明原样留着
+        var loaded = try paths.loadConfig()
+        loaded.name = "Renamed"
+        try paths.save(loaded)
+        let saved = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: paths.config)) as? [String: Any])
+        let savedIssues = try #require(saved["issues"] as? [[String: Any]])
+        #expect(savedIssues.map { $0["code"] as? String } == old.map { $0.code?.rawValue })
+        #expect(savedIssues.map { $0["title"] as? String } == old.map(\.title))
+        #expect(savedIssues.map { $0["detail"] as? String } == old.map(\.detail))
+        #expect(try paths.loadConfig().issues == issues)
+    }
+
+    @Test("新写入的兼容性问题存代码，不随界面语言变化；标题、说明显示时才按当前语言生成")
+    func issueCodes() throws {
+        let paths = BoxPaths(url: root.appending(path: "\(UUID().uuidString).box"))
+        defer { try? FileManager.default.removeItem(at: root) }
+        try AppPaths.ensure(paths.url)
+        var config = BoxConfig(id: UUID(), name: "T", bundleIdentifier: "x", appFolderName: "T.app")
+        func saved(_ language: AppLanguage) throws -> Data {
+            config.issues = Localization.$testLanguage.withValue(language) {
+                [CompatibilityIssue(.notNotarized, source: "Unnotarized Developer ID"), CompatibilityIssue(.loginItem),
+                 CompatibilityIssue(.notarized)]
+            }
+            try paths.save(config)
+            return try Data(contentsOf: paths.config)
+        }
+        let data = try saved(.english)
+        #expect(data == (try saved(.chinese)))
+        let text = String(decoding: data, as: UTF8.self)
+        #expect(text.contains(#""code" : "notNotarized""#) && text.contains(#""source" : "Unnotarized Developer ID""#))
+        #expect(!text.contains("Failed Apple") && !text.contains("Launch at login"), "存的中文是给旧版本读的，不随界面语言变化")
+
+        let issues = try paths.loadConfig().issues
+        #expect(issues.map(\.severity) == [.limited, .limited, .info])
+        #expect(issues.map(\.id) == ["notNotarized", "loginItem", "notarized"])
+        Localization.$testLanguage.withValue(.english) {
+            #expect(issues.map(\.localizedTitle) == ["Failed Apple notarization check", "Launch at login", "Passed Apple notarization check"])
+            #expect(issues[2].localizedDetail == "Source verified")
+        }
+        Localization.$testLanguage.withValue(.chinese) {
+            #expect(issues.map(\.localizedTitle) == ["未通过 Apple 公证检查", "开机自启动", "已通过 Apple 公证检查"])
+            #expect(issues[0].localizedDetail == "Unnotarized Developer ID。打开时 macOS 会询问你是否信任它，请确认来源可靠。")
+        }
+    }
+
     @Test("偏好设置前缀：同一应用的两份、前缀包含关系都算重叠；名字相近的不算")
     func preferenceOverlap() {
         #expect(PreferenceLease.overlaps(["com.quark.clouddrive"], ["com.quark.clouddrive"]))
@@ -185,4 +283,8 @@ struct BoxDataTests {
             #expect(throws: MacBoxError.self) { try PackageExtractor.checkSupported(URL(fileURLWithPath: "/tmp/\(name)")) }
         }
     }
+}
+
+private extension Character {
+    var isHan: Bool { unicodeScalars.first?.properties.isIdeographic == true }
 }

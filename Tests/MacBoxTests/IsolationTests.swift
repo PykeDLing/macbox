@@ -362,7 +362,7 @@ struct IsolationTests {
             EscapeGuard.shared.unregister(session: main.pid)
         }
         #expect(launched.contains("/usr/bin/sw_vers"), "\(launched)")
-        #expect(network.contains { $0.target.contains("443") }, "\(network.map(\.target))")
+        #expect(network.contains { $0.subject == .connect(port: 443) }, "\(network.map(\.target))")
     }
 
     @Test("系统日志：多个订阅共用一个 log 进程；盒子派生的系统程序的拒绝记录归盒子，本机同名进程的不归")

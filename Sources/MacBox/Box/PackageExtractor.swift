@@ -152,8 +152,7 @@ nonisolated enum PackageExtractor {
         }
         var result = Extracted(app: try copyApp(app.url, named: app.name, into: destination))
         if hasScripts {
-            result.issues.append(.init(severity: .limited, title: "安装脚本已跳过",
-                                       detail: "安装包带有安装脚本（通常用于安装后台服务或驱动），MacBox 没有执行它们。功能异常时请改用虚拟 Mac。"))
+            result.issues.append(CompatibilityIssue(.installerScriptsSkipped))
         }
         return result
     }

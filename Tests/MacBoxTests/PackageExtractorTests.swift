@@ -161,7 +161,7 @@ final class PackageExtractorTests {
         let pkg = try await makePkg("demo", in: try directory(), payload: payload, scripts: scripts)
         let extracted = try await PackageExtractor.extractApp(from: pkg, into: output())
         #expect(extracted.app.lastPathComponent == "PkgApp.app")
-        #expect(extracted.issues.contains { $0.title == "安装脚本已跳过" })
+        #expect(extracted.issues.contains { $0.code == .installerScriptsSkipped })
         #expect(!FileManager.default.fileExists(atPath: marker.path))
     }
 

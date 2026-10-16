@@ -56,8 +56,11 @@ nonisolated final class Localization: Observable, Sendable {
         }
     }
 
+    /// 测试里用 `Localization.$testLanguage.withValue(.english)` 切换语言：只影响这个任务，不改设置
+    @TaskLocal static var testLanguage: AppLanguage?
+
     var isEnglish: Bool {
-        switch language {
+        switch Self.testLanguage ?? language {
         case .chinese: false
         case .english: true
         case .system: Self.systemLanguage == .english

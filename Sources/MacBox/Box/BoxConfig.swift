@@ -26,45 +26,128 @@ nonisolated struct CompatibilityIssue: Codable, Hashable, Identifiable, Sendable
         private var rank: Int { [.info: 0, .limited: 1, .needsVirtualMac: 2][self]! }
     }
 
+    /// 哪一类问题。存进 box.json 的是 rawValue，显示的标题、说明按当前语言生成
+    nonisolated enum Code: String, Codable, Sendable {
+        case privilegedHelper, systemService, systemExtension, driver, loginItem, finderIntegration, networkExtension,
+             appSandbox, notarized, notNotarized, installerScriptsSkipped
+    }
+
     var severity: Severity
-    /// 中文原文，存进 box.json，同时作为识别是哪一类问题的键；显示时用 localizedTitle
+    /// 哪一类问题。0.4.0 及以前的 box.json 没有，读的时候按 title 对照出来（见 init(from:)）；
+    /// 更新的版本加的、这一版认不出的为 nil，显示 title、detail 原文
+    var code: Code?
+    /// 公证检查时 spctl 给出的来源（开发者证书名、“Notarized Developer ID”），原样；没有时为 nil
+    var source: String?
+    /// 中文的标题、说明，不随界面语言变化。box.json 的字段只增不改：旧版 MacBox 要读它们，标题还是旧版识别问题的键。
+    /// 这一版只在认不出 code 时显示它们
     var title: String
     var detail: String
-    var id: String { title }
+    var id: String { code?.rawValue ?? title }
 
-    var localizedTitle: String { Localization.shared.isEnglish ? Self.english[title]?.title ?? title : title }
+    init(_ code: Code, source: String? = nil) {
+        severity = code.severity
+        self.code = code
+        self.source = source
+        title = code.title.0
+        detail = code.detail(source: source).0
+    }
+
+    var localizedTitle: String { code.map { L($0.title.0, $0.title.1) } ?? title }
 
     var localizedDetail: String {
-        guard Localization.shared.isEnglish else { return detail }
-        switch title {
-        // 这两条的说明带有 spctl 的输出，只翻译固定部分
-        case "已通过 Apple 公证检查":
-            return detail == "来源已验证" ? "Source verified" : detail
-        case "未通过 Apple 公证检查":
-            let source = detail.components(separatedBy: "。打开时").first ?? detail
-            return "\(source == "签名无效" ? "Invalid signature" : source). macOS will ask whether you trust it when you open it; make sure it comes from a source you trust."
-        default:
-            return Self.english[title]?.detail ?? detail
+        guard let text = code?.detail(source: source) else { return detail }
+        return L(text.0, text.1)
+    }
+}
+
+nonisolated extension CompatibilityIssue.Code {
+    var severity: CompatibilityIssue.Severity {
+        switch self {
+        case .privilegedHelper, .systemService, .systemExtension, .driver, .networkExtension: .needsVirtualMac
+        case .loginItem, .finderIntegration, .notNotarized, .installerScriptsSkipped: .limited
+        case .appSandbox, .notarized: .info
         }
     }
 
-    /// 以中文标题为键的英文版本。AppInspector、PackageExtractor 里新增问题时要在这里补上
-    private static let english: [String: (title: String, detail: String)] = [
-        "需要管理员权限的辅助程序": ("Privileged helper tool",
-                             "Installs a resident service that runs as root, which Native Isolation can’t contain."),
-        "系统级后台服务": ("System-wide background service", "Registers a system service that runs at startup."),
-        "系统扩展或内核扩展": ("System or kernel extension",
-                      "Needs to be loaded into the kernel or the system extensions framework."),
-        "硬件或音频驱动": ("Hardware or audio driver", "Drivers must be installed into system folders."),
-        "开机自启动": ("Launch at login", "Login items are blocked; it only runs when you open it."),
-        "访达集成": ("Finder integration", "Finder extensions such as sync status badges and context menu items won’t work."),
-        "网络扩展": ("Network extension", "Network extensions such as VPNs and proxies require a system-wide install."),
-        "自带苹果沙盒": ("Uses the App Sandbox",
-                   "In MacBox it’s confined by MacBox’s sandbox instead and its data goes into the box. Always open it through MacBox."),
-        "已通过 Apple 公证检查": ("Passed Apple notarization check", ""),
-        "未通过 Apple 公证检查": ("Failed Apple notarization check", ""),
-        "安装脚本已跳过": ("Installer scripts skipped",
-                     "The package contains installer scripts (usually for installing background services or drivers), which MacBox didn’t run. If something doesn’t work, switch to Virtual Mac."),
+    /// 标题的中文和英文
+    var title: (String, String) {
+        switch self {
+        case .privilegedHelper: ("需要管理员权限的辅助程序", "Privileged helper tool")
+        case .systemService: ("系统级后台服务", "System-wide background service")
+        case .systemExtension: ("系统扩展或内核扩展", "System or kernel extension")
+        case .driver: ("硬件或音频驱动", "Hardware or audio driver")
+        case .loginItem: ("开机自启动", "Launch at login")
+        case .finderIntegration: ("访达集成", "Finder integration")
+        case .networkExtension: ("网络扩展", "Network extension")
+        case .appSandbox: ("自带苹果沙盒", "Uses the App Sandbox")
+        case .notarized: ("已通过 Apple 公证检查", "Passed Apple notarization check")
+        case .notNotarized: ("未通过 Apple 公证检查", "Failed Apple notarization check")
+        case .installerScriptsSkipped: ("安装脚本已跳过", "Installer scripts skipped")
+        }
+    }
+
+    /// 说明的中文和英文。公证检查的两条带上 spctl 给出的来源
+    func detail(source: String?) -> (String, String) {
+        switch self {
+        case .privilegedHelper: ("会以 root 身份在系统里安装常驻服务，本机隔离无法容纳。",
+                                 "Installs a resident service that runs as root, which Native Isolation can’t contain.")
+        case .systemService: ("会注册开机即运行的系统服务。", "Registers a system service that runs at startup.")
+        case .systemExtension: ("需要加载到系统内核或系统扩展框架中。",
+                                "Needs to be loaded into the kernel or the system extensions framework.")
+        case .driver: ("驱动需要安装到系统目录。", "Drivers must be installed into system folders.")
+        case .loginItem: ("自启动项会被阻止，只有你打开时它才运行。", "Login items are blocked; it only runs when you open it.")
+        case .finderIntegration: ("同步状态图标、右键菜单等访达扩展不可用。",
+                                  "Finder extensions such as sync status badges and context menu items won’t work.")
+        case .networkExtension: ("VPN、代理等网络扩展需要系统级安装。",
+                                 "Network extensions such as VPNs and proxies require a system-wide install.")
+        case .appSandbox: ("在 MacBox 中它改由 MacBox 的沙盒约束，数据存进盒子；请经由 MacBox 打开它。",
+                           "In MacBox it’s confined by MacBox’s sandbox instead and its data goes into the box. Always open it through MacBox.")
+        case .notarized: (source ?? "来源已验证", source ?? "Source verified")
+        case .notNotarized: ("\(source ?? "签名无效")。打开时 macOS 会询问你是否信任它，请确认来源可靠。",
+                             "\(source ?? "Invalid signature"). macOS will ask whether you trust it when you open it; make sure it comes from a source you trust.")
+        case .installerScriptsSkipped: ("安装包带有安装脚本（通常用于安装后台服务或驱动），MacBox 没有执行它们。功能异常时请改用虚拟 Mac。",
+                                        "The package contains installer scripts (usually for installing background services or drivers), which MacBox didn’t run. If something doesn’t work, switch to Virtual Mac.")
+        }
+    }
+}
+
+nonisolated extension CompatibilityIssue {
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        severity = try container.decode(Severity.self, forKey: .severity)
+        title = try container.decode(String.self, forKey: .title)
+        detail = try container.decode(String.self, forKey: .detail)
+        if container.contains(.code) {
+            code = try? container.decode(Code.self, forKey: .code) // 认不出的不让整个 box.json 读不出
+            source = try container.decodeIfPresent(String.self, forKey: .source)
+            return
+        }
+        // 0.4.0 及以前：按中文标题认，公证检查的来源夹在说明里
+        code = Self.legacyCodes[title]
+        switch code {
+        case .notarized:
+            source = detail == "来源已验证" ? nil : detail
+        case .notNotarized:
+            let source = detail.components(separatedBy: "。打开时").first ?? detail
+            self.source = source == "签名无效" ? nil : source
+        default:
+            source = nil
+        }
+    }
+
+    /// 0.1.0～0.4.0 写下的中文标题，旧文件靠它认出是哪一类问题。不要改，改措辞请改 Code.title
+    private static let legacyCodes: [String: Code] = [
+        "需要管理员权限的辅助程序": .privilegedHelper,
+        "系统级后台服务": .systemService,
+        "系统扩展或内核扩展": .systemExtension,
+        "硬件或音频驱动": .driver,
+        "开机自启动": .loginItem,
+        "访达集成": .finderIntegration,
+        "网络扩展": .networkExtension,
+        "自带苹果沙盒": .appSandbox,
+        "已通过 Apple 公证检查": .notarized,
+        "未通过 Apple 公证检查": .notNotarized,
+        "安装脚本已跳过": .installerScriptsSkipped,
     ]
 }
 
