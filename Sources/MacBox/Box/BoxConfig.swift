@@ -142,6 +142,8 @@ nonisolated struct BoxPaths: Hashable, Sendable {
     var restorePointStaging: URL { url.appending(path: "RestorePoint.tmp", directoryHint: .isDirectory) }
     /// 安装器下载的安装包里取出的 App：取出、检查完才整体换上去
     var appStaging: URL { url.appending(path: "App.new", directoryHint: .isDirectory) }
+    /// 最近一次运行用的沙盒规则（见 SandboxProfile），便于排查
+    var sandboxProfile: URL { url.appending(path: "sandbox.sb") }
 
     var keychains: URL { home.appending(path: "Library/Keychains", directoryHint: .isDirectory) }
     var boxKeychain: URL { keychains.appending(path: "box.keychain-db") }
@@ -152,10 +154,30 @@ nonisolated struct BoxPaths: Hashable, Sendable {
     func app(_ config: BoxConfig) -> URL { appDirectory.appending(path: config.appFolderName) }
     func source(_ config: BoxConfig) -> URL? { config.sourceName.map { sourceDirectory.appending(path: $0) } }
 
-    /// 还原点包含的内容。钥匙串在 Home 里，它的密码必须一起保存、一起还原，否则还原后钥匙串打不开
-    var restorableItems: [String] { ["Home", "Prefs", keychainPassword.lastPathComponent] }
-    /// 会被整体替换、删除的项目（FileOps.replace）。启动时按这些名字收拾中途崩溃留下的残局
-    var replaceableItems: [String] { ["App", "Home", "Prefs", "tmp", keychainPassword.lastPathComponent, "RestorePoint"] }
+    // 盒子根目录下的每一项按 App 在沙盒里能怎样碰它分成三类（规则见 SandboxProfile），每一项恰好属于一类：
+    // App 可写的、MacBox 私有的、App 只能读的。新增一项时要放进其中一类（BoxLayoutTests 会检查）。
+    // 文件夹要带 directoryHint: .isDirectory：私有的文件夹连同里面的一起挡，文件只挡它自己
+
+    /// App 可写的：盒子里只有这几处，里面随便新建、改动、删除
+    var writableItems: [URL] { [home, tmp, appDirectory] }
+    /// MacBox 私有的，App 读不到：本机原来的偏好设置备份（登录状态、设备 ID）和借出的日志、还原点、钥匙串密码，
+    /// 以及运行报告（记着它以前每次运行写了什么、连了哪里，不该由它来读）
+    var privateItems: [URL] { [prefs, restorePoint, reports, keychainPassword] }
+    /// App 只能读、不能改的：MacBox 自己的记录和拖进来的原始文件。MacBox 在沙盒外照着它们做事，
+    /// App 改了它们，MacBox 就会照着改过的内容替它删改沙盒外的文件。正在建的还原点、正在取出的新 App 只在维护期间（App 没在运行）出现
+    var readOnlyItems: [URL] { [config, sourceDirectory, sandboxProfile, unfinishedMarker, restorePointStaging, appStaging] }
+
+    /// 骨架：MacBox 在沙盒外会顺着走的文件夹，文件夹本身不能删除、改名、换成符号链接（只有里面可写）。
+    /// 可写的那几处的 subpath 也包括它自己：App 可以清空 App 文件夹后 rmdir，再在原处放一个指向 /Applications 的链接，
+    /// MacBox 在沙盒外上锁、解锁、找安装包、准备主目录时就会顺着链接改到别处（去掉你自己装的同名 App 的执行权限、
+    /// 把你真实的「下载」移走）。主目录里的 Library、Library/Keychains 同理：MacBox 每次启动前会在里面
+    /// 替换 login.keychain-db，顺着链接替换的会是你自己的「登录」钥匙串
+    var skeleton: [URL] { writableItems + [home.appending(path: "Library", directoryHint: .isDirectory), keychains] }
+
+    /// 还原点包含的内容（名字）。钥匙串在 Home 里，它的密码必须一起保存、一起还原，否则还原后钥匙串打不开
+    var restorableItems: [String] { [home, prefs, keychainPassword].map(\.lastPathComponent) }
+    /// 会被整体替换、删除的项目（名字，见 FileOps.replace）。启动时按这些名字收拾中途崩溃留下的残局
+    var replaceableItems: [String] { [appDirectory, home, prefs, tmp, keychainPassword, restorePoint].map(\.lastPathComponent) }
 
     static func new(id: UUID) -> BoxPaths {
         BoxPaths(url: AppPaths.boxes.appending(path: "\(id.uuidString).box", directoryHint: .isDirectory))

@@ -199,7 +199,7 @@ struct LifecycleTests {
         let box = try #require(store.box(id: config.id))
         try await Task.sleep(for: .seconds(1.5)) // 旧版此时已把它当成直接打开、在隔离中重新打开了
         #expect(box.blocks.isEmpty, "不该记成“在沙盒外启动程序”")
-        #expect(box.activity == .idle && !FileOps.exists(paths.url.appending(path: "sandbox.sb")), "不该重新打开")
+        #expect(box.activity == .idle && !FileOps.exists(paths.sandboxProfile), "不该重新打开")
         #expect(AppLock.isLocked(app))
     }
 
@@ -223,6 +223,41 @@ struct LifecycleTests {
         #expect(PreferenceLease.domain(identifier, isCoveredBy: box.config.preferencePrefixes))
         #expect(!FileOps.contents(of: AppPaths.boxes).contains { $0.pathExtension == BoxPaths.importingSuffix })
         #expect(try await Shell.run("/usr/bin/security", ["list-keychains", "-d", "user"]).output == searchListBefore)
+    }
+
+    @Test("添加、运行、建还原点之后，盒子根目录下的每一项恰好属于一类（见 BoxLayoutTests）", .timeLimit(.minutes(2)))
+    func boxItemsAreClassified() async throws {
+        let fixture = LifecycleFixture()
+        defer { await fixture.cleanup() }
+        let source = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-\(UUID().uuidString)/Layout.app")
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let identifier = "dev.macboxtest.lifecycle-layout-\(UUID().uuidString.prefix(8).lowercased())"
+        try makeFakeApp(at: source, identifier: identifier, script: "#!/bin/sh\necho x > \"$HOME/note\"\nexit 0\n")
+
+        let store = await fixture.start()
+        await store.importItems([source])
+        let box = try #require(store.boxes.first { $0.config.bundleIdentifier == identifier })
+        fixture.track(box.paths.url)
+        await box.open()
+        #expect(await eventually(.seconds(15)) { box.activity == .idle && box.report?.endedAt != nil })
+        #expect(box.lastError == nil)
+        try await box.createRestorePoint()
+
+        let paths = box.paths
+        // 包括隐藏的（.keychain-password）
+        let names = try FileManager.default.contentsOfDirectory(atPath: paths.url.path)
+        // 这些走一遍下来一定有：缺了说明流程没走到，下面的检查就没有意义
+        let expected = [paths.config, paths.sourceDirectory, paths.appDirectory, paths.home, paths.tmp, paths.prefs,
+                        paths.reports, paths.restorePoint, paths.keychainPassword, paths.sandboxProfile]
+        #expect(Set(expected.map(\.lastPathComponent)).isSubset(of: names), "\(names.sorted())")
+        let classified = paths.writableItems + paths.privateItems + paths.readOnlyItems
+        for name in names {
+            #expect(paths.classes(of: name).count == 1, "「\(name)」：\(paths.classes(of: name))")
+            // 私有的文件夹要连同里面的一起挡，靠的是声明时带了 .isDirectory（见 SandboxProfile）
+            guard let declared = classified.first(where: { $0.lastPathComponent == name }) else { continue }
+            let isDirectory = (try? paths.url.appending(path: name).resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            #expect(declared.hasDirectoryPath == isDirectory, "「\(name)」")
+        }
     }
 
     @Test("启动时收拾中途崩溃的还原、替换、导入：还原重做，残留删掉，还原点换到一半的改回来", .timeLimit(.minutes(1)))

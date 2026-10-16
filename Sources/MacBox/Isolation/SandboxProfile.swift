@@ -17,21 +17,12 @@ nonisolated enum SandboxProfile {
         // 共享时放行写你的「下载」，并且每次写都在系统日志里记一笔：运行报告靠它知道应用在里面写了什么。
         // MacBox 自己不去读「下载」：那要你在系统设置里授权，第一次会弹窗问，还分不出哪些是你自己放的
         let downloadsRule = config.shareDownloads ? "(allow file-write* (subpath \(quote("\(home)/Downloads"))) (with report))" : ""
-        // 盒子里只有这几处可写。盒子根目录下其余的是 MacBox 自己的记录：偏好设置借出的日志和本机设置的备份（Prefs）、
-        // box.json、钥匙串密码、还原点、运行报告。App 改了它们，MacBox 收尾时会照着改过的内容替它删改沙盒外的文件
-        // （都是盒子目录的直接子项，在真实路径后面拼名字；它们可能还不存在，不能逐个解析）
-        func inBox(_ url: URL) -> String { boxRoot + "/" + url.lastPathComponent }
-        let boxWritable = [box.home, box.tmp, box.appDirectory].map(inBox)
-        // 可写的只是这几个文件夹里面，文件夹本身不能删、不能改名、不能换成符号链接：
-        // subpath 也包括它自己，App 可以清空 App 文件夹后 rmdir，再在原处放一个指向 /Applications 的链接，
-        // MacBox 在沙盒外上锁、解锁、找安装包、准备主目录时就会顺着链接改到别处（去掉你自己装的同名 App 的执行权限、
-        // 把你真实的「下载」移走）。主目录里的 Library、Library/Keychains 同理：MacBox 每次启动前会在里面
-        // 替换 login.keychain-db，顺着链接替换的会是你自己的「登录」钥匙串
-        let boxSkeleton = boxWritable + ["Library", "Library/Keychains"].map { inBox(box.home) + "/" + $0 }
-        // 盒子里 App 不该看到的：本机原来的偏好设置备份（登录状态、设备 ID）、钥匙串密码、还原点，
-        // 以及运行报告（记着它以前每次运行写了什么、连了哪里，不该由它来读）
-        let boxPrivate = [box.prefs, box.restorePoint, box.reports].map { "(subpath \(quote(inBox($0))))" }
-            + ["(literal \(quote(inBox(box.keychainPassword))))"]
+        // 盒子里哪些可写、哪些不能删改、哪些读不到，见 BoxPaths 的分类。
+        // 在盒子的真实路径后面拼上相对盒子的路径：它们可能还不存在，不能逐个解析
+        func inBox(_ url: URL) -> String { boxRoot + url.path.dropFirst(box.url.path.count) }
+        let boxWritable = box.writableItems.map(inBox)
+        let boxSkeleton = box.skeleton.map(inBox)
+        let boxPrivate = box.privateItems.map { "(\($0.hasDirectoryPath ? "subpath" : "literal") \(quote(inBox($0))))" }
 
         let privateReads = [
             "Library/Application Support", "Library/Containers", "Library/Group Containers",

@@ -85,7 +85,7 @@ final class IsolatedSession {
         let before = RunSnapshot(files: await files, preferences: preferences)
 
         let profile = SandboxProfile.make(box: paths, config: config)
-        try? profile.write(to: paths.url.appending(path: "sandbox.sb"), atomically: true, encoding: .utf8) // 便于排查
+        try? profile.write(to: paths.sandboxProfile, atomically: true, encoding: .utf8) // 便于排查
         var options = ChildProcess.Options()
         options.environment = environment(for: paths)
         options.newProcessGroup = true
@@ -309,13 +309,12 @@ final class IsolatedSession {
         }
     }
 
-    /// MacBox 在沙盒外要读写的盒子文件夹不能是符号链接，App 必须真的在盒子的 App 文件夹里。
+    /// MacBox 在沙盒外要读写的盒子文件夹（BoxPaths.skeleton）不能是符号链接，App 必须真的在盒子的 App 文件夹里。
     /// 现在的沙盒规则不许 App 删除、替换这些文件夹（见 SandboxProfile），旧版的规则许可：那时被换成指向别处的链接的，
     /// 顺着链接准备主目录、替换钥匙串的链接、给 App 上锁解锁，改到的都是盒子以外你自己的文件。
     /// App 包本身在 App 文件夹里面，运行期间仍然可能被换掉，所以每次上锁前也要查
     nonisolated static func checkLayout(_ paths: BoxPaths, app: URL) throws {
-        let folders = [paths.home, paths.tmp, paths.appDirectory, paths.home.appending(path: "Library"), paths.keychains]
-        if let replaced = folders.first(where: { isSymlink($0.path) }) {
+        if let replaced = paths.skeleton.first(where: { isSymlink($0.path) }) {
             let name = replaced.lastPathComponent
             throw MacBoxError(L("盒子里的「\(name)」文件夹被换成了指向别处的链接。为了不改动盒子以外的文件，这个应用不会打开。可以删除它再重新添加。",
                                 "The “\(name)” folder in this box was replaced with a link to another location. To avoid changing files outside the box, the app won’t open. Try deleting it and adding it again."))
