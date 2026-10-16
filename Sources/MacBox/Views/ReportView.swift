@@ -245,7 +245,7 @@ private struct ReportContent: View {
                 Placeholder(L("没有记录到被拦下的行为。", "No blocked attempts were recorded."))
             } else {
                 ForEach(report.blocks) { block in
-                    ReportRow(title: block.kind.title, detail: block.target, trailing: block.count > 1 ? "×\(block.count)" : nil,
+                    ReportRow(title: block.kind.title, detail: block.targetText, trailing: block.count > 1 ? "×\(block.count)" : nil,
                               tint: block.kind.suggestsVirtualMac ? .orange : nil)
                 }
             }
@@ -491,7 +491,7 @@ private struct ReportCard: View {
             }
             if !report.blocks.isEmpty {
                 CardList(title: L("被 MacBox 拦下", "Blocked by MacBox"),
-                         rows: report.blocks.prefix(5).map { ($0.kind.title, $0.target) }, more: report.blocks.count - 5)
+                         rows: report.blocks.prefix(5).map { ($0.kind.title, $0.targetText) }, more: report.blocks.count - 5)
             }
             Divider()
             HStack {

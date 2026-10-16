@@ -315,7 +315,7 @@ nonisolated enum AppInspector {
 
     // MARK: - 兼容性
 
-    /// 问题的标题和说明以中文存进 box.json，英文版本见 CompatibilityIssue.english
+    /// box.json 里存问题的代码，标题和说明在显示时生成（见 CompatibilityIssue.Code）
     @concurrent
     static func scan(_ app: URL) async -> [CompatibilityIssue] {
         var issues: [CompatibilityIssue] = []
@@ -325,42 +325,34 @@ nonisolated enum AppInspector {
         }
 
         if has("Library/LaunchServices") || infoDictionary(of: app)?["SMPrivilegedExecutables"] != nil {
-            issues.append(.init(severity: .needsVirtualMac, title: "需要管理员权限的辅助程序",
-                                detail: "会以 root 身份在系统里安装常驻服务，本机隔离无法容纳。"))
+            issues.append(CompatibilityIssue(.privilegedHelper))
         }
         if has("Library/LaunchDaemons") {
-            issues.append(.init(severity: .needsVirtualMac, title: "系统级后台服务",
-                                detail: "会注册开机即运行的系统服务。"))
+            issues.append(CompatibilityIssue(.systemService))
         }
         if has("Library/SystemExtensions") || containsItem(in: contents, withExtensions: ["kext", "systemextension"]) {
-            issues.append(.init(severity: .needsVirtualMac, title: "系统扩展或内核扩展",
-                                detail: "需要加载到系统内核或系统扩展框架中。"))
+            issues.append(CompatibilityIssue(.systemExtension))
         }
         if FileOps.contents(of: contents.appending(path: "PlugIns")).contains(where: { $0.pathExtension == "driver" }) {
-            issues.append(.init(severity: .needsVirtualMac, title: "硬件或音频驱动",
-                                detail: "驱动需要安装到系统目录。"))
+            issues.append(CompatibilityIssue(.driver))
         }
         if has("Library/LoginItems") || has("Library/LaunchAgents") {
-            issues.append(.init(severity: .limited, title: "开机自启动",
-                                detail: "自启动项会被阻止，只有你打开时它才运行。"))
+            issues.append(CompatibilityIssue(.loginItem))
         }
         for appex in FileOps.contents(of: contents.appending(path: "PlugIns")) where appex.pathExtension == "appex" {
             let point = (infoDictionary(of: appex)?["NSExtension"] as? [String: Any])?["NSExtensionPointIdentifier"] as? String ?? ""
             if point.contains("FinderSync") || point.contains("fileprovider") {
-                issues.append(.init(severity: .limited, title: "访达集成",
-                                    detail: "同步状态图标、右键菜单等访达扩展不可用。"))
+                issues.append(CompatibilityIssue(.finderIntegration))
                 break
             }
         }
 
         let entitlements = (try? await Shell.run("/usr/bin/codesign", ["-d", "--entitlements", "-", "--xml", app.path]))?.output ?? ""
         if entitlements.contains("com.apple.developer.networking.networkextension") {
-            issues.append(.init(severity: .needsVirtualMac, title: "网络扩展",
-                                detail: "VPN、代理等网络扩展需要系统级安装。"))
+            issues.append(CompatibilityIssue(.networkExtension))
         }
         if entitlements.contains("com.apple.security.app-sandbox") {
-            issues.append(.init(severity: .info, title: "自带苹果沙盒",
-                                detail: "在 MacBox 中它改由 MacBox 的沙盒约束，数据存进盒子；请经由 MacBox 打开它。"))
+            issues.append(CompatibilityIssue(.appSandbox))
         }
         return issues
     }
@@ -378,11 +370,9 @@ nonisolated enum AppInspector {
         if result?.status == 0 {
             // 只读的文件也要去掉（xattr -dr 做不到），见 clearQuarantine
             PackageExtractor.clearQuarantine(app)
-            return CompatibilityIssue(severity: .info, title: "已通过 Apple 公证检查",
-                                      detail: field("origin") ?? field("source") ?? "来源已验证")
+            return CompatibilityIssue(.notarized, source: field("origin") ?? field("source"))
         }
-        return CompatibilityIssue(severity: .limited, title: "未通过 Apple 公证检查",
-                                  detail: "\(field("source") ?? "签名无效")。打开时 macOS 会询问你是否信任它，请确认来源可靠。")
+        return CompatibilityIssue(.notNotarized, source: field("source"))
     }
 
     private static func containsItem(in directory: URL, withExtensions extensions: Set<String>) -> Bool {

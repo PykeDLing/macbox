@@ -30,11 +30,110 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
         var suggestsVirtualMac: Bool { [.backgroundService, .systemInstall].contains(self) }
     }
 
+    /// 不是路径、地址的拦截对象。target 里存它的代码（见 code），显示时才按当前语言生成文字
+    nonisolated enum Subject: Hashable, Sendable {
+        case notificationCenter
+        case nameLookup
+        case backgroundDownloads
+        /// 在线安装器自己下载的安装包（挂载它被挡）
+        case installerPackage
+        /// 登录项与后台项（SMAppService）
+        case loginItems
+        /// 连接服务器的某个端口，nil 是任意端口
+        case connect(port: Int?)
+        /// 在某个端口等待别的设备连进来，nil 是任意端口
+        case listen(port: Int?)
+
+        var code: String {
+            switch self {
+            case .notificationCenter: "notification-center"
+            case .nameLookup: "dns"
+            case .backgroundDownloads: "background-downloads"
+            case .installerPackage: "installer-package"
+            case .loginItems: "login-items"
+            case .connect(let port): "connect:\(port.map(String.init) ?? "*")"
+            case .listen(let port): "listen:\(port.map(String.init) ?? "*")"
+            }
+        }
+
+        init?(code: String) {
+            switch code {
+            case "notification-center": self = .notificationCenter
+            case "dns": self = .nameLookup
+            case "background-downloads": self = .backgroundDownloads
+            case "installer-package": self = .installerPackage
+            case "login-items": self = .loginItems
+            default:
+                guard let match = code.wholeMatch(of: /(connect|listen):(\*|\d+)/) else { return nil }
+                let port = Int(match.2)
+                self = match.1 == "connect" ? .connect(port: port) : .listen(port: port)
+            }
+        }
+
+        var text: String {
+            switch self {
+            case .notificationCenter: L("通知中心", "Notification Center")
+            case .nameLookup: L("域名解析（DNS）", "Name lookups (DNS)")
+            case .backgroundDownloads: L("后台下载服务", "Background download service")
+            case .installerPackage: L("安装器自己下载的安装包", "Installer package downloaded by the installer")
+            case .loginItems: L("登录项与后台项", "Login items and background items")
+            case .connect(nil): L("连接服务器", "Connect to a server")
+            case .connect(let port?): L("连接服务器的 \(port) 端口", "Connect to a server on port \(port)")
+            case .listen(nil): L("等待别的设备连进来", "Wait for other devices to connect")
+            case .listen(let port?): L("在 \(port) 端口等待别的设备连进来", "Wait for other devices to connect on port \(port)")
+            }
+        }
+
+        /// 0.4.0 的报告里存的是记录时那种语言的文字，对照回来。不要改这些文字，改措辞请改 text
+        init?(legacyText text: String) {
+            switch text {
+            case "通知中心", "Notification Center": self = .notificationCenter
+            case "域名解析（DNS）", "Name lookups (DNS)": self = .nameLookup
+            case "后台下载服务", "Background download service": self = .backgroundDownloads
+            case "安装器自己下载的安装包", "Installer package downloaded by the installer": self = .installerPackage
+            case "登录项与后台项", "Login items and background items": self = .loginItems
+            case "连接服务器", "Connect to a server": self = .connect(port: nil)
+            case "等待别的设备连进来", "Wait for other devices to connect": self = .listen(port: nil)
+            default:
+                if let match = text.wholeMatch(of: /连接服务器的 (\d+) 端口/) ?? text.wholeMatch(of: /Connect to a server on port (\d+)/) {
+                    self = .connect(port: Int(match.1))
+                } else if let match = text.wholeMatch(of: /在 (\d+) 端口等待别的设备连进来/)
+                            ?? text.wholeMatch(of: /Wait for other devices to connect on port (\d+)/) {
+                    self = .listen(port: Int(match.1))
+                } else {
+                    return nil
+                }
+            }
+        }
+    }
+
     let kind: Kind
+    /// 被挡住的对象：路径（报告里的见 PathTidier）、地址（203.0.113.9:80）、App 的标识符原样，其余是 Subject 的代码。
+    /// 不随界面语言变化，显示用 targetText
     let target: String
     var count = 1
     var lastSeen = Date()
+    /// 路径的 id 存进了 BoxConfig.acknowledgedBlocks，不能变
     var id: String { "\(kind.rawValue)|\(target)" }
+
+    var subject: Subject? { Subject(code: target) }
+    /// 显示的对象：代码按当前语言生成文字，路径、地址原样
+    var targetText: String { subject?.text ?? target }
+}
+
+nonisolated extension BlockEvent {
+    init(kind: Kind, subject: Subject) {
+        self.init(kind: kind, target: subject.code)
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        let target = try container.decode(String.self, forKey: .target)
+        self.target = Subject(legacyText: target)?.code ?? target
+        count = try container.decode(Int.self, forKey: .count)
+        lastSeen = try container.decode(Date.self, forKey: .lastSeen)
+    }
 }
 
 /// 会话主进程的 pid：订阅拦截记录（见 ViolationMonitor.events）要在启动 App 之前，启动后再填上
@@ -277,7 +376,8 @@ nonisolated enum ViolationMonitor {
             return identity.group == main || identity.parent == main
         }
 
-        private func categorize(operation: String, target: String) -> BlockEvent? {
+        /// 拒绝记录是哪一类拦截（不看归属）；不关心的为 nil
+        func categorize(operation: String, target: String) -> BlockEvent? {
             if operation == "forbidden-sandbox-reinit" { return nil } // Chromium 系 App 自带沙盒的正常现象
             if operation.hasPrefix("file-write") {
                 if target.contains("/Library/LaunchDaemons") || target.contains("/Library/PrivilegedHelperTools") {
@@ -295,20 +395,20 @@ nonisolated enum ViolationMonitor {
             if operation.hasPrefix("network") { return Self.networkEvent(operation: operation, target: target) }
             if operation == "mach-lookup" {
                 if target.contains("usernot") || target.contains("UNCUserNotification") {
-                    return BlockEvent(kind: .notification, target: L("通知中心", "Notification Center"))
+                    return BlockEvent(kind: .notification, subject: .notificationCenter)
                 }
                 if target == "com.apple.dnssd.service" {
-                    return BlockEvent(kind: .network, target: L("域名解析（DNS）", "Name lookups (DNS)"))
+                    return BlockEvent(kind: .network, subject: .nameLookup)
                 }
                 if target.hasPrefix("com.apple.nsurlsessiond") {
-                    return BlockEvent(kind: .network, target: L("后台下载服务", "Background download service"))
+                    return BlockEvent(kind: .network, subject: .backgroundDownloads)
                 }
                 if target.contains("DiskArbitration") || target.contains("diskarbitrationd") {
-                    return BlockEvent(kind: .diskMount, target: L("安装器自己下载的安装包", "Installer package downloaded by the installer"))
+                    return BlockEvent(kind: .diskMount, subject: .installerPackage)
                 }
                 // SMAppService 登录项 / 后台项注册
                 if target.contains("smd") || target.contains("backgroundtaskmanagement") {
-                    return BlockEvent(kind: .autostart, target: L("登录项与后台项", "Login items and background items"))
+                    return BlockEvent(kind: .autostart, subject: .loginItems)
                 }
                 return nil
             }
@@ -321,20 +421,15 @@ nonisolated enum ViolationMonitor {
         /// 域名解析是连 mDNSResponder 的套接字。其他本地套接字规则没挡，不是盒子的规则报告的
         static func networkEvent(operation: String, target: String) -> BlockEvent? {
             if target == "/private/var/run/mDNSResponder" {
-                return BlockEvent(kind: .network, target: L("域名解析（DNS）", "Name lookups (DNS)"))
+                return BlockEvent(kind: .network, subject: .nameLookup)
             }
             let outbound = operation == "network-outbound"
             guard let address = target.wholeMatch(of: outbound ? /remote:(.+)/ : /local:(.+)/)?.1,
                   let separator = address.lastIndex(of: ":") else { return nil }
-            let host = address[..<separator], port = address[address.index(after: separator)...]
-            let anyPort = port == "*"
-            if !outbound {
-                return BlockEvent(kind: .network, target: anyPort ? L("等待别的设备连进来", "Wait for other devices to connect")
-                                                                   : L("在 \(port) 端口等待别的设备连进来", "Wait for other devices to connect on port \(port)"))
-            }
+            let host = address[..<separator], port = Int(address[address.index(after: separator)...]) // "*"（任意端口）为 nil
+            if !outbound { return BlockEvent(kind: .network, subject: .listen(port: port)) }
             if host != "*" { return BlockEvent(kind: .network, target: String(address)) }
-            return BlockEvent(kind: .network, target: anyPort ? L("连接服务器", "Connect to a server")
-                                                               : L("连接服务器的 \(port) 端口", "Connect to a server on port \(port)"))
+            return BlockEvent(kind: .network, subject: .connect(port: port))
         }
     }
 }

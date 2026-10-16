@@ -648,7 +648,7 @@ extension RunReport {
         } else {
             lines.append(L("| 行为 | 对象 | 次数 |", "| Attempt | Target | Times |"))
             lines.append("| --- | --- | ---: |")
-            for block in blocks { lines.append("| \(block.kind.title) | \(cell(block.target)) | \(block.count) |") }
+            for block in blocks { lines.append("| \(block.kind.title) | \(cell(block.targetText)) | \(block.count) |") }
         }
 
         lines.append("")

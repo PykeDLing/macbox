@@ -457,7 +457,7 @@ final class Box: Identifiable {
         let severe = blocks.filter { $0.kind.suggestsVirtualMac && !acknowledged.contains($0.id) }
         if !severe.isEmpty {
             store?.suggestVirtualMac(for: self, reasons: severe.map {
-                L("\($0.kind.title)：\($0.target)", "\($0.kind.title): \($0.target)")
+                L("\($0.kind.title)：\($0.targetText)", "\($0.kind.title): \($0.targetText)")
             }, blocks: severe.map(\.id))
         }
     }

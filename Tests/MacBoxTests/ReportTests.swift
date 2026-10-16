@@ -186,6 +186,85 @@ struct ReportTests {
         #expect(await RunReport.load(from: paths).contains { $0.appName == "Old" && $0.files == nil })
     }
 
+    @Test("新记下的拦截存代码，不随界面语言变化：两种语言下存进报告的一字不差，显示时才生成文字")
+    func blockCodes() throws {
+        let parser = ViolationMonitor.Parser(boxPrefix: "/nonexistent/", processNames: [], installer: false,
+                                             home: "/Users/someone", session: SessionPID())
+        let records = [
+            ("mach-lookup", "com.apple.usernoted.client"), ("mach-lookup", "com.apple.dnssd.service"),
+            ("mach-lookup", "com.apple.nsurlsessiond.private"), ("mach-lookup", "com.apple.DiskArbitration.diskarbitrationd"),
+            ("mach-lookup", "com.apple.backgroundtaskmanagement.agent"), ("network-outbound", "remote:*:443"),
+            ("network-outbound", "remote:*:*"), ("network-outbound", "remote:203.0.113.9:80"), ("network-inbound", "local:*:8080"),
+            ("network-inbound", "local:*:*"), ("network-outbound", "/private/var/run/mDNSResponder"),
+            ("file-write-create", "/Library/LaunchDaemons/x.plist"),
+        ]
+        func encoded(_ language: AppLanguage) throws -> Data {
+            let blocks = Localization.$testLanguage.withValue(language) {
+                records.compactMap { parser.categorize(operation: $0.0, target: $0.1) }
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .sortedKeys
+            return try encoder.encode(blocks.map { var block = $0; block.lastSeen = .distantPast; return block })
+        }
+        let data = try encoded(.english)
+        #expect(data == (try encoded(.chinese)))
+
+        let blocks = try JSONDecoder().decode([BlockEvent].self, from: data)
+        #expect(blocks.map(\.target) == ["notification-center", "dns", "background-downloads", "installer-package", "login-items",
+                                         "connect:443", "connect:*", "203.0.113.9:80", "listen:8080", "listen:*", "dns",
+                                         "/Library/LaunchDaemons/x.plist"])
+        #expect(blocks.last?.id == "backgroundService|/Library/LaunchDaemons/x.plist", "路径的 id 记在 acknowledgedBlocks 里，不能变")
+        Localization.$testLanguage.withValue(.english) {
+            #expect(blocks[5].targetText == "Connect to a server on port 443")
+            #expect(blocks[7].targetText == "203.0.113.9:80")
+        }
+        Localization.$testLanguage.withValue(.chinese) {
+            #expect(blocks[5].targetText == "连接服务器的 443 端口")
+            #expect(blocks[9].targetText == "等待别的设备连进来")
+        }
+    }
+
+    @Test("0.4.0 的报告：拦截对象存的是记录时那种语言的文字，读的时候对照回代码；路径、地址原样，id 不变；两种语言都照常显示")
+    func legacyBlocks() async throws {
+        let (paths, _) = try makeBox()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // 旧版本写下的中文、英文文字，对照出的代码；不是显示文字的两边相同、原样保留
+        let cases: [(kind: String, chinese: String, english: String, code: String)] = [
+            ("notification", "通知中心", "Notification Center", "notification-center"),
+            ("network", "域名解析（DNS）", "Name lookups (DNS)", "dns"),
+            ("network", "后台下载服务", "Background download service", "background-downloads"),
+            ("diskMount", "安装器自己下载的安装包", "Installer package downloaded by the installer", "installer-package"),
+            ("autostart", "登录项与后台项", "Login items and background items", "login-items"),
+            ("network", "连接服务器", "Connect to a server", "connect:*"),
+            ("network", "连接服务器的 443 端口", "Connect to a server on port 443", "connect:443"),
+            ("network", "等待别的设备连进来", "Wait for other devices to connect", "listen:*"),
+            ("network", "在 8080 端口等待别的设备连进来", "Wait for other devices to connect on port 8080", "listen:8080"),
+            ("network", "203.0.113.9:80", "203.0.113.9:80", "203.0.113.9:80"),
+            ("autostart", "~/Library/LaunchAgents/p.plist", "~/Library/LaunchAgents/p.plist", "~/Library/LaunchAgents/p.plist"),
+            ("systemInstall", "/Library/Application Support/Vendor/x", "/Library/Application Support/Vendor/x",
+             "/Library/Application Support/Vendor/x"),
+        ]
+        let blocks = cases.flatMap { item in
+            [item.chinese, item.english].map { ["kind": item.kind, "target": $0, "count": 2, "lastSeen": 0] as [String: Any] }
+        }
+        let old: [String: Any] = ["id": UUID().uuidString, "appName": "Old", "bundleIdentifier": "x", "startedAt": 0, "endedAt": 30,
+                                  "networkBlocked": true, "sharesDownloads": false, "servers": [], "programs": [], "blocks": blocks]
+        try AppPaths.ensure(paths.reports)
+        try JSONSerialization.data(withJSONObject: old).write(to: paths.reports.appending(path: "0000000000-old.json"))
+        let report = try #require(await RunReport.load(from: paths).first { $0.appName == "Old" })
+
+        #expect(report.blocks.map(\.target) == cases.flatMap { [$0.code, $0.code] })
+        #expect(report.blocks.last?.id == "systemInstall|/Library/Application Support/Vendor/x", "路径的 id 记在 acknowledgedBlocks 里，不能变")
+        #expect(report.blockCount == cases.count * 4)
+        Localization.$testLanguage.withValue(.english) {
+            #expect(report.blocks.map(\.targetText) == cases.flatMap { [$0.english, $0.english] })
+        }
+        Localization.$testLanguage.withValue(.chinese) {
+            #expect(report.blocks.map(\.targetText) == cases.flatMap { [$0.chinese, $0.chinese] })
+            #expect(report.markdown().contains("| 发送通知 | 通知中心 | 2 |"))
+        }
+    }
+
     @Test("导出的文字包括每一类，表格里的竖线不破坏表格")
     func markdown() {
         var config = BoxConfig(id: UUID(), name: "Pan|Drive", bundleIdentifier: "x", appFolderName: "P.app")
@@ -222,8 +301,9 @@ struct ReportTests {
         for i in 0..<9 { report.note(ServerContact(address: "203.0.113.\(i)", port: 443, transport: "tcp", name: i % 2 == 0 ? "edge\(i).example.net" : nil)) }
         report.noteLaunch("/usr/sbin/ioreg")
         report.noteLaunch("P.app/Contents/MacOS/P")
-        report.blocks = [BlockEvent(kind: .autostart, target: "~/Library/LaunchAgents/com.example.pan.plist"),
-                         BlockEvent(kind: .notification, target: "通知中心", count: 4)]
+        var notifications = BlockEvent(kind: .notification, subject: .notificationCenter)
+        notifications.count = 4
+        report.blocks = [BlockEvent(kind: .autostart, target: "~/Library/LaunchAgents/com.example.pan.plist"), notifications]
         let data = try #require(ReportImage.png(report, icon: NSWorkspace.shared.icon(for: .applicationBundle)))
         let image = try #require(NSBitmapImageRep(data: data))
         #expect(image.pixelsWide == 1280)
@@ -332,10 +412,10 @@ struct ReportTests {
 
         typealias Parser = ViolationMonitor.Parser
         #expect(Parser.networkEvent(operation: "network-outbound", target: "remote:*:443")?.kind == .network)
-        #expect(Parser.networkEvent(operation: "network-outbound", target: "remote:*:443")?.target.contains("443") == true)
+        #expect(Parser.networkEvent(operation: "network-outbound", target: "remote:*:443")?.subject == .connect(port: 443))
         #expect(Parser.networkEvent(operation: "network-outbound", target: "remote:203.0.113.9:80")?.target == "203.0.113.9:80")
-        #expect(Parser.networkEvent(operation: "network-outbound", target: "/private/var/run/mDNSResponder")?.kind == .network)
-        #expect(Parser.networkEvent(operation: "network-inbound", target: "local:*:8080")?.target.contains("8080") == true)
+        #expect(Parser.networkEvent(operation: "network-outbound", target: "/private/var/run/mDNSResponder")?.subject == .nameLookup)
+        #expect(Parser.networkEvent(operation: "network-inbound", target: "local:*:8080")?.subject == .listen(port: 8080))
         #expect(Parser.networkEvent(operation: "network-outbound", target: "/private/var/run/syslog") == nil, "规则没挡别的本地套接字")
     }
 }
