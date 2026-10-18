@@ -28,7 +28,7 @@ final class IsolatedSession {
         var mainRanFor: TimeInterval = 0
         /// 收回偏好设置失败的原因。日志还在，下次启动 MacBox 时会再次尝试
         var preferencesReturnError: String?
-        /// 这次写下的文件、改了的设置（对比运行前后，见 RunSnapshot）
+        /// 这次写下的文件、改了的设置、写在盒子外的设置（对比运行前后，见 RunSnapshot）
         var changes: RunChanges?
     }
 
@@ -82,7 +82,8 @@ final class IsolatedSession {
         }
         defer { monitor.cancel() }
 
-        let before = RunSnapshot(files: await files, preferences: preferences)
+        // 你真实的偏好设置目录最后列：离启动越近，算到这个应用头上的别的程序写的越少（见 SystemPreferenceFiles）
+        let before = RunSnapshot(files: await files, preferences: preferences, system: await RunSnapshot.systemPreferences())
 
         let profile = SandboxProfile.make(box: paths, config: config)
         try? profile.write(to: paths.sandboxProfile, atomically: true, encoding: .utf8) // 便于排查

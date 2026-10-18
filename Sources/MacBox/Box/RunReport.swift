@@ -40,6 +40,8 @@ nonisolated struct RunReport: Codable, Identifiable, Sendable {
     var servers: [ServerContact] = []
     var programs: [ProgramLaunch] = []
     var blocks: [BlockEvent] = []
+    /// 可能属于这个应用、却写在了盒子外的设置（见 StrayPreference）。nil：还在运行，或者是旧版 MacBox 的报告
+    var strayPreferences: [StrayPreference]?
 
     /// 一份报告最多列出多少处文件位置
     static let maxAreas = 200
@@ -118,6 +120,33 @@ nonisolated struct PreferenceChange: Codable, Hashable, Identifiable, Sendable {
     var changed: [String]
     var removed: [String]
     var id: String { domain }
+}
+
+/// 可能属于这个应用、却写在了盒子外的一个偏好设置域：运行期间在你真实的 ~/Library/Preferences 里新出现、不在借出范围里的
+/// （厂商的更新程序、第三方 SDK、App Group 共享设置），以及“仅限本机”的 ByHost 设置（借出不管 ByHost，应用自己的也算）。
+/// 删除盒子后它们仍然留在这台 Mac 上。偏好设置由 cfprefsd 替所有程序代写，分不出是谁写的，所以只能说“可能”。
+/// 只记键名，不记内容
+nonisolated struct StrayPreference: Codable, Hashable, Identifiable, Sendable {
+    var domain: String
+    /// 仅限本机的设置（~/Library/Preferences/ByHost/<域>.<硬件 UUID>.plist）：借出不支持，只列出，收不进盒子
+    var byHost: Bool
+    /// 设置项的名字，最多 200 个
+    var keys: [String]
+    var id: String { byHost ? "ByHost/\(domain)" : domain }
+
+    /// 认得出不属于这个应用的：不是单个文件名的、苹果的、MacBox 自己的、和本机装着的其他 App 重叠的（见 AppInspector.installedApp）
+    static func isForeign(_ domain: String, identifier: String, installed: Set<String>) -> Bool {
+        let lower = domain.lowercased()
+        return !PreferenceLease.isSingleName(domain) || lower == "com.apple" || lower.hasPrefix("com.apple.")
+            || Bundle.main.bundleIdentifier.map { PreferenceLease.overlaps([domain], [$0]) } == true
+            || AppInspector.installedApp(overlapping: domain, installed: installed, excluding: identifier) != nil
+    }
+
+    /// 整个厂商的名字（com.tencent、jp.co.canon）：当作前缀会盖住这个厂商以后所有 App 的设置，不收进盒子
+    static func isVendorWide(_ domain: String) -> Bool {
+        let components = domain.split(separator: ".", omittingEmptySubsequences: false)
+        return components.count >= 2 && components.count <= AppInspector.vendorLength(of: components)
+    }
 }
 
 /// 连到过的一个服务器
@@ -282,6 +311,8 @@ nonisolated struct RunChanges: Sendable {
     var fileTotals: FileTotals
     /// 偏好设置没能收回时为 nil：盒子里存的还是运行前的内容，比不出来
     var preferences: [PreferenceChange]?
+    /// 写在盒子外的设置（见 SystemPreferenceFiles.strays）
+    var strayPreferences: [StrayPreference] = []
 }
 
 /// 运行前的样子：主目录、App 里的每个文件（大小、修改时间、inode），盒子保存的偏好设置。
@@ -305,6 +336,8 @@ nonisolated struct RunSnapshot: Sendable {
     let files: Files
     /// 盒子保存的偏好设置：域 → 键 → 值（XML 格式，键按字母排序，同样的值得到同样的内容）
     let preferences: [String: [String: Data]]
+    /// 你真实的偏好设置目录里有哪些域：退出后比出写在盒子外的（见 SystemPreferenceFiles）
+    let system: SystemPreferenceFiles
 
     /// 记下文件。在 MacBox 准备好主目录和钥匙串之后调用，它自己的改动不算到应用头上。
     /// 文件多的 App 要走一会儿（实测 4.7 万个文件约半秒），启动时和借出偏好设置、等日志流同时做
@@ -320,15 +353,26 @@ nonisolated struct RunSnapshot: Sendable {
         preferences(in: paths.prefs, prefixes: config.preferencePrefixes)
     }
 
-    /// 一次记下全部（测试用；运行时分两步，见 IsolatedSession.run）
-    static func take(_ paths: BoxPaths, config: BoxConfig) async -> RunSnapshot {
-        RunSnapshot(files: await files(of: paths, config: config), preferences: await savedPreferences(of: paths, config: config))
+    /// 列出你真实的偏好设置目录（folder 测试时可以换成别处）。在启动 App 之前一刻调用：
+    /// 这之后新出现的才可能是它写的，离启动越近，算到它头上的别的程序写的越少
+    @concurrent
+    static func systemPreferences(in folder: URL = PreferenceLease.systemPreferencesFolder) async -> SystemPreferenceFiles {
+        SystemPreferenceFiles.list(folder)
+    }
+
+    /// 一次记下全部（测试用；运行时分几步，见 IsolatedSession.run）
+    static func take(_ paths: BoxPaths, config: BoxConfig,
+                     systemPrefs: URL = PreferenceLease.systemPreferencesFolder) async -> RunSnapshot {
+        RunSnapshot(files: await files(of: paths, config: config), preferences: await savedPreferences(of: paths, config: config),
+                    system: await systemPreferences(in: systemPrefs))
     }
 
     /// 和现在对比。在收回偏好设置之后调用；没能收回时 preferencesReturned 为 false。
-    /// downloads：共享的「下载」里的改动（见 DownloadWrites），一起汇总
+    /// downloads：共享的「下载」里的改动（见 DownloadWrites），一起汇总。
+    /// installed：本机安装的 App 的标识符，系统偏好设置目录里真有新出现的域时才读（测试时可以指定）
     @concurrent
-    func changes(_ paths: BoxPaths, config: BoxConfig, preferencesReturned: Bool, downloads: [FileArea] = []) async -> RunChanges {
+    func changes(_ paths: BoxPaths, config: BoxConfig, preferencesReturned: Bool, downloads: [FileArea] = [],
+                 installed: @Sendable () -> Set<String> = { AppInspector.installedApplicationIdentifiers() }) async -> RunChanges {
         var areas: [String: FileArea] = [:]
         Self.collect(before: files.home, after: Self.entries(under: paths.home), location: .home, into: &areas)
         Self.collect(before: files.app, after: Self.entries(under: paths.appDirectory), location: .app, into: &areas)
@@ -343,9 +387,13 @@ nonisolated struct RunSnapshot: Sendable {
         let sorted = areas.values.sorted {
             ($0.totals.count, $0.totals.bytes, $1.path) > ($1.totals.count, $1.totals.bytes, $0.path)
         }
+        // 没能收回时借出的域还在系统里，都在借出范围之内，不会算进来
+        let strays = SystemPreferenceFiles.list(system.folder)
+            .strays(since: system, prefixes: config.preferencePrefixes, identifier: config.bundleIdentifier, installed: installed)
         return RunChanges(files: Array(sorted.prefix(RunReport.maxAreas)), fileTotals: totals,
                           preferences: preferencesReturned
-                              ? Self.diff(preferences, Self.preferences(in: paths.prefs, prefixes: config.preferencePrefixes)) : nil)
+                              ? Self.diff(preferences, Self.preferences(in: paths.prefs, prefixes: config.preferencePrefixes)) : nil,
+                          strayPreferences: strays)
     }
 
     // MARK: 文件
@@ -452,6 +500,83 @@ nonisolated struct RunSnapshot: Sendable {
     }
 }
 
+// MARK: - 写在盒子外的设置
+
+/// 你真实的偏好设置目录里有哪些 .plist、什么时候改的。运行前后各列一次，比出这次运行新写下的（见 strays）。
+/// 只读目录和文件，不经过 cfprefsd，不改动任何东西
+nonisolated struct SystemPreferenceFiles: Sendable {
+    let folder: URL
+    /// 域 → 修改时间
+    let domains: [String: TimeInterval]
+    /// ByHost 里的文件名（不带 .plist，<域>.<硬件 UUID>）→ 修改时间
+    let byHost: [String: TimeInterval]
+    let listedAt: Date
+
+    static func list(_ folder: URL) -> SystemPreferenceFiles {
+        let listedAt = Date()
+        return SystemPreferenceFiles(folder: folder, domains: plists(in: folder),
+                                     byHost: plists(in: folder.appending(path: "ByHost", directoryHint: .isDirectory)), listedAt: listedAt)
+    }
+
+    /// 和运行前（before）比，这次运行新写下、可能属于这个应用的：before 里没有这个文件，修改时间也不早于 before 列目录的时候
+    /// （留 2 秒余量；更早的是挪进来的旧文件，不是这次写的）。运行前就有、运行中被改写的不算：那是本机原有的内容，
+    /// 分不出哪些键是这次写的。再去掉认得出不属于它的（见 StrayPreference.isForeign）和这个盒子借出范围里的——
+    /// ByHost 的不去掉：借出不管 ByHost，应用自己的也写在盒子外。
+    /// installed 只在真有新文件时才读（要读「应用程序」里每个 App 的 Info.plist）
+    func strays(since before: SystemPreferenceFiles, prefixes: [String], identifier: String,
+                installed: () -> Set<String>) -> [StrayPreference] {
+        let since = before.listedAt.timeIntervalSince1970 - 2
+        func fresh(_ now: [String: TimeInterval], _ old: [String: TimeInterval]) -> [String] {
+            now.filter { old[$0.key] == nil && $0.value >= since }.keys.sorted()
+        }
+        let plain = fresh(domains, before.domains), host = fresh(byHost, before.byHost)
+        guard !plain.isEmpty || !host.isEmpty else { return [] }
+        let installed = installed()
+        var result: [StrayPreference] = []
+        for domain in plain where !PreferenceLease.domain(domain, isCoveredBy: prefixes)
+            && !StrayPreference.isForeign(domain, identifier: identifier, installed: installed) {
+            result.append(StrayPreference(domain: domain, byHost: false, keys: Self.keys(of: folder.appending(path: "\(domain).plist"))))
+        }
+        var seen: Set<String> = []
+        for name in host {
+            // 同一个域有好几台 Mac 的（迁移过来的旧电脑）：列一次
+            guard let domain = Self.byHostDomain(name), seen.insert(domain).inserted,
+                  !StrayPreference.isForeign(domain, identifier: identifier, installed: installed) else { continue }
+            result.append(StrayPreference(domain: domain, byHost: true,
+                                          keys: Self.keys(of: folder.appending(path: "ByHost/\(name).plist"))))
+        }
+        return result
+    }
+
+    /// ByHost 的文件名（不带 .plist）里的域：<域>.<硬件 UUID>，更早的系统是 12 位十六进制的网卡地址。认不出的为 nil
+    static func byHostDomain(_ name: String) -> String? {
+        guard let dot = name.lastIndex(of: "."), dot > name.startIndex else { return nil }
+        let host = name[name.index(after: dot)...]
+        guard host.wholeMatch(of: /[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/) != nil
+            || host.wholeMatch(of: /[0-9A-Fa-f]{12}/) != nil else { return nil }
+        return String(name[..<dot])
+    }
+
+    /// 文件夹里的 .plist（不带扩展名）→ 修改时间。只看普通文件，不跟随符号链接
+    private static func plists(in folder: URL) -> [String: TimeInterval] {
+        var result: [String: TimeInterval] = [:]
+        for url in FileOps.contents(of: folder) where url.pathExtension == "plist" {
+            var info = stat()
+            guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { continue }
+            result[url.deletingPathExtension().lastPathComponent] =
+                TimeInterval(info.st_mtimespec.tv_sec) + TimeInterval(info.st_mtimespec.tv_nsec) / 1e9
+        }
+        return result
+    }
+
+    /// 设置项的名字，最多 200 个
+    private static func keys(of file: URL) -> [String] {
+        guard let data = FileOps.regularFileContents(file),
+              let content = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return [] }
+        return Array(content.keys.sorted().prefix(200))
+    }
+}
+
 // MARK: - 「下载」里的写入
 
 /// 共享「下载」时应用在里面写了什么。MacBox 不去读你的「下载」（要你在系统设置里授权，也分不出哪些是你自己放的），
@@ -553,6 +678,9 @@ extension RunReport {
         var parts: [String] = []
         if let totals = fileTotals { parts.append(L("写入 \(totals.count) 个文件", "\(totals.count) files written")) }
         if let keys = preferenceKeyCount { parts.append(L("改了 \(keys) 项设置", "\(keys) settings changed")) }
+        if let strays = strayPreferences, !strays.isEmpty {
+            parts.append(L("\(strays.count) 个设置文件写在盒子外", "\(strays.count) preference files outside the box"))
+        }
         parts.append(networkBlocked ? L("已断网", "offline")
                                     : L("连接 \(servers.count) 个服务器", "\(servers.count) servers contacted"))
         parts.append(L("启动 \(programs.count) 个程序", "\(programs.count) programs launched"))
@@ -615,6 +743,25 @@ extension RunReport {
         }
 
         lines.append("")
+        lines.append("## " + Self.strayTitle)
+        lines.append("")
+        if let strayPreferences {
+            if strayPreferences.isEmpty {
+                lines.append(L("没有发现。", "None found."))
+            } else {
+                lines.append(Self.strayExplanation)
+                lines.append("")
+                for stray in strayPreferences {
+                    lines.append("- `\(stray.domain)`" + (stray.byHost ? L("（仅限本机）", " (this Mac only)") : ""))
+                    if !stray.keys.isEmpty { lines.append(L("  - 设置项：", "  - Keys: ") + keyList(stray.keys)) }
+                }
+            }
+        } else {
+            lines.append(isRunning ? L("应用退出后统计。", "Counted after the app quits.")
+                                   : L("旧版 MacBox 的报告没有这一项。", "Reports from older versions of MacBox don’t include this."))
+        }
+
+        lines.append("")
         lines.append(L("## 连接的服务器", "## Servers contacted"))
         lines.append("")
         if networkBlocked {
@@ -656,6 +803,16 @@ extension RunReport {
         lines.append("")
         lines.append(Self.caveats)
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// 写在盒子外的设置那一栏的标题和说明，报告页和导出的文字共用
+    static var strayTitle: String {
+        L("可能属于这个应用、但写在了盒子外的设置", "Settings Possibly From This App, Written Outside the Box")
+    }
+
+    static var strayExplanation: String {
+        L("这次运行期间，你真实的偏好设置目录（~/Library/Preferences）里新出现了这些设置，它们不在 MacBox 借出、收回的范围里，删除盒子后仍然留在这台 Mac 上。偏好设置由系统服务替所有程序代写，分不出是谁写的，同一时间别的程序新建的也会列进来。只记设置项的名字，不记内容。",
+          "During this run, these settings newly appeared in your real preferences folder (~/Library/Preferences). They’re outside what MacBox lends and returns, so they stay on this Mac after you delete the box. A system service writes preferences for every program, so MacBox can’t tell who wrote them; anything another program created at the same time shows up here too. Only the names of the settings are recorded, not their values.")
     }
 
     /// 报告记不全的地方，报告页和导出的文字都附上

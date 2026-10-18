@@ -194,7 +194,7 @@ nonisolated enum AppInspector {
     ]
 
     /// 标识符里表示厂商的段数：通常是两段（com.foo），公共后缀是两段时是三段（jp.co.canon、cn.com.foo、com.cn.foo）
-    private static func vendorLength(of components: [Substring]) -> Int {
+    static func vendorLength(of components: [Substring]) -> Int {
         guard components.count >= 3 else { return 2 }
         let first = components[0].lowercased(), second = components[1].lowercased()
         let isCountry = first.count == 2 && first.allSatisfy { $0.isASCII && $0.isLetter }
@@ -220,13 +220,8 @@ nonisolated enum AppInspector {
 
     /// installed：本机安装的 App 的标识符（测试时可以指定）
     static func preferencePrefixes(for app: URL, identifier: String, installed: Set<String>) -> [String] {
-        let own = identifier.lowercased()
-        // 同一个 App 的本机副本、以及本来就在 <标识符>.* 之下的，借出范围本来就包含，不算“其他 App”
-        let others = installed.map { $0.lowercased() }.filter { $0 != own && !$0.hasPrefix(own + ".") }
-        func overlapsOthers(_ prefix: String) -> Bool {
-            let prefix = prefix.lowercased()
-            return others.contains { $0 == prefix || $0.hasPrefix(prefix + ".") || prefix.hasPrefix($0 + ".") }
-        }
+        let others = otherApps(in: installed, excluding: identifier)
+        func overlapsOthers(_ prefix: String) -> Bool { otherApp(overlapping: prefix, in: others) != nil }
         func vendor(_ id: String) -> String {
             let components = id.lowercased().split(separator: ".")
             return components.prefix(vendorLength(of: components)).joined(separator: ".")
@@ -254,6 +249,29 @@ nonisolated enum AppInspector {
             result.append(prefix)
         }
         return result
+    }
+
+    /// 本机安装的 App 里和这个前缀（或域）重叠的那个：标识符相等、在它之下、或者覆盖它。不区分大小写。
+    /// own 自己的本机副本、以及本来就在 <own>.* 之下的，借出范围本来就包含，不算“其他 App”
+    static func installedApp(overlapping prefix: String, installed: Set<String>, excluding own: String) -> String? {
+        otherApp(overlapping: prefix, in: otherApps(in: installed, excluding: own))
+    }
+
+    /// 去掉 own 和 <own>.*，按名字排序（找到的总是同一个）
+    private static func otherApps(in installed: Set<String>, excluding own: String) -> [String] {
+        let own = own.lowercased()
+        return installed.filter { id in
+            let id = id.lowercased()
+            return id != own && !id.hasPrefix(own + ".")
+        }.sorted()
+    }
+
+    private static func otherApp(overlapping prefix: String, in others: [String]) -> String? {
+        let prefix = prefix.lowercased()
+        return others.first { id in
+            let id = id.lowercased()
+            return id == prefix || id.hasPrefix(prefix + ".") || prefix.hasPrefix(id + ".")
+        }
     }
 
     private static func isWellFormed(_ id: String) -> Bool {

@@ -17,7 +17,10 @@ nonisolated struct PreferenceLease: Sendable {
     let box: BoxPaths
     let prefixes: [String]
     /// 系统偏好设置目录（测试时可以换成别处）
-    var systemPrefs = AppPaths.realHome.appending(path: "Library/Preferences", directoryHint: .isDirectory)
+    var systemPrefs = Self.systemPreferencesFolder
+
+    /// 你真实的偏好设置目录
+    static var systemPreferencesFolder: URL { AppPaths.realHome.appending(path: "Library/Preferences", directoryHint: .isDirectory) }
 
     init(box: BoxPaths, prefixes: [String]) {
         self.box = box
@@ -143,6 +146,58 @@ nonisolated struct PreferenceLease: Sendable {
         }
     }
 
+    // MARK: - 收进盒子
+
+    /// 把盒子里的应用写在借出范围以外的一个域收进盒子（用户在报告页确认过，见 Box.adoptStrayPreference），
+    /// 返回加上它之后的前缀，由调用方存进 box.json。self 是按收之前的前缀建的。
+    ///
+    /// 只收运行前不存在的：strays 是那次运行的报告列出的候选（见 SystemPreferenceFiles.strays）。新前缀覆盖到、旧前缀没覆盖的
+    /// 系统里现有的域（它自己和 <域>.*）都必须在里面：运行前就有的是本机的内容，收进盒子就从本机删掉了。
+    /// 逐个把现在的内容存进盒子的 Prefs，再从系统删除，全部挪完才返回新前缀。顺序不能反：先加前缀的话，中途崩溃时留在系统里的那份
+    /// 下次借出会被当成本机原有的设置备份起来、收回时再放回去，永远留在系统里。先删后加，崩溃时最坏是盒子里有了文件、前缀还没加：
+    /// 再收一次就补上（系统里已经没有它，也照样加上前缀）。
+    /// 借出没收回时不做（调用方先收回）：系统里是盒子借出的内容，前缀一变，收回的范围也跟着乱了
+    @concurrent
+    func adopt(_ domain: String, strays: Set<String>, installed: Set<String>, ownIdentifier: String,
+               otherBoxes: [[String]]) async throws -> [String] {
+        if Self.domain(domain, isCoveredBy: prefixes) { return prefixes } // 已经收进来了
+        func refuse(_ chinese: String, _ english: String) -> MacBoxError {
+            MacBoxError(L("没有把「\(domain)」收进盒子：\(chinese)", "Didn’t move “\(domain)” into the box: \(english)"))
+        }
+        guard strays.contains(domain), !StrayPreference.isForeign(domain, identifier: ownIdentifier, installed: []) else {
+            throw refuse("它不在那次运行新写下的设置里。", "it isn’t among the settings that run newly wrote.")
+        }
+        if StrayPreference.isVendorWide(domain) {
+            throw refuse("这是整个厂商的名字，收进来会把这个厂商以后所有 App 的设置都算进这个盒子。",
+                         "it’s a whole vendor’s name, so every app from this vendor would have its settings put in this box.")
+        }
+        if let app = AppInspector.installedApp(overlapping: domain, installed: installed, excluding: ownIdentifier) {
+            throw refuse("这台 Mac 上装着的「\(app)」用的也是这组设置。", "“\(app)”, installed on this Mac, uses these settings too.")
+        }
+        if otherBoxes.contains(where: { Self.overlaps([domain], $0) }) {
+            throw refuse("另一个盒子里的应用用的是这组设置。", "an app in another box uses these settings.")
+        }
+        guard !isOutstanding else {
+            throw refuse("这个应用上次借出的偏好设置还没收回。", "the preferences this app borrowed last time haven’t been returned yet.")
+        }
+        let moving = plistNames(in: systemPrefs).filter {
+            Self.isSingleName($0) && Self.domain($0, isCoveredBy: [domain]) && !Self.domain($0, isCoveredBy: prefixes)
+        }.sorted()
+        if let native = moving.first(where: { !strays.contains($0) }) {
+            throw refuse("「\(native)」在那次运行之前就在这台 Mac 上，是本机的设置。",
+                         "“\(native)” was on this Mac before that run, so it’s this Mac’s own setting.")
+        }
+        try AppPaths.ensure(box.prefs)
+        for name in moving {
+            try await step(L("无法把「\(name)」的设置收进盒子", "Couldn’t move the settings for “\(name)” into the box")) {
+                let content = read(name)
+                if !content.isEmpty { try savePlist(content, to: box.prefs.appending(path: "\(name).plist")) }
+                try await replace(name, with: [:])
+            }
+        }
+        return Box.merging(prefixes, [domain])
+    }
+
     /// 给出错的一步加上说明：「哪一步：原因」
     private func step<T>(_ what: String, _ work: () throws -> T) throws -> T {
         do { return try work() } catch { throw MacBoxError(L("\(what)：\(error.localizedDescription)", "\(what): \(error.localizedDescription)")) }
@@ -164,10 +219,14 @@ nonisolated struct PreferenceLease: Sendable {
     /// 域名会直接拼进路径：系统偏好设置目录、Prefs、Prefs/.native。而日志 .lease.json 和 Prefs 都在盒子目录里，
     /// 盒子里的 App 改得到——不检查的话，它往日志里写一个 "../../Documents/x"，收回时不在沙盒里的 MacBox
     /// 就会替它删除、覆盖、读出盒子外的任意 .plist，或者借出、清空别的应用的偏好设置。
-    /// 所以只认单个文件名（没有 /、不含 ..、不以 . 开头），并且属于这个盒子的前缀；其余一律当作不存在
+    /// 所以只认单个文件名（见 isSingleName），并且属于这个盒子的前缀；其余一律当作不存在
     private func owns(_ domain: String) -> Bool {
-        !domain.isEmpty && !domain.hasPrefix(".") && !domain.contains("/") && !domain.contains("..")
-            && !domain.contains("\0") && Self.domain(domain, isCoveredBy: prefixes)
+        Self.isSingleName(domain) && Self.domain(domain, isCoveredBy: prefixes)
+    }
+
+    /// 能直接拼进路径的单个文件名：没有 /、不含 ..、不以 . 开头（.GlobalPreferences 这类也不算）
+    static func isSingleName(_ domain: String) -> Bool {
+        !domain.isEmpty && !domain.hasPrefix(".") && !domain.contains("/") && !domain.contains("..") && !domain.contains("\0")
     }
 
     /// 两组前缀会不会借出同一个域。会的话两个盒子不能同时运行：

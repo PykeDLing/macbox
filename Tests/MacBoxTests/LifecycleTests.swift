@@ -692,6 +692,53 @@ extension LifecycleTests {
         #expect(!FileOps.exists(paths.prefs.appending(path: "\(appID).plist")), "本机的设置不该收进盒子")
         #expect(await systemValue(installerDomain) == nil, "安装器借出的设置要收回")
     }
+
+    /// 应用经由 cfprefsd 写进你真实的偏好设置目录：域名只用测试专用的，结束时删除
+    @Test("写在盒子外的设置：运行后列进报告，收进盒子后从这台 Mac 上删掉、前缀存进 box.json；下次运行借给它，退出后又收回",
+          .timeLimit(.minutes(2)))
+    func adoptStrayPreference() async throws {
+        let fixture = LifecycleFixture()
+        defer { await fixture.cleanup() }
+        let stray = "dev.macboxtest.lifecycle-stray-\(UUID().uuidString.prefix(8).lowercased()).sdk"
+        let system = PreferenceLease.systemPreferencesFolder.appending(path: stray)
+        let systemFile = URL(fileURLWithPath: system.path + ".plist")
+        defer {
+            // 只用 defaults delete 的话，cfprefsd 之后会写回一个空 plist
+            _ = try? await Shell.run("/usr/bin/defaults", ["delete", system.path])
+            try? FileManager.default.removeItem(at: systemFile)
+        }
+        // 每次运行先记下读到的值，再写一个
+        let paths = try await fixture.makeBox(script: """
+        /usr/bin/defaults read \(stray) deviceId >> "$HOME/seen" 2>/dev/null || echo none >> "$HOME/seen"
+        /usr/bin/defaults write \(stray) deviceId -string from-box
+        exit 0
+        """)
+        let store = await fixture.start()
+        let box = try #require(store.box(id: try paths.loadConfig().id))
+        let seen = paths.home.appending(path: "seen")
+
+        await box.open()
+        #expect(await eventually(.seconds(15)) { box.activity == .idle && box.report?.isRunning == false })
+        let report = try #require(box.report)
+        let listed = try #require(report.strayPreferences?.first { $0.domain == stray }, "\(report.strayPreferences ?? [])")
+        #expect(listed.keys == ["deviceId"] && box.status(of: listed) == .adoptable)
+        #expect(FileOps.exists(systemFile), "没收进盒子之前，它留在这台 Mac 上")
+
+        try await box.adoptStrayPreference(stray, listedIn: report)
+        #expect(box.status(of: listed) == .adopted)
+        #expect(try paths.loadConfig().preferencePrefixes.contains(stray), "前缀要存进 box.json")
+        #expect(!FileOps.exists(systemFile))
+        #expect(NSDictionary(contentsOf: paths.prefs.appending(path: "\(stray).plist")) as? [String: String] == ["deviceId": "from-box"])
+
+        await box.open()
+        #expect(await eventually(.seconds(15)) {
+            box.activity == .idle && box.report?.isRunning == false && readText(seen)?.split(separator: "\n").count == 2
+        })
+        #expect(readText(seen) == "none\nfrom-box\n", "下次运行要借给它")
+        #expect(box.report?.strayPreferences?.contains { $0.domain == stray } == false, "收进来之后不再算写在盒子外")
+        #expect(!FileOps.exists(systemFile), "退出后要收回，不再留在这台 Mac 上")
+        #expect(box.lastError == nil)
+    }
 }
 
 /// 启动器的脚本文件

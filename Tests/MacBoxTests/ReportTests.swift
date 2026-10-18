@@ -41,7 +41,8 @@ struct ReportTests {
         let prefs = paths.prefs
         try writePlist(["kept": 1, "changed": "a", "removed": true, "nested": ["x": 1]], to: prefs.appending(path: "dev.macboxtest.report.app.plist"))
         try writePlist(["other": 1], to: prefs.appending(path: "dev.macboxtest.unrelated.plist")) // 不属于这个盒子的前缀
-        let before = await RunSnapshot.take(paths, config: config)
+        let systemPrefs = root.appending(path: "SystemPreferences") // 不去看你真实的偏好设置目录
+        let before = await RunSnapshot.take(paths, config: config, systemPrefs: systemPrefs)
 
         try await Task.sleep(for: .milliseconds(20)) // 修改时间要变
         try write("new content", to: support.appending(path: "change.txt"))
@@ -81,9 +82,9 @@ struct ReportTests {
         // 没能收回：盒子里的还是运行前的，比不出来
         #expect(await before.changes(paths, config: config, preferencesReturned: false).preferences == nil)
         // 什么都没动
-        let again = await RunSnapshot.take(paths, config: config)
+        let again = await RunSnapshot.take(paths, config: config, systemPrefs: systemPrefs)
         let none = await again.changes(paths, config: config, preferencesReturned: true)
-        #expect(none.files.isEmpty && none.fileTotals.count == 0 && none.preferences == [])
+        #expect(none.files.isEmpty && none.fileTotals.count == 0 && none.preferences == [] && none.strayPreferences.isEmpty)
     }
 
     @Test("对比不跟随符号链接：共享时主目录里的「下载」是指向别处的链接")

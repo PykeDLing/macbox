@@ -10,6 +10,9 @@ struct ReportView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var saved: [RunReport] = []
     @State private var selection: UUID?
+    /// 点了「收进盒子…」、等确认的：哪一项、列在哪一份报告里
+    @State private var adopting: (stray: StrayPreference, report: RunReport)?
+    @State private var adoptionError: String?
 
     /// 运行中的（还没存）放在最前；存过的里面同一次的以内存里的为准
     private var reports: [RunReport] {
@@ -27,7 +30,7 @@ struct ReportView: View {
         VStack(spacing: 0) {
             if let report {
                 ScrollView {
-                    ReportContent(report: report, icon: box.icon)
+                    ReportContent(report: report, box: box) { adopting = ($0, report) }
                         .padding(24)
                 }
             } else {
@@ -72,6 +75,30 @@ struct ReportView: View {
         .frame(width: 700, height: 740)
         // 刚结束的一次存好之后重新读一遍
         .task(id: box.report?.endedAt) { saved = await box.savedReports() }
+        .confirmationDialog(L("把「\(adopting?.stray.domain ?? "")」收进盒子？", "Move “\(adopting?.stray.domain ?? "")” into the box?"),
+                            isPresented: Binding(get: { adopting != nil }, set: { if !$0 { adopting = nil } }),
+                            presenting: adopting) { pending in
+            Button(L("收进盒子", "Move Into Box")) {
+                Task {
+                    do {
+                        try await box.adoptStrayPreference(pending.stray.domain, listedIn: pending.report)
+                    } catch {
+                        adoptionError = error.localizedDescription
+                    }
+                }
+            }
+            Button(L("取消", "Cancel"), role: .cancel) {}
+        } message: { pending in
+            let domain = pending.stray.domain
+            Text(L("现在的内容会存进盒子，并从这台 Mac 的偏好设置里删除（名字以「\(domain).」开头的也一起）。以后它和这个应用的其他设置一样，只在应用运行时借给系统，删除盒子时一起删除。\n\n偏好设置由系统服务替所有程序代写，MacBox 分不出是谁写的。如果它其实属于这台 Mac 上的别的程序，那个程序就读不到这些设置了；这个应用运行期间，它读到的也是盒子里的内容。",
+                   "Its current contents will be saved in the box and removed from this Mac’s preferences (along with any whose names start with “\(domain).”). From then on it’s handled like the app’s other settings: lent to the system only while the app runs, and deleted along with the box.\n\nA system service writes preferences for every program, so MacBox can’t tell who wrote these. If they actually belong to another program on this Mac, that program won’t see them anymore, and while this app runs it will see the box’s copy instead."))
+        }
+        .alert(L("没能收进盒子", "Couldn’t Move Into the Box"),
+               isPresented: Binding(get: { adoptionError != nil }, set: { if !$0 { adoptionError = nil } })) {
+            Button(L("好", "OK")) {}
+        } message: {
+            Text(adoptionError ?? "")
+        }
     }
 
     /// 选择器里的一项：开始时间 · 运行了多久
@@ -113,7 +140,9 @@ struct ReportView: View {
 /// 报告页的正文
 private struct ReportContent: View {
     let report: RunReport
-    let icon: NSImage
+    let box: Box
+    /// 点了某一项写在盒子外的设置的「收进盒子…」
+    let onAdopt: (StrayPreference) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -121,6 +150,7 @@ private struct ReportContent: View {
             ReportStats(report: report)
             filesSection
             preferencesSection
+            straysSection
             serversSection
             programsSection
             blocksSection
@@ -135,7 +165,7 @@ private struct ReportContent: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 14) {
-            Image(nsImage: icon)
+            Image(nsImage: box.icon)
                 .resizable()
                 .interpolation(.high)
                 .frame(width: 56, height: 56)
@@ -198,6 +228,30 @@ private struct ReportContent: View {
             } else {
                 Placeholder(report.isRunning ? L("应用退出后统计。", "Counted after the app quits.")
                                              : L("偏好设置没能收回，这次没有统计。", "Preferences couldn’t be returned, so they weren’t counted."))
+            }
+        }
+    }
+
+    // MARK: 写在盒子外的设置
+
+    @ViewBuilder
+    private var straysSection: some View {
+        ReportSection(title: RunReport.strayTitle, systemImage: "exclamationmark.triangle") {
+            if let strays = report.strayPreferences {
+                if strays.isEmpty {
+                    Placeholder(L("没有发现。", "None found."))
+                } else {
+                    Text(RunReport.strayExplanation)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(strays) { stray in
+                        StrayRow(stray: stray, status: box.status(of: stray), canAdopt: box.activity == .idle) { onAdopt(stray) }
+                    }
+                }
+            } else {
+                Placeholder(report.isRunning ? L("应用退出后统计。", "Counted after the app quits.")
+                                             : L("旧版 MacBox 的报告没有这一项。", "Reports from older versions of MacBox don’t include this."))
             }
         }
     }
@@ -384,6 +438,42 @@ private struct PreferenceRow: View {
     }
 }
 
+/// 一项写在盒子外的设置：域名、设置项的名字，可以收进盒子的有按钮
+private struct StrayRow: View {
+    let stray: StrayPreference
+    let status: Box.StrayStatus
+    /// 应用没在运行、盒子没在忙
+    let canAdopt: Bool
+    let onAdopt: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(stray.domain)
+                    if stray.byHost { Tag(text: L("仅限本机", "This Mac Only"), systemImage: "desktopcomputer") }
+                    if status == .adopted { Tag(text: L("已收进盒子", "Moved Into Box"), systemImage: "checkmark", tint: .green) }
+                }
+                Text(stray.keys.isEmpty ? L("没有设置项", "No keys")
+                                        : L("\(stray.keys.count) 项：", "\(stray.keys.count) keys: ") + stray.keys.joined(separator: L("、", ", ")))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                if case .listedOnly(let reason) = status {
+                    Text(reason).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 8)
+            if status == .adoptable {
+                Button(L("收进盒子…", "Move Into Box…"), action: onAdopt)
+                    .disabled(!canAdopt)
+                    .help(canAdopt ? L("存进盒子，从这台 Mac 上删除，以后只在应用运行时借给系统",
+                                       "Save it in the box and remove it from this Mac; from then on it’s lent to the system only while the app runs")
+                                   : L("请先退出应用", "Quit the app first"))
+            }
+        }
+        .padding(.vertical, 5)
+    }
+}
+
 private struct ServerRow: View {
     let server: ServerContact
 
@@ -480,6 +570,11 @@ private struct ReportCard: View {
             if let preferences = report.preferences, !preferences.isEmpty {
                 CardList(title: L("改动的设置", "Settings changed"),
                          rows: preferences.prefix(3).map { ($0.domain, L("\($0.added.count + $0.changed.count + $0.removed.count) 项", "\($0.added.count + $0.changed.count + $0.removed.count)")) })
+            }
+            if let strays = report.strayPreferences, !strays.isEmpty {
+                CardList(title: L("可能是它写在盒子外的设置", "Settings it may have written outside the box"),
+                         rows: strays.prefix(3).map { ($0.domain, $0.byHost ? L("仅限本机", "This Mac only") : L("\($0.keys.count) 项", "\($0.keys.count)")) },
+                         more: strays.count - 3)
             }
             if !report.networkBlocked, !report.servers.isEmpty {
                 CardList(title: L("连接的服务器", "Servers contacted"),

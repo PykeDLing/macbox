@@ -209,6 +209,37 @@ struct SessionTests {
         #expect(!lease(paths, config).isOutstanding)
     }
 
+    /// 应用经由 cfprefsd 写进你真实的偏好设置目录：域名只用测试专用的，结束时删除
+    @Test("运行报告：应用写在借出范围以外的设置（另一个域、仅限本机的 ByHost）列出来，借出范围里的不算", .timeLimit(.minutes(1)))
+    func reportStrayPreferences() async throws {
+        let stray = "dev.macboxtest.session-stray-\(UUID().uuidString.prefix(8).lowercased())"
+        let preferences = PreferenceLease.systemPreferencesFolder
+        defer {
+            // 只用 defaults delete 的话，cfprefsd 之后会写回一个空 plist
+            _ = try? await Shell.run("/usr/bin/defaults", ["delete", stray])
+            _ = try? await Shell.run("/usr/bin/defaults", ["-currentHost", "delete", stray])
+            try? FileManager.default.removeItem(at: preferences.appending(path: "\(stray).plist"))
+            for file in FileOps.contents(of: preferences.appending(path: "ByHost")) where file.lastPathComponent.hasPrefix(stray + ".") {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+        let (paths, config) = try await makeBox(script: """
+        domain=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$(dirname "$0")/../Info.plist")
+        /usr/bin/defaults write "$domain" own -string yes
+        /usr/bin/defaults write \(stray) deviceId -string x
+        /usr/bin/defaults -currentHost write \(stray) host -string y
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(at: paths.url) }
+        let outcome = try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in }, onActivity: { _ in })
+        // 同一时间这台 Mac 上别的程序新建的也会列进来，只看这次写的
+        let strays = try #require(outcome.changes?.strayPreferences)
+        #expect(strays.contains(StrayPreference(domain: stray, byHost: false, keys: ["deviceId"])), "\(strays)")
+        #expect(strays.contains(StrayPreference(domain: stray, byHost: true, keys: ["host"])), "\(strays)")
+        #expect(!strays.contains { $0.domain == config.bundleIdentifier }, "借出范围里的已经收进盒子了")
+        #expect(outcome.changes?.preferences?.map(\.domain) == [config.bundleIdentifier])
+    }
+
     @Test("运行报告：运行期间看得到会话里的进程连了哪里", .timeLimit(.minutes(1)))
     func reportConnections() async throws {
         var options = ChildProcess.Options()

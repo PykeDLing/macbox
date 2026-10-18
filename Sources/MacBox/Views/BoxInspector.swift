@@ -250,6 +250,7 @@ struct BoxInspector: View {
                     Text(report.preferenceKeyCount.map { L("\($0) 项", "\($0)") }
                          ?? (report.isRunning ? L("退出后统计", "Counted after quitting") : L("没能统计", "Not counted")))
                 }
+                if let strays = report.strayPreferences, !strays.isEmpty { strayRows(strays) }
                 LabeledContent(L("连接服务器", "Servers Contacted")) {
                     Text(report.networkBlocked ? L("不联网", "Offline") : L("\(report.servers.count) 个", "\(report.servers.count)"))
                 }
@@ -266,6 +267,23 @@ struct BoxInspector: View {
             }
         } header: {
             Text(L("运行报告", "Run Report"))
+        }
+    }
+
+    /// 写在盒子外的设置：一行个数；还有能收进盒子的时候说一声去哪里收（收之前要看清是什么、再确认，所以只在完整报告里做）
+    @ViewBuilder
+    private func strayRows(_ strays: [StrayPreference]) -> some View {
+        let pending = strays.filter { box.status(of: $0) == .adoptable }.count
+        LabeledContent(L("写在盒子外", "Outside the Box")) {
+            Text(L("\(strays.count) 个设置文件", strays.count == 1 ? "1 preference file" : "\(strays.count) preference files"))
+                .foregroundStyle(pending > 0 ? .orange : .secondary)
+        }
+        if pending > 0 {
+            Text(L("其中 \(pending) 个可能属于这个应用，删除盒子后会留在这台 Mac 上。可以在完整报告里收进盒子。",
+                   pending == 1 ? "1 of them may belong to this app and would stay on this Mac after you delete the box. You can move it into the box from the full report."
+                                : "\(pending) of them may belong to this app and would stay on this Mac after you delete the box. You can move them into the box from the full report."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

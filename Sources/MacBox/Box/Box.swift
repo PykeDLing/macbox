@@ -359,12 +359,68 @@ final class Box: Identifiable {
         report.files = outcome.changes?.files
         report.fileTotals = outcome.changes?.fileTotals
         report.preferences = outcome.changes?.preferences
+        // 和其他盒子的前缀重叠的不算：另一个盒子运行中借出的域，在这段时间里也是新出现的，收进来就把它的设置拿走了
+        let others = otherBoxPrefixes
+        report.strayPreferences = outcome.changes?.strayPreferences.filter { stray in
+            !others.contains { PreferenceLease.overlaps([stray.domain], $0) }
+        }
         report.blocks = blocks.map(tidier.callAsFunction)
         self.report = report
         do {
             try await RunReport.save(report, in: paths)
         } catch {
             NSLog("MacBox: 无法保存运行报告：\(error.localizedDescription)")
+        }
+    }
+
+    /// 其他盒子的偏好设置前缀
+    private var otherBoxPrefixes: [[String]] {
+        (store?.boxes ?? []).filter { $0 !== self }.map(\.config.preferencePrefixes)
+    }
+
+    /// 报告里列出的写在盒子外的设置，现在怎么样了（报告页用）
+    enum StrayStatus: Equatable {
+        /// 可以收进盒子
+        case adoptable
+        /// 已经在借出范围里了：收进来过，或者收了它的上级域。也可能是在线安装器那次运行写下的、接手安装时前缀变宽才盖住的
+        /// （少见：安装器的前缀通常已经盖住真正的 App）——那样系统里的那份借出时会被当作本机原有的设置，见 adoptDownloadedPackage
+        case adopted
+        /// 收不进来，只列出：仅限本机的、整个厂商的名字
+        case listedOnly(String)
+    }
+
+    /// 只看名字和现在的前缀，不读磁盘（报告页每次刷新都调用）；别的拒绝理由点「收进盒子」时才查（见 PreferenceLease.adopt）
+    func status(of stray: StrayPreference) -> StrayStatus {
+        if stray.byHost {
+            return .listedOnly(L("仅限本机的设置，MacBox 收不进盒子。", "A this-Mac-only setting. MacBox can’t move these into the box."))
+        }
+        if PreferenceLease.domain(stray.domain, isCoveredBy: config.preferencePrefixes) { return .adopted }
+        if StrayPreference.isVendorWide(stray.domain) {
+            return .listedOnly(L("这是整个厂商的名字，收进来会把这个厂商以后所有 App 的设置都算进这个盒子。",
+                                 "It’s a whole vendor’s name, so every app from this vendor would have its settings put in this box."))
+        }
+        return .adoptable
+    }
+
+    /// 把报告里列出的一个写在盒子外的设置域收进盒子（用户在报告页确认过）：现在的内容存进盒子，从这台 Mac 上删除，
+    /// 再把它加进借出范围，以后只在应用运行时借给系统。不在运行、不在忙时才做；借出没收回的先收回，收不回就不做
+    /// （改前缀必须在收回之后，见 adoptDownloadedPackage）。拒绝的理由见 PreferenceLease.adopt
+    func adoptStrayPreference(_ domain: String, listedIn report: RunReport) async throws {
+        let strays = Set((report.strayPreferences ?? []).filter { !$0.byHost }.map(\.domain))
+        let others = otherBoxPrefixes
+        try await performMaintenance {
+            let lease = PreferenceLease(box: paths, prefixes: config.preferencePrefixes)
+            let identifier = config.bundleIdentifier
+            let installed = await Background.run { AppInspector.installedApplicationIdentifiers() }
+            let prefixes = try await lease.adopt(domain, strays: strays, installed: installed, ownIdentifier: identifier,
+                                                 otherBoxes: others)
+            guard prefixes != config.preferencePrefixes else { return }
+            var updated = config
+            updated.preferencePrefixes = prefixes
+            // 先存好再改内存里的：存不了要告诉用户（config 的 didSet 只把错误放进 lastError）。系统里的已经删了、内容在盒子里，
+            // 前缀没加上时报告里照样显示「收进盒子」，再点一次就补上
+            try paths.save(updated)
+            config = updated
         }
     }
 
