@@ -75,7 +75,8 @@ struct ReportView: View {
         .frame(width: 700, height: 740)
         // 刚结束的一次存好之后重新读一遍
         .task(id: box.report?.endedAt) { saved = await box.savedReports() }
-        .confirmationDialog(L("把「\(adopting?.stray.domain ?? "")」收进盒子？", "Move “\(adopting?.stray.domain ?? "")” into the box?"),
+        // 域名放在说明里：标题字大，长域名会在中间断开
+        .confirmationDialog(L("把这项设置收进盒子？", "Move This Setting Into the Box?"),
                             isPresented: Binding(get: { adopting != nil }, set: { if !$0 { adopting = nil } }),
                             presenting: adopting) { pending in
             Button(L("收进盒子", "Move Into Box")) {
@@ -90,8 +91,8 @@ struct ReportView: View {
             Button(L("取消", "Cancel"), role: .cancel) {}
         } message: { pending in
             let domain = pending.stray.domain
-            Text(L("现在的内容会存进盒子，并从这台 Mac 的偏好设置里删除（名字以「\(domain).」开头的也一起）。以后它和这个应用的其他设置一样，只在应用运行时借给系统，删除盒子时一起删除。\n\n偏好设置由系统服务替所有程序代写，MacBox 分不出是谁写的。如果它其实属于这台 Mac 上的别的程序，那个程序就读不到这些设置了；这个应用运行期间，它读到的也是盒子里的内容。",
-                   "Its current contents will be saved in the box and removed from this Mac’s preferences (along with any whose names start with “\(domain).”). From then on it’s handled like the app’s other settings: lent to the system only while the app runs, and deleted along with the box.\n\nA system service writes preferences for every program, so MacBox can’t tell who wrote these. If they actually belong to another program on this Mac, that program won’t see them anymore, and while this app runs it will see the box’s copy instead."))
+            Text(L("「\(domain)」会从这台 Mac 的偏好设置移进盒子（名字以它开头的也一起），以后只在应用运行时借出，删除盒子时一起删除。\n\n如果它其实属于别的程序，那个程序就读不到它了。",
+                   "“\(domain)” will move from this Mac’s preferences into the box, along with any whose names start with it. From then on it’s lent out only while the app runs, and it’s deleted with the box.\n\nIf it actually belongs to another program, that program won’t see it anymore."))
         }
         .alert(L("没能收进盒子", "Couldn’t Move Into the Box"),
                isPresented: Binding(get: { adoptionError != nil }, set: { if !$0 { adoptionError = nil } })) {
@@ -147,7 +148,7 @@ private struct ReportContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             header
-            ReportStats(report: report)
+            ReportStats(report: report, strayPending: report.strayPreferences?.contains { box.status(of: $0) == .adoptable })
             filesSection
             preferencesSection
             straysSection
@@ -307,14 +308,19 @@ private struct ReportContent: View {
     }
 }
 
-/// 五个数字：文件、设置、服务器、程序、拦截
+/// 五个数字：文件、设置、服务器、程序、拦截；有写在盒子外的设置时，设置后面再加一个
 private struct ReportStats: View {
     let report: RunReport
+    /// 写在盒子外的设置里还有没收进盒子的：那个数字标成橙色。nil（分享图片，没有盒子可查）时只要有就标
+    var strayPending: Bool?
 
     var body: some View {
         HStack(spacing: 10) {
             Stat(value: report.fileTotals.map { "\($0.count)" } ?? "–", label: L("写入文件", "Files Written"))
             Stat(value: report.preferenceKeyCount.map { "\($0)" } ?? "–", label: L("改动设置", "Settings Changed"))
+            if let strays = report.strayPreferences, !strays.isEmpty {
+                Stat(value: "\(strays.count)", label: L("写在盒子外", "Outside the Box"), tint: strayPending ?? true ? .orange : nil)
+            }
             Stat(value: report.networkBlocked ? L("断网", "Off") : "\(report.servers.count)", label: L("连接服务器", "Servers"))
             Stat(value: "\(report.programs.count)", label: L("启动程序", "Programs"))
             Stat(value: "\(report.blockCount)", label: L("被拦下", "Blocked"),
@@ -333,7 +339,8 @@ private struct ReportStats: View {
                     .font(.system(size: 24, weight: .semibold, design: .rounded))
                     .foregroundStyle(tint ?? .primary)
                     .monospacedDigit()
-                Text(label).font(.caption).foregroundStyle(.secondary)
+                // 六个数字时格子变窄，英文的标签放不下就缩小一点，不截断
+                Text(label).font(.caption).foregroundStyle(.secondary).minimumScaleFactor(0.8)
             }
             .lineLimit(1)
             .frame(maxWidth: .infinity)

@@ -171,14 +171,22 @@ struct BoxDataTests {
         #expect(issues.map(\.source) == old.map(\.source))
         Localization.$testLanguage.withValue(.chinese) {
             #expect(issues.map(\.localizedTitle) == old.map(\.title))
-            #expect(issues.map(\.localizedDetail) == old.map(\.detail))
+            // 没通过公证的两条换了说法（spctl 的英文不再原样显示），其余照旧
+            let shown = old.enumerated().map { index, issue in
+                switch index {
+                case 2: "有开发者签名，但没有经过公证。打开时 macOS 会询问你是否信任它，请确认来源可靠。"
+                case 3: "签名没有通过检查。打开时 macOS 会询问你是否信任它，请确认来源可靠。"
+                default: issue.detail
+                }
+            }
+            #expect(issues.map(\.localizedDetail) == shown)
         }
         Localization.$testLanguage.withValue(.english) {
             #expect(issues[0].localizedTitle == "Passed Apple notarization check")
             #expect(issues[0].localizedDetail == "Developer ID Application: Example Ltd (ABCDE12345)")
             #expect(issues[1].localizedDetail == "Source verified")
-            #expect(issues[2].localizedDetail.hasPrefix("Unnotarized Developer ID. macOS will ask whether you trust it"))
-            #expect(issues[3].localizedDetail.hasPrefix("Invalid signature. macOS will ask whether you trust it"))
+            #expect(issues[2].localizedDetail.hasPrefix("Signed by a developer but not notarized. macOS will ask whether you trust it"))
+            #expect(issues[3].localizedDetail.hasPrefix("The signature didn’t pass the check. macOS will ask whether you trust it"))
             #expect(issues[5].localizedTitle == "System-wide background service")
             #expect(issues[5].localizedDetail == "Registers a system service that runs at startup.")
             #expect(issues.dropLast().allSatisfy { !$0.localizedTitle.contains(where: \.isHan) && !$0.localizedDetail.contains(where: \.isHan) })
@@ -226,8 +234,28 @@ struct BoxDataTests {
         }
         Localization.$testLanguage.withValue(.chinese) {
             #expect(issues.map(\.localizedTitle) == ["未通过 Apple 公证检查", "开机自启动", "已通过 Apple 公证检查"])
-            #expect(issues[0].localizedDetail == "Unnotarized Developer ID。打开时 macOS 会询问你是否信任它，请确认来源可靠。")
+            #expect(issues[0].localizedDetail == "有开发者签名，但没有经过公证。打开时 macOS 会询问你是否信任它，请确认来源可靠。")
         }
+    }
+
+    @Test("公证检查：spctl 的英文说法换成当前语言，认不出的不原样显示；通过时的开发者证书名原样显示")
+    func notarizationSources() {
+        let unsigned = CompatibilityIssue(.notNotarized, source: "no usable signature")
+        let unknown = CompatibilityIssue(.notNotarized, source: "some future reason")
+        let certificate = CompatibilityIssue(.notarized, source: "Developer ID Application: Example Ltd (ABCDE12345)")
+        let notarized = CompatibilityIssue(.notarized, source: "Notarized Developer ID")
+        Localization.$testLanguage.withValue(.chinese) {
+            #expect(unsigned.localizedDetail == "没有可用的签名。打开时 macOS 会询问你是否信任它，请确认来源可靠。")
+            #expect(unknown.localizedDetail.hasPrefix("签名没有通过检查。") && !unknown.localizedDetail.contains("future"))
+            #expect(certificate.localizedDetail == "Developer ID Application: Example Ltd (ABCDE12345)")
+            #expect(notarized.localizedDetail == "已公证的开发者签名")
+        }
+        Localization.$testLanguage.withValue(.english) {
+            #expect(unsigned.localizedDetail.hasPrefix("No usable signature. macOS will ask"))
+            #expect(!unknown.localizedDetail.contains("future"))
+            #expect(notarized.localizedDetail == "Notarized developer signature")
+        }
+        #expect(CompatibilityIssue.Code.spctlSource("Unnotarized Developer ID")?.0 == CompatibilityIssue.Code.spctlSource("unnotarized developer id")?.0)
     }
 
     @Test("偏好设置前缀：同一应用的两份、前缀包含关系都算重叠；名字相近的不算")

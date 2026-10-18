@@ -86,9 +86,12 @@ nonisolated extension CompatibilityIssue.Code {
         }
     }
 
-    /// 说明的中文和英文。公证检查的两条带上 spctl 给出的来源
+    /// 说明的中文和英文。公证检查的两条带上 spctl 给出的来源：认得出的固定说法换成两种语言（见 spctlSource）；
+    /// 通过时的来源多半是开发者证书名（origin），专有名词，原样显示；没通过、又认不出的不显示英文原文
     func detail(source: String?) -> (String, String) {
-        switch self {
+        let known = source.flatMap(Self.spctlSource)
+        let rejection = known ?? ("签名没有通过检查", "The signature didn’t pass the check")
+        return switch self {
         case .privilegedHelper: ("会以 root 身份在系统里安装常驻服务，本机隔离无法容纳。",
                                  "Installs a resident service that runs as root, which Native Isolation can’t contain.")
         case .systemService: ("会注册开机即运行的系统服务。", "Registers a system service that runs at startup.")
@@ -102,11 +105,26 @@ nonisolated extension CompatibilityIssue.Code {
                                  "Network extensions such as VPNs and proxies require a system-wide install.")
         case .appSandbox: ("在 MacBox 中它改由 MacBox 的沙盒约束，数据存进盒子；请经由 MacBox 打开它。",
                            "In MacBox it’s confined by MacBox’s sandbox instead and its data goes into the box. Always open it through MacBox.")
-        case .notarized: (source ?? "来源已验证", source ?? "Source verified")
-        case .notNotarized: ("\(source ?? "签名无效")。打开时 macOS 会询问你是否信任它，请确认来源可靠。",
-                             "\(source ?? "Invalid signature"). macOS will ask whether you trust it when you open it; make sure it comes from a source you trust.")
+        case .notarized: known ?? source.map { ($0, $0) } ?? ("来源已验证", "Source verified")
+        case .notNotarized: ("\(rejection.0)。打开时 macOS 会询问你是否信任它，请确认来源可靠。",
+                             "\(rejection.1). macOS will ask whether you trust it when you open it; make sure it comes from a source you trust.")
         case .installerScriptsSkipped: ("安装包带有安装脚本（通常用于安装后台服务或驱动），MacBox 没有执行它们。功能异常时请改用虚拟 Mac。",
                                         "The package contains installer scripts (usually for installing background services or drivers), which MacBox didn’t run. If something doesn’t work, switch to Virtual Mac.")
+        }
+    }
+
+    /// spctl 给出的来源（source=…）是英文的固定说法，换成两种语言；认不出的为 nil
+    static func spctlSource(_ source: String) -> (String, String)? {
+        switch source.lowercased() {
+        case "no usable signature": ("没有可用的签名", "No usable signature")
+        case "unnotarized developer id": ("有开发者签名，但没有经过公证", "Signed by a developer but not notarized")
+        case "notarized developer id": ("已公证的开发者签名", "Notarized developer signature")
+        case "developer id": ("开发者签名", "Developer ID signature")
+        case "apple system": ("苹果系统软件", "Apple system software")
+        case "mac app store": ("来自 Mac App Store", "From the Mac App Store")
+        case "explicit preference": ("你在系统设置里允许过", "Allowed by you in System Settings")
+        case "obsolete resource envelope": ("签名格式过旧", "Outdated signature format")
+        default: nil
         }
     }
 }
