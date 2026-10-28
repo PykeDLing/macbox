@@ -63,6 +63,13 @@ struct BrokenBox: Identifiable {
     let message: String
 }
 
+/// 这些盒子由谁管理（见 EngineLock）
+enum Ownership: Equatable {
+    case thisProcess
+    /// 另一个 MacBox 拿着引擎锁：这个进程什么都不碰。读不出是谁时为 nil
+    case otherProcess(EngineLock.Holder?)
+}
+
 @Observable
 final class BoxStore {
     static let shared = BoxStore()
@@ -84,6 +91,9 @@ final class BoxStore {
     var destination: Destination = .allApps
     /// 由 App 场景消费：打开对应窗口
     var windowRequest: WindowRequest?
+    /// start() 时决定，之后不再改变
+    private(set) var ownership = Ownership.thisProcess
+    var isManagedElsewhere: Bool { ownership != .thisProcess }
 
     /// MacBox 正在退出：不再打开应用、不再开始添加（见 quitAll）。主窗口据此显示“正在退出 MacBox…”、停用打开和添加
     private(set) var isTerminating = false
@@ -100,14 +110,33 @@ final class BoxStore {
     @ObservationIgnored private var volumeWatchers: [Task<Void, Never>] = []
     /// 守卫结束沙盒外的主程序后，在隔离中重新打开的时间（每个盒子最近一分钟的）
     @ObservationIgnored private var relaunches: [UUID: [Date]] = [:]
+    /// 拿到的引擎锁，一直持有到进程结束（锁文件打不开时为 nil，照旧管理盒子）
+    @ObservationIgnored private var engineLock: EngineLock?
+    /// 引擎锁所在的目录，nil 时是 AppPaths.root（测试时换成别处：同一个测试进程里的锁总是拿得到）
+    @ObservationIgnored private let lockDirectory: URL?
 
-    /// 不做任何事；读取盒子、启动守卫等都在 start() 里
-    init() {}
+    /// 不做任何事；拿锁、读取盒子、启动守卫等都在 start() 里
+    init(lockDirectory: URL? = nil) {
+        self.lockDirectory = lockDirectory
+    }
 
-    /// 读取盒子、收尾上次异常退出、启动守卫。可重复调用，只有第一次生效
+    /// 拿引擎锁，读取盒子、收尾上次异常退出、启动守卫。可重复调用，只有第一次生效。
+    /// 锁在另一个 MacBox 手里时什么都不碰：这里的收尾和守卫会结束它正在运行的应用、收回它正借出的设置（见 EngineLock）
     func start() {
         guard !started else { return }
         started = true
+        do {
+            switch try EngineLock.acquire(in: lockDirectory ?? AppPaths.root) {
+            case .acquired(let lock):
+                engineLock = lock
+            case .heldByOther(let holder):
+                ownership = .otherProcess(holder)
+                return
+            }
+        } catch {
+            // 锁文件建不了、打不开（数据目录的权限不对等）：照旧启动，和没有锁的旧版一样，不因此让 MacBox 用不了
+            NSLog("MacBox: 无法使用引擎锁：\(error.localizedDescription)")
+        }
         reload()
         // 这时还没有打开过任何应用，盒子里还在运行的程序都是上次 MacBox 运行时留下的（MacBox 崩溃、被强制退出）。
         // 守卫照样结束它们，但不当作逃逸：它们本来就在沙盒里，不该记成“在沙盒外启动程序”，也不该被当成
@@ -289,6 +318,7 @@ final class BoxStore {
 
     func importItems(_ urls: [URL]) async {
         await ready()
+        guard !isManagedElsewhere else { return } // 打开请求由 App 转给管理盒子的那个 MacBox
         guard !isTerminating else {
             skippedImports += urls
             return
@@ -544,6 +574,7 @@ final class BoxStore {
     /// 什么也不说的话用户只会觉得“点了没反应”
     func handle(_ url: URL) {
         start()
+        guard !isManagedElsewhere else { return } // 没读盒子，不能说“应用已经不在了”
         guard url.scheme == "macbox", url.host() == "open", let id = UUID(uuidString: url.lastPathComponent) else { return }
         if let box = box(id: id) {
             Task { await box.open() }

@@ -10,7 +10,7 @@ struct MacBoxApp: App {
 
     var body: some Scene {
         Window("MacBox", id: WindowID.library.rawValue) {
-            MainView()
+            if store.isManagedElsewhere { ManagedElsewhereView() } else { MainView() }
         }
         .environment(store)
         .environment(virtualMac)
@@ -21,8 +21,9 @@ struct MacBoxApp: App {
             if let request { openWindow(id: request.window.rawValue) }
         }
 
+        // 虚拟 Mac 也在数据目录里：另一个 MacBox 管理着时，不能在这里再启动同一台
         Window(Text(L("虚拟 Mac", "Virtual Mac")), id: WindowID.virtualMac.rawValue) {
-            VirtualMacWindow()
+            if store.isManagedElsewhere { ManagedElsewhereView() } else { VirtualMacWindow() }
         }
         .environment(store)
         .environment(virtualMac)
@@ -58,18 +59,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    /// 另一个 MacBox 管理着盒子时，关掉说明窗口就退出：留着也什么都做不了
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        BoxStore.shared.isManagedElsewhere
+    }
 
     /// 聚焦里的启动器通过 macbox://open/<id> 打开应用；
     /// 把 dmg 拖到程序坞的 MacBox 图标上、或「打开方式 › MacBox」则添加应用：
     /// 进度和结果只在「全部应用」里显示，窗口关着、停在别的页面时要先切过去，否则看起来什么也没发生
     func application(_ application: NSApplication, open urls: [URL]) {
         let store = BoxStore.shared
+        if case .otherProcess(let holder) = store.ownership {
+            forward(urls, to: holder)
+            return
+        }
         for url in urls where !url.isFileURL { store.handle(url) }
         let files = urls.filter(\.isFileURL)
         if !files.isEmpty {
             store.show(.allApps)
             Task { await store.importItems(files) }
+        }
+    }
+
+    /// 另一个 MacBox 正在管理盒子：这次的打开交给它（LaunchServices 把它叫到前台），交好了这个就退出。
+    /// 和这个是同一个 App 包时不交：LaunchServices 分不清是哪个实例，可能又交回这里。交不了的留在说明页面上
+    private func forward(_ urls: [URL], to holder: EngineLock.Holder?) {
+        guard let target = holder?.appURL,
+              target.standardizedFileURL.path != Bundle.main.bundleURL.standardizedFileURL.path else { return }
+        NSWorkspace.shared.open(urls, withApplicationAt: target, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            if let error {
+                NSLog("MacBox: 无法把打开请求交给正在运行的 MacBox：\(error.localizedDescription)")
+                return
+            }
+            Task { @MainActor in NSApp.terminate(nil) }
         }
     }
 
