@@ -1,6 +1,6 @@
 # MacBox 命令行（CLI）设计方案
 
-状态：草案（2026-10-28），第 1 步（引擎锁）已实现，其余还没有。
+状态：草案（2026-10-28），第 1、2 步已实现（见 §7），其余还没有。
 
 商业模式定为“App 免费，部分高级功能付费”。App 永远免费可用，所以 CLI 可以一直依赖 App：**MacBox.app 就是引擎，CLI 只是它的客户端**。不需要拆出单独的核心库，也不需要无界面的引擎进程。
 
@@ -150,7 +150,7 @@
 | --- | --- | --- |
 | `importItems` 把结果写进 `importStatus` / `importError` / `virtualMacOffers`，没有返回值 | CLI 拿不到结果 | 每个文件返回一个 `ImportOutcome`（盒子 / 需要虚拟 Mac / 错误），进度经回调传出；界面照旧显示，CLI 打印 |
 | `reviewCompatibility` / `suggestVirtualMac` 直接把询问排进界面的队列 | 从 CLI 添加的应用，会在 App 里弹出询问 | 按发起方区分：界面发起的照旧询问；CLI 发起的把理由放进结果，按设置自动切换的那部分不变 |
-| `Box` 里 4 处 `store?.reveal(self)` | 从 CLI 打开失败时，会弹出 App 窗口 | 带上发起方：CLI 发起的不切页面，错误回给 CLI |
+| `Box` 里 4 处 `store?.reveal(self)` | 从 CLI 打开失败时，会弹出 App 窗口 | 带上发起方：CLI 发起的不切页面。`open` 当场就能知道的错误（偏好设置冲突、没做完的还原）在 `OpenResult` 里返回；启动失败、很快退出这类事后才知道的，在 `lastError` 里，第 3 步由 `box.watch` 交给 CLI |
 | `Box.lastError` / `notice` 是生成时语言的文字 | `--json` 想要代码 | 协议先原样带在 `message` 里；以后像 box.json 那样换成代码 |
 | 高级功能 | 还没有 | 在 `Box` / `BoxStore` 的入口检查，界面和 CLI 都经过这里 |
 
@@ -171,7 +171,11 @@
 ## 7. 步骤
 
 1. ✅ `EngineLock` 和 App 启动时拿锁，第二个实例转发打开请求后退出。
-2. 让操作结果回给发起方（§5 的前三行）。界面行为不变。
+2. ✅ 让操作结果回给发起方（§5 的前三行），界面行为不变：
+   - `Origin`（`.interface` / `.commandLine`）；
+   - `importItems(_:from:onProgress:)` 返回每个文件的 `ImportOutcome`，进度是 `ImportStage`；
+   - `Box.open(from:)` 返回 `OpenResult`；
+   - 这次运行是谁打开的记在盒子上（`runOrigin`），空闲后再打开的也带着是谁要打开的。
 3. 套接字服务、协议、§3.1 的四层安全措施。
 4. `macbox` CLI 的第一批命令：`list`、`info`、`open`、`quit`、`add`。到这里就有第一个能用的版本了。
 5. 其余命令和 `doctor`。

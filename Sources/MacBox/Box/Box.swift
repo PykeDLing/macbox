@@ -51,10 +51,28 @@ final class Box: Identifiable {
         }
     }
 
+    /// open 的结果。.launching 之后启动成没成看 activity：成了变成 running，没成回到 idle、设好 lastError
+    enum OpenResult: Equatable {
+        /// 开始在本机隔离中启动
+        case launching
+        /// 已经在启动或运行：切过去（启动中的，启动完成后切过去）
+        case alreadyOpen
+        /// 正在收尾、维护，或者只剩后台程序在运行（先请它们退出）：空闲后再打开
+        case willOpenWhenIdle
+        /// 设成在虚拟 Mac 中运行：交给虚拟 Mac（还没设置的，界面切到虚拟 Mac 页）
+        case virtualMac
+        /// MacBox 正在退出，不再打开应用
+        case terminating
+        /// 盒子已经删除
+        case removed
+        /// 打不开：原因（也在 lastError 里）
+        case failed(String)
+    }
+
     /// 空闲下来之后要做的打开
     private enum PendingOpen {
-        /// 用户在收尾、维护期间点了打开；或者主进程已退出、只剩后台程序时点了打开（先请它们退出）
-        case user
+        /// 用户在收尾、维护期间要打开；或者主进程已退出、只剩后台程序时要打开（先请它们退出）。带着是谁要打开的
+        case user(Origin)
         /// App 经由系统重新启动自己（“重启以生效”、更新后重启），沙盒外的新实例被守卫结束（见 BoxStore.handleEscape）：
         /// 这次运行结束后在隔离中重新打开，并补上那条拦截记录
         case relaunch(requestedAt: Date, event: BlockEvent)
@@ -75,6 +93,8 @@ final class Box: Identifiable {
     /// 请求过退出的，很快退出不算启动失败，“重启以生效”也不再重新打开
     @ObservationIgnored private var quitRequested = false
     @ObservationIgnored private var pendingOpen: PendingOpen?
+    /// 这次运行是谁打开的：启动失败、很快退出、运行中被拦截时，界面打开的才切页面、弹询问（见 Origin）
+    @ObservationIgnored private var runOrigin = Origin.interface
     /// 这次启动完成后把它切到前台（见 bringToFront）
     @ObservationIgnored private var activateOnStart = false
     /// 这次运行里最近一次强制退出的时间（见 BoxStore.quitAll）
@@ -107,31 +127,36 @@ final class Box: Identifiable {
 
     // MARK: - 打开 / 退出
 
-    /// 打开应用；本机隔离时 App 启动后即返回，生命周期在后台继续。
+    /// 打开应用；本机隔离时开始启动就返回，生命周期在后台继续。
     /// 正在收尾、维护时记下来，空闲后再打开，而不是什么也不做；MacBox 正在退出时不再打开任何应用（只切换过去）：
-    /// 退出流程只会等、只会请求退出它开始等的那些，这时打开的会在 MacBox 退出后带着借出的偏好设置继续运行
-    func open() async {
+    /// 退出流程只会等、只会请求退出它开始等的那些，这时打开的会在 MacBox 退出后带着借出的偏好设置继续运行。
+    /// 打不开时界面打开的切到这个应用让人看到原因，命令行打开的只返回原因（见 Origin）
+    @discardableResult
+    func open(from origin: Origin = .interface) async -> OpenResult {
         // 上次异常退出的收尾（收回设置等）完成后才能启动
         await store?.ready()
-        guard !retired else { return }
+        guard !retired else { return .removed }
         if store?.isTerminating == true {
             // 不再打开，但可以切到还在运行的应用：比如去回答它“是否存储”，它才退得了
             session?.activate()
-            return
+            return .terminating
         }
         lastError = nil
         switch config.runtime {
         case .isolated:
-            guard await finishUnfinishedWork(), store?.isTerminating != true else { return }
-            startIsolated()
-        case .virtualMac: await store?.openInVirtualMac(self)
+            guard await finishUnfinishedWork(origin) else { return .failed(lastError ?? "") }
+            guard store?.isTerminating != true else { return .terminating }
+            return startIsolated(origin)
+        case .virtualMac:
+            await store?.openInVirtualMac(self)
+            return .virtualMac
         }
     }
 
     /// 上次的还原、清除数据没做完（做到一半失败了，或者 MacBox 中途退出、启动时又没能重做）：打开前先做完，
     /// 不在一半新一半旧的数据上运行——否则下次启动 MacBox 重做时，会把这之后的改动全部丢掉。
-    /// 返回 false 表示没做完，这次不打开
-    private func finishUnfinishedWork() async -> Bool {
+    /// 返回 false 表示没做完，这次不打开（原因在 lastError 里）
+    private func finishUnfinishedWork(_ origin: Origin) async -> Bool {
         guard activity == .idle, let work = Self.unfinishedWork(paths) else { return true }
         let paths = paths
         do {
@@ -140,7 +165,7 @@ final class Box: Identifiable {
             return true
         } catch {
             lastError = error is PartialRestore ? error.localizedDescription : work.refusedMessage(error.localizedDescription)
-            store?.reveal(self) // 从聚焦打开时主窗口可能关着
+            if origin == .interface { store?.reveal(self) } // 从聚焦打开时主窗口可能关着
             return false
         }
     }
@@ -175,34 +200,35 @@ final class Box: Identifiable {
         await session.forceQuit()
     }
 
-    private func startIsolated() {
+    private func startIsolated(_ origin: Origin) -> OpenResult {
         switch activity {
         case .running(let session):
             // 主进程还在，或者盒子里有带界面的 App 可以切过去：切过去
-            if session.activate() || !session.mainHasExited { return }
+            if session.activate() || !session.mainHasExited { return .alreadyOpen }
             // 主进程已退出，只剩没有界面的后台程序撑着这次运行，“切换过去”什么也不会发生。
             // 请它们退出，这次运行结束后重新打开
-            pendingOpen = .user
+            openWhenIdle(from: origin)
             let message = L("「\(config.name)」的主程序已经退出，还有后台程序在运行。正在让它们退出，之后重新打开。",
                             "“\(config.name)” has quit, but some of its background processes are still running. MacBox is asking them to quit and will then open the app again.")
             notice = message
             reopenNotice = message
             quit()
-            return
+            return .willOpenWhenIdle
         case .launching:
             activateOnStart = true // 已经在启动：启动完成后切到前台
-            return
+            return .alreadyOpen
         case .finishing, .maintenance:
-            pendingOpen = .user
-            return
+            openWhenIdle(from: origin)
+            return .willOpenWhenIdle
         case .idle:
             break
         }
         if let conflict = preferenceConflict() {
             lastError = conflict
-            store?.reveal(self)
-            return
+            if origin == .interface { store?.reveal(self) }
+            return .failed(conflict)
         }
+        runOrigin = origin
         activity = .launching
         blocks.removeAll()
         report = RunReport(config: config)
@@ -214,6 +240,7 @@ final class Box: Identifiable {
         forceQuitAt = nil
         activateOnStart = true
         Task { await runIsolated() }
+        return .launching
     }
 
     /// 和正在运行的其他程序共用偏好设置时不能打开（见 PreferenceLease.overlaps）：另一个盒子里的同一应用，
@@ -268,7 +295,7 @@ final class Box: Identifiable {
             Task { await loadLatestReport() }
             activity = .idle
             lastError = L("启动失败：\(error.localizedDescription)", "Couldn’t open the app: \(error.localizedDescription)")
-            store?.reveal(self) // 从聚焦打开时主窗口可能关着，失败了要让人看到
+            if runOrigin == .interface { store?.reveal(self) } // 从聚焦打开时主窗口可能关着，失败了要让人看到
             return
         }
         activity = .finishing
@@ -431,6 +458,12 @@ final class Box: Identifiable {
         return tidier
     }
 
+    /// 空闲后再打开。界面和命令行都要打开时按界面的来：有人看着界面，打不开时要切过去让人看到
+    private func openWhenIdle(from origin: Origin) {
+        if case .user(.interface) = pendingOpen { return }
+        pendingOpen = .user(origin)
+    }
+
     /// 守卫在这次运行期间结束了一个沙盒外的主程序实例（见 BoxStore.handleEscape）：这次运行结束后在隔离中重新打开
     func relaunchWhenIdle(_ event: BlockEvent) {
         if case .user = pendingOpen { return } // 已经要重新打开了
@@ -445,11 +478,11 @@ final class Box: Identifiable {
         pendingOpen = nil
         guard let store, !store.isTerminating else { return }
         switch pending {
-        case .user:
+        case .user(let origin):
             // 后台程序已经退出，这就重新打开：“正在让它们退出”说的事已经过去了
             if let reopenNotice, notice == reopenNotice { notice = nil }
             reopenNotice = nil
-            Task { await open() }
+            Task { await open(from: origin) }
         case .relaunch(let requestedAt, let event):
             // 用户这次请求过退出（退出前它自己重启的不算数）、等得太久（多半是你后来自己退出的）、短时间内反复重启：
             // 不再打开，只补上拦截记录
@@ -506,7 +539,7 @@ final class Box: Identifiable {
         }
         if !quitRequested, let status = outcome.mainExitStatus, status != 0, outcome.mainRanFor < Self.quickExit {
             errors.append(Self.quickExitMessage(name: config.name, status: status))
-            if !terminating { store?.reveal(self) } // 从聚焦打开时主窗口可能关着
+            if !terminating, runOrigin == .interface { store?.reveal(self) } // 从聚焦打开时主窗口可能关着
         }
         guard !terminating else { return }
         let acknowledged = Set(config.acknowledgedBlocks ?? [])
@@ -514,7 +547,7 @@ final class Box: Identifiable {
         if !severe.isEmpty {
             store?.suggestVirtualMac(for: self, reasons: severe.map {
                 L("\($0.kind.title)：\($0.targetText)", "\($0.kind.title): \($0.targetText)")
-            }, blocks: severe.map(\.id))
+            }, blocks: severe.map(\.id), origin: runOrigin)
         }
     }
 
@@ -588,8 +621,8 @@ final class Box: Identifiable {
             // 安装器尝试写入「应用程序」被拦截是预期内的，安装已由 MacBox 完成
             blocks.removeAll { [.systemInstall, .escapedLaunch, .diskMount].contains($0.kind) }
             notice = L("「\(config.name)」已安装到 MacBox。", "“\(config.name)” was installed in MacBox.")
-            // 和导入时一样：需要虚拟 Mac 的先问，不直接在本机隔离里打开
-            if store?.reviewCompatibility(of: self) ?? true { pendingOpen = .user }
+            // 和导入时一样：需要虚拟 Mac 的先问，不直接在本机隔离里打开（命令行打开的安装器不问，见 Origin）
+            if store?.reviewCompatibility(of: self, origin: runOrigin) ?? true { openWhenIdle(from: runOrigin) }
             activity = .idle // 空闲后打开（见 becameIdle）
         } catch {
             try? await Background.run { try FileOps.removeTree(staging) }
