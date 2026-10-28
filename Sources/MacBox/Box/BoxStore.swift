@@ -63,38 +63,6 @@ struct BrokenBox: Identifiable {
     let message: String
 }
 
-/// 操作是谁发起的，决定结果怎么呈现。界面（窗口、聚焦里的启动器、程序坞）发起的，照旧切页面、弹询问；
-/// 命令行发起的不动界面：结果和错误交回给它（见 docs/cli-design.md）
-enum Origin: Equatable {
-    case interface
-    case commandLine
-}
-
-/// 添加一个文件进行到了哪一步（界面上的进度卡片，命令行的进度）
-enum ImportStage: Equatable {
-    case reading, extracting, checking, preparingKeychain
-
-    func text(for file: URL) -> String {
-        switch self {
-        case .reading: L("正在读取「\(file.lastPathComponent)」…", "Reading “\(file.lastPathComponent)”…")
-        case .extracting: L("正在取出 App…", "Extracting the app…")
-        case .checking: L("正在检查兼容性…", "Checking compatibility…")
-        case .preparingKeychain: L("正在准备独立的钥匙串…", "Preparing a separate keychain…")
-        }
-    }
-}
-
-/// 添加一个文件的结果
-enum ImportOutcome {
-    /// 添加好了。需要虚拟 Mac 的，见它的 config.issues 和 runtime（按设置可能已经改用虚拟 Mac）
-    case added(Box)
-    /// 安装包里只有驱动、插件这类系统组件，要放进虚拟 Mac 安装（见 VirtualMacOffer）
-    case needsVirtualMac(file: URL, message: String)
-    case failed(file: URL, reason: String)
-    /// MacBox 正在退出，或者另一个 MacBox 管理着盒子：没有添加
-    case skipped(URL)
-}
-
 /// 这些盒子由谁管理（见 EngineLock）。不是这个进程时什么都不碰，界面只说明情况（见 NotManagingView）
 enum Ownership: Equatable {
     case thisProcess
@@ -147,8 +115,6 @@ final class BoxStore {
     @ObservationIgnored private var volumeWatchers: [Task<Void, Never>] = []
     /// 守卫结束沙盒外的主程序后，在隔离中重新打开的时间（每个盒子最近一分钟的）
     @ObservationIgnored private var relaunches: [UUID: [Date]] = [:]
-    /// 正在进行的、界面发起的添加：都做完了才收起进度卡片。命令行的添加不显示进度，不算在里面
-    @ObservationIgnored private var interfaceImports = 0
     /// 引擎锁所在的目录，nil 时是 AppPaths.root（测试时换成别处：同一个测试进程里的锁总是拿得到）
     @ObservationIgnored private let lockDirectory: URL?
 
@@ -352,65 +318,43 @@ final class BoxStore {
 
     // MARK: - 导入
 
-    /// 添加应用，返回每个文件的结果。界面发起的，进度、出错、“放进虚拟 Mac”的建议、兼容性询问都显示在界面上，
-    /// 并选中添加好的；命令行发起的不动界面，进度交给 onProgress
-    @discardableResult
-    func importItems(_ urls: [URL], from origin: Origin = .interface,
-                     onProgress: ((URL, ImportStage) -> Void)? = nil) async -> [ImportOutcome] {
+    func importItems(_ urls: [URL]) async {
         await ready()
-        // 打开请求由 App 转给管理盒子的那个 MacBox
-        guard managesBoxes else { return urls.map(ImportOutcome.skipped) }
-        let interface = origin == .interface
+        guard managesBoxes else { return } // 打开请求由 App 转给管理盒子的那个 MacBox
         guard !isTerminating else {
-            if interface { skippedImports += urls }
-            return urls.map(ImportOutcome.skipped)
+            skippedImports += urls
+            return
         }
         activeImports += 1
-        if interface { interfaceImports += 1 }
         defer {
             activeImports -= 1
-            if interface {
-                interfaceImports -= 1
-                if interfaceImports == 0 { importStatus = nil } // 界面发起的其他添加还没做完时，进度卡片留着
-            }
+            if activeImports == 0 { importStatus = nil } // 同时进行的其他添加还没做完时，进度卡片留着
         }
-        var outcomes: [ImportOutcome] = []
         for (index, url) in urls.enumerated() {
             guard !isTerminating else {
-                if interface { skippedImports += urls[index...] }
-                outcomes += urls[index...].map(ImportOutcome.skipped)
+                skippedImports += urls[index...]
                 break
             }
-            let progress = { (stage: ImportStage) in
-                if interface { self.importStatus = stage.text(for: url) }
-                onProgress?(url, stage)
-            }
-            progress(.reading)
+            importStatus = L("正在读取「\(url.lastPathComponent)」…", "Reading “\(url.lastPathComponent)”…")
             do {
                 // 先看类型再复制：不支持的大文件、文件夹不必整个复制进来才报错
                 try PackageExtractor.checkSupported(url)
-                let box = try await makeBox(from: url, progress: progress)
-                if interface { selection = box.id }
-                outcomes.append(.added(box))
-                await afterImport(box, origin: origin)
+                let box = try await makeBox(from: url)
+                selection = box.id
+                await afterImport(box)
             } catch let error as PackageExtractor.NeedsVirtualMac {
                 // 只是报错的话，用户还得自己去找虚拟 Mac 的「文件交换」：直接提供“放进虚拟 Mac”
-                if interface { virtualMacOffers.append(VirtualMacOffer(file: url, message: error.message)) }
-                outcomes.append(.needsVirtualMac(file: url, message: error.message))
+                virtualMacOffers.append(VirtualMacOffer(file: url, message: error.message))
             } catch {
-                if interface {
-                    let message = L("无法添加「\(url.lastPathComponent)」：\(error.localizedDescription)",
-                                    "Couldn’t add “\(url.lastPathComponent)”: \(error.localizedDescription)")
-                    // 一次添加多个、几次添加同时进行时，每个失败的都要列出来
-                    importError = importError.map { "\($0)\n\n\(message)" } ?? message
-                }
-                outcomes.append(.failed(file: url, reason: error.localizedDescription))
+                let message = L("无法添加「\(url.lastPathComponent)」：\(error.localizedDescription)",
+                                "Couldn’t add “\(url.lastPathComponent)”: \(error.localizedDescription)")
+                // 一次添加多个、几次添加同时进行时，每个失败的都要列出来
+                importError = importError.map { "\($0)\n\n\(message)" } ?? message
             }
         }
-        return outcomes
     }
 
-    private func makeBox(from url: URL, progress: (ImportStage) -> Void) async throws -> Box {
+    private func makeBox(from url: URL) async throws -> Box {
         let id = UUID()
         // 先在导入用的名字下建好，box.json 写好、钥匙串准备好之后才改成正式的名字（见 BoxPaths.importing）
         let paths = BoxPaths.importing(id: id)
@@ -422,11 +366,11 @@ final class BoxStore {
             // 来自其他卷（外接硬盘、网络位置）时是真正的复制，可能很慢
             try await Background.run { try FileOps.clone(url, to: source) }
 
-            progress(.extracting)
+            importStatus = L("正在取出 App…", "Extracting the app…")
             let extracted = try await PackageExtractor.extractApp(from: source, into: paths.appDirectory)
             let info = try AppInspector.info(of: extracted.app)
 
-            progress(.checking)
+            importStatus = L("正在检查兼容性…", "Checking compatibility…")
             var issues = extracted.issues + (await AppInspector.scan(extracted.app))
             issues.insert(await AppInspector.verifyAndTrust(extracted.app), at: 0)
             // 借出范围：App 的标识符（能放宽时放宽到同系列），加上包里同厂商的登录项、辅助程序（要读本机各 App 的 Info.plist）
@@ -440,7 +384,7 @@ final class BoxStore {
             made.showInLaunchpad = UserDefaults.standard.object(forKey: "defaultShowInLaunchpad") as? Bool ?? true
             try paths.save(made)
 
-            progress(.preparingKeychain)
+            importStatus = L("正在准备独立的钥匙串…", "Preparing a separate keychain…")
             try await BoxKeychain.prepare(paths)
             try await Background.run {
                 // 锁上之后才算装好（见 AppLock）：MacBox 没在运行时，程序坞、聚焦都启动不了它
@@ -463,33 +407,31 @@ final class BoxStore {
         return box
     }
 
-    private func afterImport(_ box: Box, origin: Origin) async {
+    private func afterImport(_ box: Box) async {
         // 拖进来的就是安装器：像在访达里双击一样直接运行它
-        if reviewCompatibility(of: box, origin: origin), box.config.isInstaller { await box.open(from: origin) }
+        if reviewCompatibility(of: box), box.config.isInstaller { await box.open() }
     }
 
-    /// 刚添加、安装器刚完成安装：静态检查发现需要虚拟 Mac 的，按设置询问或者改用虚拟 Mac（见 suggestVirtualMac）。
+    /// 刚添加、安装器刚完成安装：静态检查发现需要虚拟 Mac 的，按设置询问或者改用虚拟 Mac。
     /// 返回 true 表示没有这类问题，可以直接在本机隔离中打开
     @discardableResult
-    func reviewCompatibility(of box: Box, origin: Origin = .interface) -> Bool {
+    func reviewCompatibility(of box: Box) -> Bool {
         let blocking = box.config.issues.filter { $0.severity == .needsVirtualMac }
         guard !blocking.isEmpty else { return true }
         suggestVirtualMac(for: box, reasons: blocking.map {
             L("\($0.localizedTitle)：\($0.localizedDetail)", "\($0.localizedTitle): \($0.localizedDetail)")
-        }, origin: origin)
+        })
         return false
     }
 
     // MARK: - 兼容性
 
     /// 建议改用虚拟 Mac。按设置排进询问队列（一次添加多个时每个都要问到，不能后一个顶掉前一个；
-    /// 同一个盒子还在排队的并成一条，正在显示的不动、另排一条），或者直接改用。blocks 是引起建议的运行时拦截。
-    /// 命令行发起的不问：理由在盒子的 config.issues、运行报告的拦截记录里，由命令行说给用户；按设置自动改用的照样改用
-    func suggestVirtualMac(for box: Box, reasons: [String], blocks: [String] = [], origin: Origin = .interface) {
+    /// 同一个盒子还在排队的并成一条，正在显示的不动、另排一条），或者直接改用。blocks 是引起建议的运行时拦截
+    func suggestVirtualMac(for box: Box, reasons: [String], blocks: [String] = []) {
         guard box.config.runtime == .isolated else { return }
         switch CompatibilityPolicy.current {
         case .ask:
-            guard origin == .interface else { return }
             // 正在显示的那条已经说过的不再说
             let shown = prompt?.boxID == box.id ? prompt : nil
             let reasons = reasons.filter { !(shown?.reasons.contains($0) ?? false) }
