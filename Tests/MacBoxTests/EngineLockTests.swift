@@ -122,10 +122,74 @@ struct EngineLockTests {
         #expect(try await TestLocker.canAcquire(in: directory), "子进程继承了锁")
     }
 
-    @Test("Holder 只有是 App 时才有 App 包的位置")
-    func holderAppURL() {
-        #expect(EngineLock.Holder(pid: 1, path: "/Applications/MacBox.app", version: nil).appURL?.path == "/Applications/MacBox.app")
-        #expect(EngineLock.Holder(pid: 1, path: "/usr/local/bin/macbox", version: nil).appURL == nil)
+    @Test("同一个目录换个写法（经过链接、结尾带 /）拿到的是同一把锁，不会被自己挡住")
+    func normalizedPath() throws {
+        // 临时目录在 /var/folders 下，/var 是指向 /private/var 的链接
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileOps.removeTree(directory) }
+        let resolved = URL(fileURLWithPath: FileOps.realPath(directory) + "/", isDirectory: true)
+        #expect(resolved.path != directory.path, "这个测试要两种不同的写法")
+        guard case .acquired(let first) = try EngineLock.acquire(in: directory),
+              case .acquired(let second) = try EngineLock.acquire(in: resolved) else {
+            Issue.record("换个写法就被自己挡住了")
+            return
+        }
+        #expect(first === second)
+    }
+
+    @Test("锁文件打不开时抛出错误，不当作拿到了")
+    func unopenable() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileOps.removeTree(directory) }
+        let file = directory.appending(path: EngineLock.fileName)
+        FileManager.default.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0])
+        #expect(throws: (any Error).self) { try EngineLock.acquire(in: directory) }
+    }
+}
+
+/// 打开请求交给哪个 MacBox（见 OpenForwarding.target）
+@Suite("转交打开请求")
+struct OpenForwardingTests {
+    let own = URL(fileURLWithPath: "/Applications/MacBox.app")
+    let other = URL(fileURLWithPath: "/Users/me/dev/macbox/build/MacBox.app")
+    let holder = EngineLock.Holder(pid: 4242, path: "/Users/me/Moved/MacBox.app", version: "0.5.0")
+
+    private func target(_ holder: EngineLock.Holder?, running: OpenForwarding.RunningApp?) -> URL? {
+        OpenForwarding.target(holder: holder, ownIdentifier: "dev.pyke.MacBox", ownBundle: own) { pid in
+            pid == 4242 ? running : nil
+        }
+    }
+
+    @Test("交给拿着锁的那个进程所在的 App 包，不用锁文件里写的路径")
+    func usesRunningApp() {
+        #expect(target(holder, running: .init(bundleIdentifier: "dev.pyke.MacBox", bundleURL: other)) == other)
+    }
+
+    @Test("交不了：不知道是谁、它已经不在运行、它不是 MacBox、它和这个是同一个 App 包")
+    func refuses() {
+        let macBox = OpenForwarding.RunningApp(bundleIdentifier: "dev.pyke.MacBox", bundleURL: other)
+        #expect(target(nil, running: macBox) == nil)
+        #expect(target(holder, running: nil) == nil)
+        #expect(target(holder, running: .init(bundleIdentifier: "dev.macboxtest.decoy", bundleURL: other)) == nil)
+        #expect(target(holder, running: .init(bundleIdentifier: nil, bundleURL: other)) == nil)
+        #expect(target(holder, running: .init(bundleIdentifier: "dev.pyke.MacBox", bundleURL: nil)) == nil)
+        #expect(target(holder, running: .init(bundleIdentifier: "dev.pyke.MacBox", bundleURL: URL(fileURLWithPath: "/Applications/./MacBox.app"))) == nil)
+    }
+
+    @MainActor
+    @Test("没有处理的打开请求：文件写名字，启动器只说从聚焦打开的应用；建议按为什么不管理盒子来说")
+    func unhandledText() throws {
+        let file = URL(fileURLWithPath: "/Users/me/Downloads/网盘.dmg")
+        let launcher = try #require(URL(string: "macbox://open/\(UUID().uuidString)"))
+        let elsewhere = try #require(NotManagingView.describeUnhandled([file, launcher], ownership: .otherProcess(nil)))
+        #expect(elsewhere.contains("网盘.dmg"))
+        #expect(elsewhere.contains("从聚焦打开的应用") || elsewhere.contains("Spotlight"))
+        #expect(!elsewhere.contains(launcher.lastPathComponent), "启动器的 ID 对人没有意义")
+        let unavailable = try #require(NotManagingView.describeUnhandled(
+            [file], ownership: .lockUnavailable(file: URL(fileURLWithPath: "/x/engine.lock"), reason: "x")))
+        #expect(elsewhere.contains("正在运行的 MacBox") || elsewhere.contains("running"))
+        #expect(unavailable.contains("删除") || unavailable.contains("Delete"))
+        #expect(NotManagingView.describeUnhandled([], ownership: .otherProcess(nil)) == nil)
     }
 }
 
@@ -133,16 +197,34 @@ struct EngineLockTests {
 @Suite("引擎锁：BoxStore", .serialized, .enabled(if: AppPaths.override != nil, "需要 MACBOX_DATA_ROOT"))
 @MainActor
 struct EngineLockStoreTests {
-    @Test("拿不到锁时不读盒子、不做收尾、不启动守卫：盒子里正在运行的程序留着，添加、打开请求都不处理")
+    @Test("另一个进程拿着锁：不读盒子、不做收尾、不启动守卫，盒子里正在运行的程序留着，添加、打开请求都不处理")
     func managedElsewhere() async throws {
-        // 守卫要是还开着（别的测试留下的），会把下面不在沙盒里的程序当成逃逸结束，这个测试就说明不了什么
-        EscapeGuard.shared.stop()
         let lockDirectory = try makeTemporaryDirectory()
         defer { try? FileOps.removeTree(lockDirectory) }
         let other = EngineLock.Holder(pid: 4242, path: "/Applications/MacBox.app", version: "9.9")
         try writeHolder(other, in: lockDirectory)
         let locker = try await TestLocker.hold(in: lockDirectory)
         defer { kill(locker.pid, SIGKILL) }
+        #expect(try await startWithoutLock(lockDirectory) == .otherProcess(other))
+    }
+
+    @Test("锁文件打不开（以前用 sudo 运行过等）：同样什么都不碰，不当作拿到了锁照旧接管")
+    func lockUnavailable() async throws {
+        let lockDirectory = try makeTemporaryDirectory()
+        defer { try? FileOps.removeTree(lockDirectory) }
+        FileManager.default.createFile(atPath: lockDirectory.appending(path: EngineLock.fileName).path, contents: nil,
+                                       attributes: [.posixPermissions: 0])
+        guard case .lockUnavailable(let file, let reason) = try await startWithoutLock(lockDirectory) else {
+            Issue.record("锁文件打不开，应该是 lockUnavailable")
+            return
+        }
+        #expect(file.lastPathComponent == EngineLock.fileName && !reason.isEmpty)
+    }
+
+    /// 拿不到 lockDirectory 里的锁时启动一个 BoxStore，检查它什么都不碰，返回它的 ownership
+    private func startWithoutLock(_ lockDirectory: URL) async throws -> Ownership {
+        // 守卫要是还开着（别的测试留下的），会把下面不在沙盒里的程序当成逃逸结束，这个测试就说明不了什么
+        EscapeGuard.shared.stop()
 
         // 一个正在运行的盒子程序，像是另一个 MacBox 打开的。没有 box.json：读了盒子的话，会出现在读不出的盒子里
         let box = AppPaths.boxes.appending(path: "\(UUID().uuidString).box", directoryHint: .isDirectory)
@@ -158,7 +240,7 @@ struct EngineLockStoreTests {
         let store = BoxStore(lockDirectory: lockDirectory)
         store.start()
         await store.ready()
-        #expect(store.ownership == .otherProcess(other))
+        #expect(!store.managesBoxes)
         #expect(store.boxes.isEmpty)
         #expect(store.brokenBoxes.isEmpty)
 
@@ -172,5 +254,6 @@ struct EngineLockStoreTests {
         // 收尾第一步就会结束它，守卫每 50ms 一轮：等一会儿还在，才说明都没做
         try await Task.sleep(for: .seconds(1))
         #expect(isRunning(running.pid), "另一个 MacBox 打开的程序被结束了")
+        return store.ownership
     }
 }

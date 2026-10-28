@@ -97,6 +97,42 @@ struct OriginTests {
         #expect(store.selection == added.helper.id, "界面添加的要选中最后添加好的")
     }
 
+    @Test("进度卡片只跟着界面发起的添加：界面的都做完了就收起，不等同时进行的命令行添加", .timeLimit(.minutes(2)))
+    func progressCardIgnoresCommandLine() async throws {
+        let fixture = LifecycleFixture()
+        defer { await fixture.cleanup() }
+        let root = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let tag = UUID().uuidString.prefix(8).lowercased()
+        // 命令行添加一个磁盘映像（挂载、卸载要一两秒），界面同时添加一个 App
+        let folder = root.appending(path: "image")
+        try makeFakeApp(at: folder.appending(path: "Slow.app"), identifier: "dev.macboxtest.origin-slow-\(tag)", script: "#!/bin/sh\nexit 0\n")
+        let image = root.appending(path: "Slow.dmg")
+        try await Shell.run("/usr/bin/hdiutil", ["create", "-quiet", "-fs", "APFS", "-srcfolder", folder.path, image.path])
+        let plain = root.appending(path: "Plain.app")
+        try makeFakeApp(at: plain, identifier: "dev.macboxtest.origin-quick-\(tag)", script: "#!/bin/sh\nexit 0\n")
+        let store = await fixture.start()
+
+        let (extracting, reached) = AsyncStream<Void>.makeStream()
+        let commandLine = Task {
+            await store.importItems([image], from: .commandLine) { _, stage in
+                if stage == .extracting { reached.yield() }
+            }
+        }
+        for await _ in extracting { break } // 命令行的添加开始挂载映像了
+        let fromInterface = await store.importItems([plain])
+        #expect(store.activeImports > 0, "命令行的添加应该还没做完，不然这个测试说明不了什么")
+        #expect(store.importStatus == nil, "界面的添加都做完了，进度卡片要收起")
+
+        for outcome in fromInterface + (await commandLine.value) {
+            guard case .added(let box) = outcome else {
+                Issue.record("应该添加好：\(outcome)")
+                continue
+            }
+            fixture.track(box.paths.url)
+        }
+    }
+
     @Test("打开：命令行打开的打不开时只返回原因，不切页面（包括维护后才打开、很快退出的）；界面打开的照旧切过去",
           .timeLimit(.minutes(2)))
     func openFailures() async throws {

@@ -144,7 +144,7 @@ final class Box: Identifiable {
         lastError = nil
         switch config.runtime {
         case .isolated:
-            guard await finishUnfinishedWork(origin) else { return .failed(lastError ?? "") }
+            if let failure = await finishUnfinishedWork(origin) { return .failed(failure) }
             guard store?.isTerminating != true else { return .terminating }
             return startIsolated(origin)
         case .virtualMac:
@@ -155,18 +155,19 @@ final class Box: Identifiable {
 
     /// 上次的还原、清除数据没做完（做到一半失败了，或者 MacBox 中途退出、启动时又没能重做）：打开前先做完，
     /// 不在一半新一半旧的数据上运行——否则下次启动 MacBox 重做时，会把这之后的改动全部丢掉。
-    /// 返回 false 表示没做完，这次不打开（原因在 lastError 里）
-    private func finishUnfinishedWork(_ origin: Origin) async -> Bool {
-        guard activity == .idle, let work = Self.unfinishedWork(paths) else { return true }
+    /// 没做完时返回原因（也放进 lastError），这次不打开；做完了或者本来就没有时返回 nil
+    private func finishUnfinishedWork(_ origin: Origin) async -> String? {
+        guard activity == .idle, let work = Self.unfinishedWork(paths) else { return nil }
         let paths = paths
         do {
             try await performMaintenance { try await Background.run { try Self.redo(work, paths) } }
             notice = work.redoneNotice
-            return true
+            return nil
         } catch {
-            lastError = error is PartialRestore ? error.localizedDescription : work.refusedMessage(error.localizedDescription)
+            let failure = error is PartialRestore ? error.localizedDescription : work.refusedMessage(error.localizedDescription)
+            lastError = failure
             if origin == .interface { store?.reveal(self) } // 从聚焦打开时主窗口可能关着
-            return false
+            return failure
         }
     }
 

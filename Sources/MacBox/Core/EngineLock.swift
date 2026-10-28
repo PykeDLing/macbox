@@ -22,9 +22,6 @@ nonisolated final class EngineLock: Sendable {
             Holder(pid: getpid(), path: Bundle.main.bundlePath,
                    version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
         }
-
-        /// 它是 App 时，App 包的位置
-        var appURL: URL? { path.hasSuffix(".app") ? URL(fileURLWithPath: path, isDirectory: true) : nil }
     }
 
     enum Outcome: Sendable {
@@ -44,16 +41,17 @@ nonisolated final class EngineLock: Sendable {
         self.descriptor = descriptor
     }
 
-    /// 这个进程已经拿到的锁（按锁文件的路径）
+    /// 这个进程已经拿到的锁（按锁文件的真实路径）
     private static let held = Mutex<[String: EngineLock]>([:])
 
     /// 拿 directory 里的引擎锁。这个进程已经拿到过时返回同一把：flock 按打开的文件算，同一个进程再打开、
-    /// 再锁一次也会被自己挡住（测试在一个进程里先后建好几个 BoxStore）。锁文件建不了、打不开时抛出错误
+    /// 再锁一次也会被自己挡住（测试在一个进程里先后建好几个 BoxStore）。同一个目录换个写法（/tmp 和 /private/tmp、
+    /// 结尾带不带 /）也是同一把。锁文件建不了、打不开时抛出错误
     static func acquire(in directory: URL, as holder: Holder = .current) throws -> Outcome {
-        let url = directory.appending(path: fileName)
-        return try held.withLock { held throws -> Outcome in
-            if let lock = held[url.path] { return .acquired(lock) }
+        try held.withLock { held throws -> Outcome in
             try AppPaths.ensure(directory)
+            let url = URL(fileURLWithPath: FileOps.realPath(directory), isDirectory: true).appending(path: fileName)
+            if let lock = held[url.path] { return .acquired(lock) }
             // O_CLOEXEC：盒子里的程序继承了它的话，MacBox 崩溃后锁还被它们占着，下次就启动不了了。
             // O_NOFOLLOW：数据目录里的东西不顺着链接走
             let descriptor = open(url.path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
