@@ -38,18 +38,20 @@ nonisolated enum ConnectionMonitor {
             let columns = line.split(separator: ",", omittingEmptySubsequences: false)
             guard columns.count > column else { continue }
             let item = columns[column]
-            guard let space = item.firstIndex(of: " ") else {
-                // 进程行：“com.apple.WebKi.4321”
+            // 连接行都带 “<->”；其余是进程行：“com.apple.WebKi.4321”，名字可能带空格（“Claude Helper.34970”，
+            // 截到 15 个字符时还会留下结尾的空格：“Microsoft Edge .785”）
+            guard let arrow = item.range(of: "<->") else {
                 guard let dot = item.lastIndex(of: ".") else {
                     process = String(item)
                     continue
                 }
-                process = pid_t(item[item.index(after: dot)...]).flatMap(name) ?? String(item[..<dot])
+                process = pid_t(item[item.index(after: dot)...]).flatMap(name)
+                    ?? String(item[..<dot]).trimmingCharacters(in: .whitespaces)
                 continue
             }
+            guard let space = item.firstIndex(of: " "), space < arrow.lowerBound else { continue }
             let kind = item[..<space]
-            guard let transport = ["tcp", "udp", "quic"].first(where: { kind.hasPrefix($0) }),
-                  let arrow = item.range(of: "<->") else { continue }
+            guard let transport = ["tcp", "udp", "quic"].first(where: { kind.hasPrefix($0) }) else { continue }
             let remote = item[arrow.upperBound...]
             let separator: Character = kind.hasSuffix("6") ? "." : ":"
             guard let split = remote.lastIndex(of: separator) else { continue }

@@ -223,7 +223,7 @@ nonisolated enum PackageExtractor {
     private static func copyApp(_ app: URL, named name: String, into destination: URL) throws -> URL {
         let target = destination.appending(path: name)
         try FileOps.removeIfExists(target)
-        try FileOps.clone(app, to: target)
+        try FileOps.clone(app, to: target, followingSymlink: false) // app 已经是解析过的真实位置（见 pickApp）
         guard !FileOps.isSymlink(target), (try? target.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else {
             try? FileOps.removeIfExists(target)
             throw notAnApp(name)

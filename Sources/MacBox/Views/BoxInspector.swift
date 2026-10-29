@@ -18,6 +18,8 @@ struct BoxInspector: View {
     @State private var dataSize: Int64?
     /// 拦截记录旁点了「允许写入」、等确认的文件夹
     @State private var allowTarget: String?
+    /// 拦截记录旁点了「共享「下载」…」、等确认
+    @State private var confirmShareDownloads = false
     /// 已经接上的卷：可以写入的文件夹在外接硬盘上时，看它接上没有
     @State private var mountedVolumes = WritableFolders.mountedVolumes()
 
@@ -84,6 +86,14 @@ struct BoxInspector: View {
             Button(L("取消", "Cancel"), role: .cancel) {}
         } message: { folder in
             Text(allowMessage(folder))
+        }
+        .confirmationDialog(L("共享「下载」文件夹给「\(box.config.name)」？", "Share your Downloads folder with “\(box.config.name)”?"),
+                            isPresented: $confirmShareDownloads) {
+            Button(L("共享", "Share")) { box.config.shareDownloads = true }
+            Button(L("取消", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(L("应用下载的文件直接保存到你的「下载」文件夹，删除应用后仍然保留；它也能修改、删除那里的文件。",
+                   "Files the app downloads are saved directly to your Downloads folder and stay there after you delete the app. The app can also change or delete files there."))
         }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didMountNotification)) { _ in
             mountedVolumes = WritableFolders.mountedVolumes()
@@ -348,6 +358,7 @@ struct BoxInspector: View {
                         .font(.caption)
                 }
             }
+            if report.blocks.contains(where: blockedInDownloads) { shareDownloadsRow }
         }
         if showAllBlocks {
             ForEach(report.blocks) { block in
@@ -356,8 +367,34 @@ struct BoxInspector: View {
                         .font(.callout)
                     Text(block.targetText).font(.caption2).foregroundStyle(.secondary)
                         .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
-                    if let folder = writableFolder(for: block) { allowRow(folder, report: report) }
+                    if let folder = writableFolder(for: block) {
+                        allowRow(folder, report: report)
+                    } else if blockedInDownloads(block) {
+                        shareDownloadsRow
+                    }
                 }
+            }
+        }
+    }
+
+    /// 不共享「下载」时直接写在「下载」里、被挡住了：建议共享「下载」（「下载」本身不能作为可以写入的文件夹，见 WritableFolders）
+    private func blockedInDownloads(_ block: BlockEvent) -> Bool {
+        !box.config.shareDownloads && block.kind == .personalFiles && WritableFolders.isDirectlyInDownloads(blockedWrite: block.target)
+    }
+
+    /// 运行中改不了（同详情面板里的开关）：只说明，退出后再给按钮
+    private var shareDownloadsRow: some View {
+        HStack {
+            Text(box.isRunning || box.isBusy
+                 ? L("写入「下载」被挡住了。退出应用后可以共享「下载」文件夹", "Writing to Downloads was blocked. You can share the Downloads folder after the app quits")
+                 : L("写入「下载」被挡住了", "Writing to Downloads was blocked"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            if !box.isRunning, !box.isBusy {
+                Button(L("共享「下载」…", "Share Downloads…")) { confirmShareDownloads = true }
+                    .buttonStyle(.link)
+                    .font(.caption)
             }
         }
     }

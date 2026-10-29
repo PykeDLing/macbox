@@ -148,8 +148,8 @@ nonisolated enum TestKeychain {
     static func install(into paths: BoxPaths) async throws {
         let template = try await template.value
         try AppPaths.ensure(paths.keychains)
-        try FileOps.clone(template.boxKeychain, to: paths.boxKeychain)
-        try FileOps.clone(template.keychainPassword, to: paths.keychainPassword)
+        try FileOps.clone(template.boxKeychain, to: paths.boxKeychain, followingSymlink: false)
+        try FileOps.clone(template.keychainPassword, to: paths.keychainPassword, followingSymlink: false)
     }
 
     /// 和其他同时创建钥匙串的测试交错时，搜索列表里可能留下测试的钥匙串：只去掉这些，其余原样保留

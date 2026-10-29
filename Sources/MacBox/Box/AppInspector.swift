@@ -66,13 +66,19 @@ nonisolated enum AppInspector {
         return [:]
     }
 
-    /// Chromium / Electron 系 App：自带的子进程沙盒无法在 MacBox 的沙盒里再次建立
+    /// Chromium / Electron 系 App：自带的子进程沙盒无法在 MacBox 的沙盒里再次建立。认这几样（实测这台 Mac 上的）：
+    /// - Electron、CEF 的框架（抖音、哔哩哔哩；网易云音乐用的是 CEF）；
+    /// - 渲染用的辅助程序 “X Helper (Renderer).app”（QQ 只有这个）；
+    /// - 带产品名前缀的崩溃处理程序：chrome_、msedge_（Edge）、browser_（ChatGPT）。不带前缀的 crashpad_handler
+    ///   是单独用 Crashpad 收集崩溃的普通 App（微信），不算
     static func isChromium(_ app: URL) -> Bool {
         let frameworks = app.appending(path: "Contents/Frameworks")
         let enumerator = FileManager.default.enumerator(at: frameworks, includingPropertiesForKeys: nil,
                                                         options: [.skipsHiddenFiles])
         while let item = enumerator?.nextObject() as? URL {
-            if item.lastPathComponent == "chrome_crashpad_handler" || item.lastPathComponent == "Electron Framework.framework" {
+            let name = item.lastPathComponent
+            if ["Electron Framework.framework", "Chromium Embedded Framework.framework"].contains(name)
+                || name.hasSuffix(" Helper (Renderer).app") || name.hasSuffix("_crashpad_handler") {
                 return true
             }
             if enumerator?.level ?? 0 > 6 { enumerator?.skipDescendants() }

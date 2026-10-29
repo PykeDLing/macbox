@@ -131,7 +131,7 @@ function Tag({ app, t }: { app: DemoApp; t: T }) {
         : isSevere(app)
           ? ['warn', icons.warning, t('可能需要虚拟 Mac', 'May Need Virtual Mac')]
           : app.offline
-            ? ['', icons.offline, t('本机隔离 · 不联网', 'Isolated · Offline')]
+            ? ['', icons.offline, t('本机隔离 · 不联网', 'Native Isolation · Offline')]
             : ['', icons.lock, t('本机隔离', 'Native Isolation')];
   return (
     <span className={cls('tag', tone)}>

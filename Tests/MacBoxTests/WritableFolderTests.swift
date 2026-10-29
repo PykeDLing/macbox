@@ -116,6 +116,13 @@ struct WritableFolderTests {
         #expect(folder("$TMPDIR/x") == nil)
         #expect(folder("Q.app/Contents/x") == nil)
         #expect(folder("notification-center") == nil)
+
+        // 直接写在「下载」里的：「下载」本身不能选，建议共享「下载」；子文件夹里的可以单独允许
+        func inDownloads(_ target: String) -> Bool { WritableFolders.isDirectlyInDownloads(blockedWrite: target, home: home) }
+        #expect(folder("~/Downloads/a.zip") == nil)
+        #expect(inDownloads("~/Downloads/a.zip") && inDownloads("/Users/u/Downloads/a.zip"))
+        #expect(folder("~/Downloads/Quark/a.zip") == "/Users/u/Downloads/Quark" && !inDownloads("~/Downloads/Quark/a.zip"))
+        #expect(!inDownloads("~/Downloads") && !inDownloads("~/Documents/a.zip") && !inDownloads("/Users/uu/Downloads/a.zip"))
     }
 
     @Test("显示的路径：主目录写成 ~；外接硬盘认出所在的卷；受保护的位置")

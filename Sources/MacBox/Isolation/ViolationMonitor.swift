@@ -43,6 +43,8 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
         case connect(port: Int?)
         /// 在某个端口等待别的设备连进来，nil 是任意端口
         case listen(port: Int?)
+        /// 系统的 ssh-agent（里面是你的 SSH 钥匙）
+        case sshAgent
 
         var code: String {
             switch self {
@@ -51,6 +53,7 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
             case .backgroundDownloads: "background-downloads"
             case .installerPackage: "installer-package"
             case .loginItems: "login-items"
+            case .sshAgent: "ssh-agent"
             case .connect(let port): "connect:\(port.map(String.init) ?? "*")"
             case .listen(let port): "listen:\(port.map(String.init) ?? "*")"
             }
@@ -63,6 +66,7 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
             case "background-downloads": self = .backgroundDownloads
             case "installer-package": self = .installerPackage
             case "login-items": self = .loginItems
+            case "ssh-agent": self = .sshAgent
             default:
                 guard let match = code.wholeMatch(of: /(connect|listen):(\*|\d+)/) else { return nil }
                 let port = Int(match.2)
@@ -77,6 +81,7 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
             case .backgroundDownloads: L("后台下载服务", "Background download service")
             case .installerPackage: L("安装器自己下载的安装包", "Installer package downloaded by the installer")
             case .loginItems: L("登录项与后台项", "Login items and background items")
+            case .sshAgent: L("SSH 代理（ssh-agent）里你的钥匙", "Your keys in the SSH agent (ssh-agent)")
             case .connect(nil): L("连接服务器", "Connect to a server")
             case .connect(let port?): L("连接服务器的 \(port) 端口", "Connect to a server on port \(port)")
             case .listen(nil): L("等待别的设备连进来", "Wait for other devices to connect")
@@ -128,7 +133,8 @@ nonisolated extension BlockEvent {
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        kind = try container.decode(Kind.self, forKey: .kind)
+        // 以后的版本加的类型认不出时算“其他”，不让整份报告读不出（0.4.1 及以前读到新类型会）。同 FileArea.Location
+        kind = (try? container.decode(Kind.self, forKey: .kind)) ?? .other
         let target = try container.decode(String.self, forKey: .target)
         self.target = Subject(legacyText: target)?.code ?? target
         count = try container.decode(Int.self, forKey: .count)
@@ -392,7 +398,7 @@ nonisolated enum ViolationMonitor {
                 return BlockEvent(kind: .other, target: target)
             }
             if operation.hasPrefix("file-read") { return BlockEvent(kind: .privacyRead, target: target) }
-            if operation.hasPrefix("network") { return Self.networkEvent(operation: operation, target: target) }
+            if operation.hasPrefix("network") { return Self.networkEvent(operation: operation, target: target, home: home) }
             if operation == "mach-lookup" {
                 if target.contains("usernot") || target.contains("UNCUserNotification") {
                     return BlockEvent(kind: .notification, subject: .notificationCenter)
@@ -418,10 +424,20 @@ nonisolated enum ViolationMonitor {
 
         /// 不许联网时被挡住的连接（见 SandboxProfile.offlineRules）。日志里看不到对方的地址，只有端口：
         /// “network-outbound remote:*:443”；等别人连进来是 “network-inbound local:*:8080”（bind 也报这个）；
-        /// 域名解析是连 mDNSResponder 的套接字。其他本地套接字规则没挡，不是盒子的规则报告的
-        static func networkEvent(operation: String, target: String) -> BlockEvent? {
+        /// 域名解析是连 mDNSResponder 的套接字。
+        /// 本地套接字记的是真实路径：联不联网都挡的 ssh-agent、你主目录（home，真实路径）里别的程序的套接字
+        /// （见 SandboxProfile），算作读取私人数据：连上就能借用你的钥匙和凭证。其他本地套接字规则没挡，不是盒子的规则报告的
+        static func networkEvent(operation: String, target: String, home: String) -> BlockEvent? {
             if target == "/private/var/run/mDNSResponder" {
                 return BlockEvent(kind: .network, subject: .nameLookup)
+            }
+            if target.hasPrefix("/") {
+                guard operation == "network-outbound" else { return nil }
+                // 先按结尾筛，免得每条都编译一次（Regex 不能放进静态常量：不是 Sendable）
+                if target.hasSuffix("/Listeners"), let agent = try? Regex(SandboxProfile.sshAgentSocket), target.wholeMatch(of: agent) != nil {
+                    return BlockEvent(kind: .privacyRead, subject: .sshAgent)
+                }
+                return target.hasPrefix(home + "/") ? BlockEvent(kind: .privacyRead, target: target) : nil
             }
             let outbound = operation == "network-outbound"
             guard let address = target.wholeMatch(of: outbound ? /remote:(.+)/ : /local:(.+)/)?.1,

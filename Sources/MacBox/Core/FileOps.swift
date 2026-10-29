@@ -45,12 +45,34 @@ nonisolated enum FileOps {
     /// APFS 写时复制克隆（文件或目录，瞬间完成），非 APFS 或跨卷时退化为普通复制。目标必须不存在。
     /// 跨卷复制可能很慢，在主线程调用时请包在 Background.run 里。
     ///
-    /// source 本身是符号链接时，默认克隆它指向的东西（拖进来的替身要的是 App 本身）；followingSymlink 为 false
-    /// 时只复制链接本身。盒子里的东西（还原点、Home、Prefs）一律用 false：App 改得到它们，把一项换成指向
-    /// ~/Documents 的链接，跟随克隆就成了不在沙盒里的 MacBox 替它把盒子外的东西复制进盒子
-    static func clone(_ source: URL, to destination: URL, followingSymlink: Bool = true) throws {
+    /// source 本身是符号链接时：followingSymlink 为 true 克隆它指向的东西（拖进来的替身要的是 App 本身），
+    /// 为 false 只复制链接本身。盒子里的东西（还原点、Home、Prefs）一律用 false：App 改得到它们，把一项换成指向
+    /// ~/Documents 的链接，跟随克隆就成了不在沙盒里的 MacBox 替它把盒子外的东西复制进盒子。
+    /// 没有默认值：每处都要想清楚 source 是你给的还是 App 改得到的。只要盒子里的一个文件时用 cloneRegularFile
+    static func clone(_ source: URL, to destination: URL, followingSymlink: Bool) throws {
         if clonefile(fileSystemPath(source), fileSystemPath(destination), followingSymlink ? 0 : UInt32(CLONE_NOFOLLOW)) != 0 {
             try FileManager.default.copyItem(at: source, to: destination) // 退化为复制时，链接只复制链接本身
+        }
+    }
+
+    /// 克隆 root 里面的一个普通文件（启动器沿用盒子里 App 的图标）。source 是 App 改得到的：
+    /// 最后一级是符号链接的打不开（O_NOFOLLOW）；中间某一级是指到 root 外面的链接时，打开的文件的真实路径（F_GETPATH）
+    /// 不在 root 里，同样不要；检查之后再换也没用，克隆的是已经打开的这个文件（fclonefileat）。
+    /// 不是普通文件、不在 root 里时抛错，destination 不会出现
+    static func cloneRegularFile(_ source: URL, inside root: URL, to destination: URL) throws {
+        let descriptor = open(fileSystemPath(source), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { throw MacBoxError(String(cString: strerror(errno))) }
+        defer { close(descriptor) }
+        var info = stat()
+        var opened = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG, fcntl(descriptor, F_GETPATH, &opened) == 0,
+              String(cString: opened).hasPrefix(realPath(root) + "/") else {
+            throw MacBoxError(L("「\(source.lastPathComponent)」不是 App 里的普通文件", "“\(source.lastPathComponent)” isn’t a regular file in the app"))
+        }
+        if fclonefileat(descriptor, AT_FDCWD, fileSystemPath(destination), 0) != 0 {
+            // 跨卷时退化为复制，读的还是已经打开的这个文件
+            let data = try FileHandle(fileDescriptor: descriptor, closeOnDealloc: false).readToEnd() ?? Data()
+            try data.write(to: destination, options: .withoutOverwriting)
         }
     }
 

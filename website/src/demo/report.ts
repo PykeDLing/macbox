@@ -268,6 +268,10 @@ export const caveats: Pair = [
 ];
 
 /** “拷贝文字”拷贝的 Markdown，格式照着 App 的 RunReport.markdown()，开头注明是网页上的演示 */
+/** 英文按单复数：“1 file written”“2 files written”（同 App 的 RunReport.summaryLine） */
+const english = (count: number, one: string, many: string) =>
+  `${count} ${count === 1 ? one : many}`;
+
 export function reportMarkdown(app: DemoApp, locale: Locale) {
   const report = app.report;
   if (!report) return '';
@@ -308,15 +312,26 @@ export function reportMarkdown(app: DemoApp, locale: Locale) {
     '',
     t('**概要**：', '**Summary**: ') +
       [
-        report.running ? null : t(`写入 ${files.count} 个文件`, `${files.count} files written`),
         report.running
           ? null
-          : t(`改了 ${settingsCount(trace)} 项设置`, `${settingsCount(trace)} settings changed`),
+          : t(`写入 ${files.count} 个文件`, english(files.count, 'file written', 'files written')),
+        report.running
+          ? null
+          : t(
+              `改了 ${settingsCount(trace)} 项设置`,
+              english(settingsCount(trace), 'setting changed', 'settings changed'),
+            ),
         report.offline
           ? t('已断网', 'offline')
-          : t(`连接 ${servers.length} 个服务器`, `${servers.length} servers contacted`),
-        t(`启动 ${programs.length} 个程序`, `${programs.length} programs launched`),
-        t(`拦下 ${blocked} 次`, `${blocked} attempts blocked`),
+          : t(
+              `连接 ${servers.length} 个服务器`,
+              english(servers.length, 'server contacted', 'servers contacted'),
+            ),
+        t(
+          `启动 ${programs.length} 个程序`,
+          english(programs.length, 'program launched', 'programs launched'),
+        ),
+        t(`拦下 ${blocked} 次`, english(blocked, 'attempt blocked', 'attempts blocked')),
       ]
         .filter(Boolean)
         .join(' · '),
