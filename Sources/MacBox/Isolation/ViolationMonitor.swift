@@ -149,7 +149,7 @@ nonisolated final class SessionPID: Sendable {
     var pid: pid_t? { value.withLock { $0 } }
 }
 
-/// 系统日志里的沙盒记录：拒绝记录，以及规则要求放行时也记一笔的启动程序、写「下载」（见 SandboxProfile）。
+/// 系统日志里的沙盒记录：拒绝记录，以及规则要求放行时也记一笔的启动程序、写「下载」和你选的文件夹（见 SandboxProfile）。
 ///
 /// 记录有两个来源：命令行程序这类的由内核直接写进日志；带 App 包的进程（应用本身、它的辅助程序）由 sandboxd
 /// 生成一份完整的违规报告（第一行是同样格式的记录，后面是进程信息和调用栈）。实测同一条不会两边都报。
@@ -310,15 +310,15 @@ nonisolated enum ViolationMonitor {
                            operation: String(match.4), target: String(match.5), allowed: match.3 == "allow")
         }
 
-        /// 这条记录对本盒子意味着什么：被挡住的行为、启动了程序、在共享的「下载」里写了东西；不是本盒子的、不关心的为 nil
+        /// 这条记录对本盒子意味着什么：被挡住的行为、启动了程序、在盒子外放行的地方写了东西；不是本盒子的、不关心的为 nil
         func activity(from message: Message) -> RunActivity? {
             guard message.allowed else { return event(from: message).map(RunActivity.blocked) }
-            // 带 report 的规则只有启动程序、写「下载」两条。启动程序记下的是启动后的程序，进程名是启动它的那个（exec 前的名字）
+            // 带 report 的规则只有启动程序、写「下载」和你选的文件夹。启动程序记下的是启动后的程序，进程名是启动它的那个（exec 前的名字）
             let launch = message.operation.hasPrefix("process-exec"), write = message.operation.hasPrefix("file-write")
             guard launch || write, message.target.hasPrefix("/"),
                   Self.belongs(Identity.of(message.pid), main: session.pid, boxPrefix: boxPrefix,
                                loggedName: message.process, processNames: processNames) else { return nil }
-            return launch ? .launched(message.target) : .wroteDownload(path: message.target, operation: message.operation)
+            return launch ? .launched(message.target) : .wroteShared(path: message.target, operation: message.operation)
         }
 
         /// 拒绝记录对应的拦截；放行的记录、不是本盒子的为 nil

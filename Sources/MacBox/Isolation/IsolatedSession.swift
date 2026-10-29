@@ -69,12 +69,12 @@ final class IsolatedSession {
         let sessionPID = SessionPID()
         let events = await ViolationMonitor.events(boxPrefix: FileOps.realPath(paths.url), processNames: plan.processNames,
                                                   installer: config.isInstaller, session: sessionPID)
-        // 写「下载」的记录留在这里，退出后和主目录的改动一起汇总
-        let downloads = DownloadWrites()
+        // 写「下载」和你选的文件夹的记录留在这里，退出后和主目录的改动一起汇总
+        let shared = SharedWrites(folders: WritableFolders.granted(config))
         let monitor = Task {
             for await activity in events {
-                if case .wroteDownload(let path, let operation) = activity {
-                    downloads.note(path, operation: operation)
+                if case .wroteShared(let path, let operation) = activity {
+                    shared.note(path, operation: operation)
                 } else {
                     onActivity(activity)
                 }
@@ -114,7 +114,7 @@ final class IsolatedSession {
         let preferencesError = await returnPreferences(lease)
         await session.cleanUpSystemTraces()
         let changes = await before.changes(paths, config: config, preferencesReturned: preferencesError == nil,
-                                           downloads: downloads.areas)
+                                           shared: shared.areas)
         await session.finishNameLookups(timeout: .seconds(2))
         return Outcome(downloadedPackages: config.isInstaller ? await session.downloadedPackages() : [],
                        mainExitStatus: main.status, mainRanFor: main.ranFor, preferencesReturnError: preferencesError,

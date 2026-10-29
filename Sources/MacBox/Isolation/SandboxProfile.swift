@@ -1,11 +1,11 @@
 import Foundation
 
 /// 生成本机隔离用的 Seatbelt 规则：
-/// - 写：默认全部禁止，只放行盒子的主目录、临时目录、App 目录和系统临时目录（可选放行「下载」）
+/// - 写：默认全部禁止，只放行盒子的主目录、临时目录、App 目录和系统临时目录（可选放行「下载」和你选的文件夹）
 /// - 读：挡住其他 App 的数据、邮件信息、密钥等私人目录，以及盒子里 MacBox 自己的记录
 /// - 系统服务：禁止注册登录项/后台服务、发送通知、用 Apple 事件遥控其他 App
 /// - 网络：默认放行，可以按应用关掉（见 offlineRules）
-/// - 启动程序、写共享的「下载」：放行，但每次都在系统日志里记一笔，运行报告据此列出它启动了哪些程序、在「下载」里写了什么
+/// - 启动程序、写共享的「下载」和你选的文件夹：放行，但每次都在系统日志里记一笔，运行报告据此列出它启动了哪些程序、在盒子外写了什么
 ///
 /// Seatbelt 按规则先后匹配，后面的规则覆盖前面的（同一个操作名之间）
 nonisolated enum SandboxProfile {
@@ -17,6 +17,8 @@ nonisolated enum SandboxProfile {
         // 共享时放行写你的「下载」，并且每次写都在系统日志里记一笔：运行报告靠它知道应用在里面写了什么。
         // MacBox 自己不去读「下载」：那要你在系统设置里授权，第一次会弹窗问，还分不出哪些是你自己放的
         let downloadsRule = config.shareDownloads ? "(allow file-write* (subpath \(quote("\(home)/Downloads"))) (with report))" : ""
+        // 你选的可以写入的文件夹，同样每次写都记一笔。存的是选的时候解析出的真实路径，原样使用、不再解析（见 WritableFolders）
+        let folderRules = WritableFolders.granted(config).map { "(allow file-write* (subpath \(quote($0))) (with report))" }
         // 盒子里哪些可写、哪些不能删改、哪些读不到，见 BoxPaths 的分类。
         // 在盒子的真实路径后面拼上相对盒子的路径：它们可能还不存在，不能逐个解析
         func inBox(_ url: URL) -> String { boxRoot + url.path.dropFirst(box.url.path.count) }
@@ -48,6 +50,8 @@ nonisolated enum SandboxProfile {
         (allow file-write*
         \(systemWritable.map { "  (subpath \(quote($0)))" }.joined(separator: "\n")))
         \(downloadsRule)
+        \(folderRules.joined(separator: "\n"))
+        ; 选的文件夹和盒子重叠时（检查过，不该有）也以盒子自己的规则为准：它们在后面。
         ; 盒子可能就在系统临时目录下（测试时），先整个挡住再放行，不依赖盒子的位置
         (deny file-write* (subpath \(quote(boxRoot))))
         (allow file-write*
