@@ -11,8 +11,8 @@ nonisolated enum RunActivity: Sendable {
     case connected(ServerContact)
     /// 服务器的地址反向解析出了名字
     case named(address: String, name: String)
-    /// 在共享的「下载」里写了东西（路径原样，操作是沙盒的操作名：file-write-create、file-write-unlink……）
-    case wroteDownload(path: String, operation: String)
+    /// 在盒子外放行的地方（共享的「下载」、可以写入的文件夹）写了东西（路径原样，操作是沙盒的操作名：file-write-create、file-write-unlink……）
+    case wroteShared(path: String, operation: String)
 }
 
 /// 一次本机隔离运行的报告：写了哪些文件、改了哪些设置、连了哪些服务器、启动了哪些程序、哪些行为被拦下。
@@ -31,6 +31,8 @@ nonisolated struct RunReport: Codable, Identifiable, Sendable {
     var endedAt: Date?
     var networkBlocked: Bool
     var sharesDownloads: Bool
+    /// 这次运行时可以写入的文件夹（主目录写成 ~，见 WritableFolders.displayPath）。nil：没有，或者是旧版 MacBox 的报告
+    var writableFolders: [String]?
     /// 写下的文件，按位置汇总（最多 maxAreas 处）。nil：还在运行，或者没能统计
     var files: [FileArea]?
     /// 全部位置的合计（files 只留了改动最多的几处）
@@ -54,6 +56,8 @@ nonisolated struct RunReport: Codable, Identifiable, Sendable {
         bundleIdentifier = config.bundleIdentifier
         networkBlocked = !config.allowsNetwork
         sharesDownloads = config.shareDownloads
+        let folders = WritableFolders.granted(config).map { WritableFolders.displayPath($0) }
+        writableFolders = folders.isEmpty ? nil : folders
     }
 
     var isRunning: Bool { endedAt == nil }
@@ -100,6 +104,8 @@ nonisolated struct FileArea: Codable, Hashable, Identifiable, Sendable {
         case app
         /// 你真实的「下载」（共享时）
         case downloads
+        /// 可以写入的文件夹（见 WritableFolders）
+        case folder
     }
 
     var location: Location
@@ -109,6 +115,17 @@ nonisolated struct FileArea: Codable, Hashable, Identifiable, Sendable {
     /// 几个新建或修改的文件（相对 path），最多 3 个
     var examples: [String] = []
     var id: String { path }
+}
+
+nonisolated extension FileArea {
+    /// 以后的版本加的位置认不出时，不让整份报告读不出（0.4.1 及以前读到 folder 会）。位置只用来区分，显示不看它
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        location = (try? container.decode(Location.self, forKey: .location)) ?? .folder
+        path = try container.decode(String.self, forKey: .path)
+        totals = try container.decode(FileTotals.self, forKey: .totals)
+        examples = try container.decode([String].self, forKey: .examples)
+    }
 }
 
 /// 一个偏好设置域里的改动（只记键名，不记内容：值里常有登录凭证、设备 ID）
@@ -319,7 +336,7 @@ nonisolated struct RunChanges: Sendable {
 /// 退出后和那时的样子对比，得出这次写了哪些文件、改了哪些设置。
 ///
 /// 只对比盒子里的，不看 /private/tmp、/private/var/folders：那里是所有程序共用的，分不出是谁写的。
-/// 共享的「下载」不对比（MacBox 读它要你授权），按系统日志里的写入记录推断（见 DownloadWrites）
+/// 共享的「下载」、可以写入的文件夹不对比（MacBox 读它们可能要你授权），按系统日志里的写入记录推断（见 SharedWrites）
 nonisolated struct RunSnapshot: Sendable {
     struct Entry: Equatable, Sendable {
         let size: Int64
@@ -368,15 +385,15 @@ nonisolated struct RunSnapshot: Sendable {
     }
 
     /// 和现在对比。在收回偏好设置之后调用；没能收回时 preferencesReturned 为 false。
-    /// downloads：共享的「下载」里的改动（见 DownloadWrites），一起汇总。
+    /// shared：共享的「下载」、可以写入的文件夹里的改动（见 SharedWrites），一起汇总。
     /// installed：本机安装的 App 的标识符，系统偏好设置目录里真有新出现的域时才读（测试时可以指定）
     @concurrent
-    func changes(_ paths: BoxPaths, config: BoxConfig, preferencesReturned: Bool, downloads: [FileArea] = [],
+    func changes(_ paths: BoxPaths, config: BoxConfig, preferencesReturned: Bool, shared: [FileArea] = [],
                  installed: @Sendable () -> Set<String> = { AppInspector.installedApplicationIdentifiers() }) async -> RunChanges {
         var areas: [String: FileArea] = [:]
         Self.collect(before: files.home, after: Self.entries(under: paths.home), location: .home, into: &areas)
         Self.collect(before: files.app, after: Self.entries(under: paths.appDirectory), location: .app, into: &areas)
-        for area in downloads { areas[area.path] = area }
+        for area in shared { areas[area.path] = area }
         var totals = FileTotals()
         for area in areas.values {
             totals.created += area.totals.created
@@ -450,14 +467,15 @@ nonisolated struct RunSnapshot: Sendable {
     }
 
     /// 改动归到哪一处：主目录的 Library 下按“Library/类别/应用”（钥匙串只到 Library/Keychains），
-    /// 其余按前两级（Documents/某个文件夹、.config/某个工具）；App 包按包里的前三级；「下载」按顶层项目。
+    /// 其余按前两级（Documents/某个文件夹、.config/某个工具）；App 包按包里的前三级；「下载」、可以写入的文件夹按顶层项目。
+    /// folder：可以写入的文件夹显示的路径（见 WritableFolders.displayPath），只有 location 是 folder 时用。
     /// inside 是文件在这一处里面的相对路径；改动的就是这一处本身（一个文件）时为 nil
-    static func areaKey(_ relative: String, location: FileArea.Location) -> (path: String, inside: String?) {
+    static func areaKey(_ relative: String, location: FileArea.Location, folder: String = "") -> (path: String, inside: String?) {
         let parts = relative.split(separator: "/").map(String.init)
         let depth = switch location {
         case .home: parts.first == "Library" ? (parts.dropFirst().first == "Keychains" ? 2 : 3) : 2
         case .app: 4 // X.app/Contents/Frameworks/Y.framework
-        case .downloads: 1
+        case .downloads, .folder: 1
         }
         let head = parts.prefix(depth).joined(separator: "/")
         let inside = parts.count > depth ? parts.dropFirst(depth).joined(separator: "/") : nil
@@ -465,6 +483,7 @@ nonisolated struct RunSnapshot: Sendable {
         case .home: "~/" + head
         case .app: head
         case .downloads: "~/Downloads/" + head
+        case .folder: folder + "/" + head
         }
         return (path, inside)
     }
@@ -577,33 +596,43 @@ nonisolated struct SystemPreferenceFiles: Sendable {
     }
 }
 
-// MARK: - 「下载」里的写入
+// MARK: - 盒子外的写入
 
-/// 共享「下载」时应用在里面写了什么。MacBox 不去读你的「下载」（要你在系统设置里授权，也分不出哪些是你自己放的），
-/// 由沙盒在应用每次写入时在系统日志里记一笔（见 SandboxProfile），这里按记下的操作推断：
-/// 新建过的算新建；最后一下是删除的算删除，但新建又删掉的（下载到一半的临时文件、改名前的旧名字）不算；其余算修改。
+/// 应用在盒子外放行的地方写了什么：共享的「下载」、可以写入的文件夹。MacBox 不去读它们（「下载」「文稿」、外接硬盘要你授权，
+/// 也分不出哪些是你自己放的），由沙盒在应用每次写入时在系统日志里记一笔（见 SandboxProfile），这里按记下的操作推断：
+/// 新建过的算新建；最后一下是删除的算删除，但新建又删掉的（下载到一半的临时文件、改名前的旧名字、试写的 test-….txt）不算；其余算修改。
 /// 看不到大小（要读文件），也会因为系统日志限流漏记
-final class DownloadWrites {
-    /// 「下载」的真实路径（带结尾的 /）
-    private let prefix = FileOps.realPath(AppPaths.realHome) + "/Downloads/"
-    /// 相对「下载」的路径 → 先后的操作
-    private var operations: [String: [String]] = [:]
-    private var order: [String] = []
+final class SharedWrites {
+    /// 一处放行的地方：真实路径（带结尾的 /）、哪一类、显示的路径（见 WritableFolders.displayPath）
+    private let places: [(prefix: String, location: FileArea.Location, shown: String)]
+    /// 放行的地方 → 相对它的路径 → 先后的操作
+    private var operations: [String: [String: [String]]] = [:]
+    private var order: [(place: String, relative: String)] = []
 
-    /// 记下一条写入；不在「下载」里的不管
-    func note(_ path: String, operation: String) {
-        guard path.hasPrefix(prefix) else { return }
-        let relative = String(path.dropFirst(prefix.count))
-        guard !relative.isEmpty else { return }
-        if operations[relative] == nil { order.append(relative) }
-        operations[relative, default: []].append(operation)
+    /// folders：可以写入的文件夹（真实路径）。「下载」总是算：不共享时规则不放行，日志里不会有
+    init(folders: [String] = []) {
+        let downloads = (prefix: FileOps.realPath(AppPaths.realHome) + "/Downloads/", location: FileArea.Location.downloads,
+                         shown: "~/Downloads")
+        let chosen = folders.map { (prefix: $0 + "/", location: FileArea.Location.folder, shown: WritableFolders.displayPath($0)) }
+        // 路径最长的优先：选的文件夹可能就在「下载」里、在另一个选的文件夹里
+        places = ([downloads] + chosen).sorted { $0.prefix.count > $1.prefix.count }
     }
 
-    /// 按顶层项目汇总
+    /// 记下一条写入；不在这些地方里的不管
+    func note(_ path: String, operation: String) {
+        guard let place = places.first(where: { path.hasPrefix($0.prefix) }) else { return }
+        let relative = String(path.dropFirst(place.prefix.count))
+        guard !relative.isEmpty else { return }
+        if operations[place.prefix]?[relative] == nil { order.append((place.prefix, relative)) }
+        operations[place.prefix, default: [:]][relative, default: []].append(operation)
+    }
+
+    /// 按每处的顶层项目汇总
     var areas: [FileArea] {
         var areas: [String: FileArea] = [:]
-        for relative in order {
-            let operations = operations[relative] ?? []
+        for (prefix, relative) in order {
+            guard let place = places.first(where: { $0.prefix == prefix }) else { continue }
+            let operations = operations[prefix]?[relative] ?? []
             let created = operations.contains { $0.hasPrefix("file-write-create") }
             let removed = operations.last?.hasPrefix("file-write-unlink") == true
             let change: WritableKeyPath<FileTotals, Int>
@@ -613,8 +642,8 @@ final class DownloadWrites {
             case (true, false): change = \.created
             case (false, false): change = \.modified
             }
-            let key = RunSnapshot.areaKey(relative, location: .downloads)
-            var area = areas[key.path] ?? FileArea(location: .downloads, path: key.path)
+            let key = RunSnapshot.areaKey(relative, location: place.location, folder: place.shown)
+            var area = areas[key.path] ?? FileArea(location: place.location, path: key.path)
             area.totals[keyPath: change] += 1
             if change != \.deleted, area.examples.count < 3, let inside = key.inside { area.examples.append(inside) }
             areas[key.path] = area
@@ -688,6 +717,14 @@ extension RunReport {
         return parts.joined(separator: " · ")
     }
 
+    /// 写入文件的一句话说明：新建、修改、删除了多少，路径是什么样子。报告页和导出的文字共用
+    func filesSummary(_ totals: FileTotals) -> String {
+        let outside = writableFolders == nil ? L("「下载」除外", "except Downloads")
+                                             : L("「下载」和可以写入的文件夹除外", "except Downloads and the folders it can write to")
+        return L("新建 \(totals.created)、修改 \(totals.modified)、删除 \(totals.deleted)，共 \(FileOps.formatBytes(totals.bytes))。路径是应用眼里的位置，实际都写进了 MacBox 的盒子（\(outside)）。",
+                 "\(totals.created) created, \(totals.modified) modified, \(totals.deleted) deleted, \(FileOps.formatBytes(totals.bytes)) in total. Paths are where the app thinks it wrote; everything actually went into the MacBox box (\(outside)).")
+    }
+
     /// 完整的 Markdown 文字，用于拷贝、存储为文件
     func markdown() -> String {
         var lines: [String] = []
@@ -698,6 +735,9 @@ extension RunReport {
                        "- App: \(appName)\(version.map { " \($0)" } ?? "") (\(bundleIdentifier))"))
         lines.append(L("- 网络：\(networkBlocked ? "已断开" : "允许")；「下载」文件夹：\(sharesDownloads ? "共享" : "不共享")",
                        "- Network: \(networkBlocked ? "blocked" : "allowed"); Downloads folder: \(sharesDownloads ? "shared" : "not shared")"))
+        if let writableFolders {
+            lines.append(L("- 可以写入的文件夹：", "- Folders it can write to: ") + writableFolders.joined(separator: L("、", ", ")))
+        }
         lines.append(L("- 由 MacBox 隔离运行并记录：\(Self.projectURL)", "- Run in isolation and recorded by MacBox: \(Self.projectURL)"))
         lines.append("")
         lines.append(L("**概要**：", "**Summary**: ") + summaryLine)
@@ -709,8 +749,7 @@ extension RunReport {
             if files.isEmpty {
                 lines.append(L("没有写入文件。", "No files were written."))
             } else {
-                lines.append(L("新建 \(totals.created)、修改 \(totals.modified)、删除 \(totals.deleted)，共 \(FileOps.formatBytes(totals.bytes))。路径是应用眼里的位置，实际都在 MacBox 的盒子里（「下载」除外）。",
-                               "\(totals.created) created, \(totals.modified) modified, \(totals.deleted) deleted, \(FileOps.formatBytes(totals.bytes)) in total. Paths are where the app thinks it wrote; everything actually went into the MacBox box (except Downloads)."))
+                lines.append(filesSummary(totals))
                 lines.append("")
                 lines.append(L("| 位置 | 新建 | 修改 | 删除 | 大小 |", "| Location | Created | Modified | Deleted | Size |"))
                 lines.append("| --- | ---: | ---: | ---: | ---: |")
@@ -817,8 +856,8 @@ extension RunReport {
 
     /// 报告记不全的地方，报告页和导出的文字都附上
     static var caveats: String {
-        L("说明：连接是定时看一眼得到的，很短的连接可能没看到；服务器名字来自反向解析，常常是云服务商的机器名；设置了代理时，经由代理的连接只显示为连到代理。启动的程序、被拦下的行为、在共享的「下载」里写的文件来自系统日志，系统繁忙时会漏记，「下载」里的文件也没有大小。系统共用的临时文件夹不在统计之内。",
-          "Notes: connections are sampled periodically, so very short ones may be missed; server names come from reverse DNS and are often cloud providers’ machine names; with a proxy, connections through it only show up as connections to the proxy. Program launches, blocked attempts and files written to the shared Downloads folder come from the system log and can be missed when the system is busy; Downloads files have no sizes. Shared system temporary folders aren’t counted.")
+        L("说明：连接是定时看一眼得到的，很短的连接可能没看到；服务器名字来自反向解析，常常是云服务商的机器名；设置了代理时，经由代理的连接只显示为连到代理。启动的程序、被拦下的行为、在共享的「下载」和可以写入的文件夹里写的文件来自系统日志，系统繁忙时会漏记，这些文件也没有大小。系统共用的临时文件夹不在统计之内。",
+          "Notes: connections are sampled periodically, so very short ones may be missed; server names come from reverse DNS and are often cloud providers’ machine names; with a proxy, connections through it only show up as connections to the proxy. Program launches, blocked attempts and files written to the shared Downloads folder or the folders it can write to come from the system log and can be missed when the system is busy, and those files have no sizes. Shared system temporary folders aren’t counted.")
     }
 
     private func keyList(_ keys: [String]) -> String {

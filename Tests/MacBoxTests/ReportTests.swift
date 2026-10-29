@@ -59,7 +59,7 @@ struct ReportTests {
         try writePlist(["x": 1], to: prefs.appending(path: ".native.plist")) // MacBox 自己的
 
         let downloaded = FileArea(location: .downloads, path: "~/Downloads/setup.dmg", totals: FileTotals(created: 1))
-        let changes = await before.changes(paths, config: config, preferencesReturned: true, downloads: [downloaded])
+        let changes = await before.changes(paths, config: config, preferencesReturned: true, shared: [downloaded])
         let areas = Dictionary(uniqueKeysWithValues: changes.files.map { ($0.path, $0) })
         let vendor = try #require(areas["~/Library/Application Support/Vendor"])
         #expect(vendor.totals.created == 1 && vendor.totals.modified == 1 && vendor.totals.deleted == 1)
@@ -102,7 +102,7 @@ struct ReportTests {
     @Test("共享的「下载」按日志里的写入推断：新建又删掉的临时文件不算，按顶层项目汇总")
     func downloadWrites() {
         let downloads = FileOps.realPath(AppPaths.realHome) + "/Downloads/"
-        let writes = DownloadWrites()
+        let writes = SharedWrites()
         // 浏览器式的下载：写临时文件，再改名成正式的名字、打上下载标记
         writes.note(downloads + "pan.dmg.part", operation: "file-write-create")
         writes.note(downloads + "pan.dmg.part", operation: "file-write-data")

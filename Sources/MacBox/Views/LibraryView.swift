@@ -225,10 +225,16 @@ private enum DeleteTarget {
 
     var message: String {
         switch self {
-        // 共享「下载」时（默认），它存进你「下载」里的文件不在盒子里，不会跟着删除
+        // 共享「下载」时（默认），它存进你「下载」里的文件不在盒子里，不会跟着删除；可以写入的文件夹同理
+        case .box(let box) where box.config.shareDownloads && !box.config.writableFolderPaths.isEmpty:
+            L("应用和它的全部数据（设置、缓存、钥匙串）会一起移到废纸篓。它存进你「下载」和它可以写入的文件夹里的文件不在盒子里，会保留。",
+              "The app and all its data (settings, caches, keychain) will be moved to the Trash. Files it saved to your Downloads folder and the folders it can write to aren’t in the box and will stay.")
         case .box(let box) where box.config.shareDownloads:
             L("应用和它的全部数据（设置、缓存、钥匙串）会一起移到废纸篓。它存进你「下载」文件夹的文件不在盒子里，会保留。",
               "The app and all its data (settings, caches, keychain) will be moved to the Trash. Files it saved to your Downloads folder aren’t in the box and will stay.")
+        case .box(let box) where !box.config.writableFolderPaths.isEmpty:
+            L("应用和它的全部数据（设置、缓存、钥匙串）会一起移到废纸篓。它存进它可以写入的文件夹里的文件不在盒子里，会保留。",
+              "The app and all its data (settings, caches, keychain) will be moved to the Trash. Files it saved to the folders it can write to aren’t in the box and will stay.")
         case .box: L("应用和它的全部数据（设置、缓存、钥匙串）会一起移到废纸篓。",
                       "The app and all its data (settings, caches, keychain) will be moved to the Trash.")
         case .broken: L("它的文件夹会移到废纸篓，需要时可以从废纸篓里找回。",

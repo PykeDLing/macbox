@@ -329,7 +329,7 @@ final class Box: Identifiable {
         case .launched(let path): report?.noteLaunch(tidier(path))
         case .connected(let contact): report?.note(contact)
         case .named(let address, let name): report?.name(address, name)
-        case .wroteDownload: break // 会话自己汇总（见 IsolatedSession.run）
+        case .wroteShared: break // 会话自己汇总（见 IsolatedSession.run）
         }
     }
 
@@ -831,6 +831,12 @@ final class Box: Identifiable {
         if old.name != config.name || old.wantsLauncher != config.wantsLauncher || old.appFolderName != config.appFolderName {
             syncLauncher()
         }
+    }
+
+    /// 允许应用写入盒子外的一个文件夹（真实路径，检查过，见 WritableFolders）。已经有的不重复加；重新打开应用后生效
+    func allowWriting(to folder: String) {
+        guard !config.writableFolderPaths.contains(folder) else { return }
+        config.writableFolderPaths.append(folder)
     }
 
     /// 按当前配置创建、更新或删除聚焦里的启动器。返回的任务可用于等待完成

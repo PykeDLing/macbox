@@ -16,6 +16,10 @@ struct BoxInspector: View {
     @State private var showReport = false
     @State private var nameDraft = ""
     @State private var dataSize: Int64?
+    /// 拦截记录旁点了「允许写入」、等确认的文件夹
+    @State private var allowTarget: String?
+    /// 已经接上的卷：可以写入的文件夹在外接硬盘上时，看它接上没有
+    @State private var mountedVolumes = WritableFolders.mountedVolumes()
 
     var body: some View {
         Form {
@@ -72,6 +76,20 @@ struct BoxInspector: View {
                  ? L("删除后无法再回到这个状态，「每次退出后自动还原」也会关闭。",
                      "You won’t be able to return to this state, and “Restore Automatically After Quitting” will be turned off.")
                  : L("删除后无法再回到这个状态。", "You won’t be able to return to this state."))
+        }
+        .confirmationDialog(L("允许「\(box.config.name)」写入「\(allowTargetName)」？", "Allow “\(box.config.name)” to write to “\(allowTargetName)”?"),
+                            isPresented: Binding(get: { allowTarget != nil }, set: { if !$0 { allowTarget = nil } }),
+                            presenting: allowTarget) { folder in
+            Button(L("允许写入", "Allow Writing")) { box.allowWriting(to: folder) }
+            Button(L("取消", "Cancel"), role: .cancel) {}
+        } message: { folder in
+            Text(allowMessage(folder))
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didMountNotification)) { _ in
+            mountedVolumes = WritableFolders.mountedVolumes()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnmountNotification)) { _ in
+            mountedVolumes = WritableFolders.mountedVolumes()
         }
         .confirmationDialog(L("清除「\(box.config.name)」的数据？", "Clear data for “\(box.config.name)”?"),
                             isPresented: $confirmClear) {
@@ -310,6 +328,20 @@ struct BoxInspector: View {
             .foregroundStyle(report.blocks.contains(where: \.kind.suggestsVirtualMac) ? .orange : .secondary)
         }
         .buttonStyle(.plain)
+        if !showAllBlocks {
+            // 收起时也露出来：在应用里改了下载位置、被拒，回到 MacBox 就能看到，不用先展开
+            ForEach(blockedFolders(report), id: \.self) { folder in
+                HStack {
+                    Text(L("写入「\((folder as NSString).lastPathComponent)」被挡住了", "Writing to “\((folder as NSString).lastPathComponent)” was blocked"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button(L("允许写入…", "Allow Writing…")) { allowTarget = folder }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+            }
+        }
         if showAllBlocks {
             ForEach(report.blocks) { block in
                 VStack(alignment: .leading, spacing: 2) {
@@ -317,9 +349,52 @@ struct BoxInspector: View {
                         .font(.callout)
                     Text(block.targetText).font(.caption2).foregroundStyle(.secondary)
                         .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+                    if let folder = writableFolder(for: block) { allowRow(folder, report: report) }
                 }
             }
         }
+    }
+
+    /// 被挡住的写入所在的文件夹：可以直接允许写入（在应用里选了下载位置、被拒，回到这里正好看到这条记录）
+    private func writableFolder(for block: BlockEvent) -> String? {
+        guard [.personalFiles, .other].contains(block.kind) else { return nil } // .other 里是写在主目录外的（外接硬盘……）
+        return WritableFolders.folder(forBlockedWrite: block.target)
+    }
+
+    /// 被挡住的写入所在、还没允许写入的文件夹，去掉重复的
+    private func blockedFolders(_ report: RunReport) -> [String] {
+        var seen: Set<String> = []
+        return report.blocks.compactMap(writableFolder(for:))
+            .filter { !box.config.writableFolderPaths.contains($0) && seen.insert($0).inserted }
+    }
+
+    @ViewBuilder
+    private func allowRow(_ folder: String, report: RunReport) -> some View {
+        let name = (folder as NSString).lastPathComponent
+        if box.config.writableFolderPaths.contains(folder) {
+            // 这次运行开始之后才加的，要重新打开
+            let pending = report.isRunning && report.writableFolders?.contains(WritableFolders.displayPath(folder)) != true
+            Text(pending ? L("已允许写入「\(name)」，重新打开后生效", "Writing to “\(name)” allowed; takes effect after reopening")
+                         : L("已允许写入「\(name)」", "Writing to “\(name)” allowed"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Button(L("允许写入「\(name)」…", "Allow Writing to “\(name)”…")) { allowTarget = folder }
+                .buttonStyle(.link)
+                .font(.caption)
+        }
+    }
+
+    private var allowTargetName: String { allowTarget.map { ($0 as NSString).lastPathComponent } ?? "" }
+
+    private func allowMessage(_ folder: String) -> String {
+        let path = WritableFolders.displayPath(folder)
+        var text = L("它可以新建、修改、删除「\(path)」里的文件，删除应用后这些文件仍然保留。",
+                     "It will be able to create, change and delete files in \(path), and they stay after you delete the app.")
+        if box.isRunning {
+            text += L("重新打开「\(box.config.name)」后生效。", " Takes effect after you reopen “\(box.config.name)”.")
+        }
+        return text
     }
 
     // MARK: - 网络
@@ -391,6 +466,7 @@ struct BoxInspector: View {
                      "The app can only see its own Downloads folder inside the box."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            writableFolderRows
             LabeledContent(L("应用数据", "App Data")) {
                 if let dataSize { Text(FileOps.formatBytes(dataSize)) } else { ProgressView().controlSize(.small) }
             }
@@ -401,6 +477,81 @@ struct BoxInspector: View {
                     .disabled(box.isRunning || box.isBusy)
             }
         }
+    }
+
+    // MARK: - 可以写入的文件夹
+
+    /// 应用可以写入的盒子外的文件夹（见 WritableFolders）。应用运行时也能改：正是要用的时候
+    /// （在应用里把下载位置改到别处被拒，回到这里加上），重新打开应用后生效
+    @ViewBuilder
+    private var writableFolderRows: some View {
+        let folders = box.config.writableFolderPaths
+        LabeledContent(L("可以写入的文件夹", "Folders It Can Write To")) {
+            Button(L("添加…", "Add…"), action: chooseWritableFolders)
+        }
+        ForEach(folders, id: \.self) { folder in
+            WritableFolderRow(path: folder, connected: WritableFolders.volume(of: folder).map(mountedVolumes.contains) ?? true) {
+                box.config.writableFolderPaths.removeAll { $0 == folder }
+            }
+        }
+        Text(writableFoldersCaption)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        if let note = permissionNote(for: folders) {
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var writableFoldersCaption: String {
+        var text = box.config.writableFolderPaths.isEmpty
+            ? L("应用只能在盒子里写文件（共享时还有「下载」）。在应用里把下载位置改到别的文件夹之前，先把那个文件夹加到这里。",
+                "The app can only write inside its box (and to Downloads when shared). Before changing its download location to another folder, add that folder here.")
+            : L("应用可以新建、修改、删除这些文件夹里的文件；删除应用、清除数据、还原都不会动它们。",
+                "The app can create, change and delete files in these folders. Deleting the app, clearing its data or restoring won’t touch them.")
+        if box.isRunning {
+            text += L("改动在重新打开「\(box.config.name)」后生效。", " Changes take effect after you reopen “\(box.config.name)”.")
+        }
+        return text
+    }
+
+    /// 在 macOS 保护的位置（外接硬盘、「文稿」……）里的：应用第一次写入时 macOS 会问，问的是盒子里的应用而不是 MacBox，要说清楚
+    private func permissionNote(for folders: [String]) -> String? {
+        let kinds = WritableFolders.Protected.allCases.filter { kind in folders.contains { WritableFolders.protection(of: $0) == kind } }
+        guard !kinds.isEmpty else { return nil }
+        let places = kinds.map(\.name).joined(separator: L("、", ", "))
+        let name = box.config.name
+        let drive = kinds.contains(.drive)
+        return L("其中有\(places)里的文件夹：「\(name)」第一次写入时，macOS 可能会问是否允许它访问\(drive ? "（外接硬盘问的是「可移除的宗卷」）" : "")。这是在问盒子里的这个应用，允许后它才能写入。macOS 会记住这个选择，删除应用后也还在，可以在「系统设置 › 隐私与安全性 › 文件与文件夹」里撤销。",
+                 "Some of these folders are in places macOS protects (\(places)). The first time “\(name)” writes there, macOS may ask whether to allow it\(drive ? " (for external drives it asks about “removable volumes”)" : ""). It’s asking about this app in the box, and the app can write there only once you allow it. macOS remembers the choice even after you delete the app; you can change it in System Settings › Privacy & Security › Files & Folders.")
+    }
+
+    /// 用 MacBox 自己的选择框选：应用自己的选择框扩展不了沙盒规则。选中的解析成真实路径、检查过才加（见 WritableFolders）
+    private func chooseWritableFolders() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = L("允许写入", "Allow Writing")
+        panel.message = L("选择「\(box.config.name)」可以写入的文件夹。最好选一个专门放它的文件的文件夹。",
+                          "Choose folders “\(box.config.name)” can write to. A folder just for its files is best.")
+        guard panel.runModal() == .OK else { return }
+        var rejected: [String] = []
+        for url in panel.urls {
+            switch WritableFolders.resolve(url) {
+            case .success(let folder): box.allowWriting(to: folder)
+            case .failure(let rejection):
+                rejected.append(L("「\(url.lastPathComponent)」：\(rejection.message)", "“\(url.lastPathComponent)”: \(rejection.message)"))
+            }
+        }
+        guard !rejected.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = rejected.count == 1 ? L("这个文件夹不能允许写入", "This folder can’t be allowed")
+                                                : L("有些文件夹不能允许写入", "Some folders can’t be allowed")
+        alert.informativeText = rejected.joined(separator: "\n")
+        alert.runModal()
     }
 
     // MARK: - 还原点
@@ -447,6 +598,39 @@ struct BoxInspector: View {
     private func perform(_ action: @escaping () async throws -> Void) {
         Task {
             do { try await action() } catch { box.lastError = error.localizedDescription }
+        }
+    }
+}
+
+/// 可以写入的一个文件夹：名字、路径（主目录写成 ~），外接硬盘没接上时注明。MacBox 不去读它（见 WritableFolders）
+private struct WritableFolderRow: View {
+    let path: String
+    let connected: Bool
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Label {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text((path as NSString).lastPathComponent).font(.callout)
+                    Text(WritableFolders.displayPath(path)).font(.caption2).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                }
+            } icon: {
+                Image(systemName: WritableFolders.volume(of: path) == nil ? "folder" : "externaldrive")
+            }
+            Spacer()
+            if !connected {
+                Text(L("硬盘没有接上", "Drive not connected")).font(.caption).foregroundStyle(.orange)
+            }
+            Button(action: onRemove) { Image(systemName: "minus.circle") }
+                .buttonStyle(.borderless)
+                .help(L("不再允许写入", "Stop Allowing Writes"))
+                .accessibilityLabel(L("不再允许写入「\((path as NSString).lastPathComponent)」", "Stop allowing writes to “\((path as NSString).lastPathComponent)”"))
+        }
+        // 由访达去打开，MacBox 自己不读这个文件夹
+        .contextMenu {
+            Button(L("在访达中显示", "Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
         }
     }
 }

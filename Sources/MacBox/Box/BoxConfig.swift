@@ -195,6 +195,8 @@ nonisolated struct BoxConfig: Codable, Equatable, Sendable {
     var acknowledgedBlocks: [String]?
     /// 不让应用联网（见 SandboxProfile.offlineRules）。没有这个字段（旧文件）、nil 都是允许
     var blockNetwork: Bool?
+    /// 应用可以写入的盒子外的文件夹：选的时候解析出的真实路径，按添加的先后（见 WritableFolders）。没有时为 nil
+    var writableFolders: [String]?
 }
 
 extension BoxConfig {
@@ -206,6 +208,12 @@ extension BoxConfig {
     nonisolated var allowsNetwork: Bool {
         get { blockNetwork != true }
         set { blockNetwork = newValue ? nil : true }
+    }
+
+    /// 详情面板里「可以写入的文件夹」。没有时不写这个字段，box.json 和旧版一样
+    nonisolated var writableFolderPaths: [String] {
+        get { writableFolders ?? [] }
+        set { writableFolders = newValue.isEmpty ? nil : newValue }
     }
 }
 

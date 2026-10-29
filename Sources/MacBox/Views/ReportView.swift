@@ -180,6 +180,11 @@ private struct ReportContent: View {
                         systemImage: report.networkBlocked ? "network.slash" : "network")
                     Tag(text: report.sharesDownloads ? L("共享「下载」", "Downloads Shared") : L("不共享「下载」", "Downloads Not Shared"),
                         systemImage: "arrow.down.circle")
+                    if let folders = report.writableFolders {
+                        Tag(text: L("可写入 \(folders.count) 个文件夹", folders.count == 1 ? "Writes to 1 Folder" : "Writes to \(folders.count) Folders"),
+                            systemImage: "folder")
+                            .help(folders.joined(separator: "\n"))
+                    }
                     if report.isRunning { Tag(text: L("运行中，记录中", "Running, recording"), systemImage: "record.circle", tint: .green) }
                 }
             }
@@ -195,8 +200,7 @@ private struct ReportContent: View {
                 if files.isEmpty {
                     Placeholder(L("没有写入文件。", "No files were written."))
                 } else {
-                    Text(L("新建 \(totals.created)、修改 \(totals.modified)、删除 \(totals.deleted)，共 \(FileOps.formatBytes(totals.bytes))。路径是应用眼里的位置，实际都写进了 MacBox 的盒子（「下载」除外）。",
-                           "\(totals.created) created, \(totals.modified) modified, \(totals.deleted) deleted, \(FileOps.formatBytes(totals.bytes)) in total. Paths are where the app thinks it wrote; everything actually went into the MacBox box (except Downloads)."))
+                    Text(report.filesSummary(totals))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

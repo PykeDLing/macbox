@@ -467,7 +467,7 @@ struct IsolationTests {
         }
         var write = message("stub", inBox.pid, "file-write-create", "/Users/x/Downloads/a.dmg")
         write.allowed = true
-        if case .wroteDownload(let path, let operation) = parser().activity(from: write) {
+        if case .wroteShared(let path, let operation) = parser().activity(from: write) {
             #expect(path == "/Users/x/Downloads/a.dmg" && operation == "file-write-create")
         } else {
             Issue.record("写「下载」没有认出来")
