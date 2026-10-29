@@ -63,9 +63,9 @@ nonisolated struct CompatibilityIssue: Codable, Hashable, Identifiable, Sendable
 nonisolated extension CompatibilityIssue.Code {
     var severity: CompatibilityIssue.Severity {
         switch self {
-        case .privilegedHelper, .systemService, .systemExtension, .driver, .networkExtension: .needsVirtualMac
+        case .privilegedHelper, .systemService, .systemExtension, .driver, .networkExtension, .appSandbox: .needsVirtualMac
         case .loginItem, .finderIntegration, .notNotarized, .installerScriptsSkipped: .limited
-        case .appSandbox, .notarized: .info
+        case .notarized: .info
         }
     }
 
@@ -103,8 +103,8 @@ nonisolated extension CompatibilityIssue.Code {
                                   "Finder extensions such as sync status badges and context menu items won’t work.")
         case .networkExtension: ("VPN、代理等网络扩展需要系统级安装。",
                                  "Network extensions such as VPNs and proxies require a system-wide install.")
-        case .appSandbox: ("在 MacBox 中它改由 MacBox 的沙盒约束，数据存进盒子；请经由 MacBox 打开它。",
-                           "In MacBox it’s confined by MacBox’s sandbox instead and its data goes into the box. Always open it through MacBox.")
+        case .appSandbox: ("它已经被苹果的沙盒关在自己的容器里，读不到你的文稿和其他 App 的数据。本机隔离装不下它：套上 MacBox 的沙盒后，它一启动就会被系统结束。要完全隔开，请改用虚拟 Mac。",
+                           "Apple’s sandbox already confines it to its own container, where it can’t read your documents or other apps’ data. Native Isolation can’t hold it: inside MacBox’s sandbox, macOS ends it as soon as it starts. To wall it off completely, use Virtual Mac.")
         case .notarized: known ?? source.map { ($0, $0) } ?? ("来源已验证", "Source verified")
         case .notNotarized: ("\(rejection.0)。打开时 macOS 会询问你是否信任它，请确认来源可靠。",
                              "\(rejection.1). macOS will ask whether you trust it when you open it; make sure it comes from a source you trust.")

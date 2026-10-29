@@ -326,6 +326,8 @@ struct BoxStatusTag: View {
                 (L("处理中…", "Working…"), "hourglass", .secondary)
             } else if box.config.runtime == .virtualMac {
                 (L("虚拟 Mac", "Virtual Mac"), "desktopcomputer", .secondary)
+            } else if box.cannotRunNatively {
+                (L("需要虚拟 Mac", "Needs Virtual Mac"), "exclamationmark.triangle.fill", .orange)
             } else if box.worstIssue == .needsVirtualMac || box.blocks.contains(where: \.kind.suggestsVirtualMac) {
                 (L("可能需要虚拟 Mac", "May Need Virtual Mac"), "exclamationmark.triangle.fill", .orange)
             } else if box.config.isInstaller {

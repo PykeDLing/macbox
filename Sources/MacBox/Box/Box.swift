@@ -104,6 +104,9 @@ final class Box: Identifiable {
     var isLive: Bool { activity == .launching || isRunning || activity == .finishing }
     var appURL: URL { paths.app(config) }
     var worstIssue: CompatibilityIssue.Severity? { config.issues.map(\.severity).max() }
+    /// 本机隔离里一定运行不了：自带苹果沙盒，打开时不会启动它（见 IsolatedSession.refuseAppSandbox）。
+    /// 其他需要虚拟 Mac 的问题只是可能用不了，还是可以试
+    var cannotRunNatively: Bool { config.issues.contains { $0.code == .appSandbox } }
 
     // MARK: - 打开 / 退出
 

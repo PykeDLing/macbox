@@ -373,6 +373,7 @@ final class IsolatedSession {
         try checkLayout(paths, app: app)
         let info = try AppInspector.info(of: app)
         try preflight(info.executable)
+        try refuseAppSandbox(app, name: config.name)
         try prepareHome(paths, config: config)
         return LaunchPlan(executable: info.executable.path,
                           arguments: AppInspector.launchArguments(for: app),
@@ -397,6 +398,15 @@ final class IsolatedSession {
             throw MacBoxError(L("App 的主程序是脚本，需要「\(interpreter)」才能运行，但这台 Mac 上没有它。",
                                 "The app’s executable is a script that needs “\(interpreter)” to run, but it isn’t on this Mac."))
         }
+    }
+
+    /// 自带苹果沙盒的 App 套上 sandbox-exec 后一启动就会被系统结束（libsystem_secinit 发现进程已经在沙盒里，SIGTRAP），
+    /// 结束之前系统已经在你真实的 ~/Library/Containers 里给它建好了容器。所以不启动它，说明原因。
+    /// 每次启动前按盒子里现在的 App 判断：App 可能在盒子里更新过，box.json 里记的兼容性问题不一定是现在的
+    nonisolated static func refuseAppSandbox(_ app: URL, name: String) throws {
+        guard AppInspector.usesAppSandbox(app) else { return }
+        throw MacBoxError(L("「\(name)」自带苹果沙盒，本机隔离装不下它：套上 MacBox 的沙盒后，它一启动就会被系统结束。它已经被苹果的沙盒关在自己的容器里；要完全隔开，请在详情面板里改用虚拟 Mac。",
+                            "“\(name)” uses the App Sandbox, which Native Isolation can’t hold: inside MacBox’s sandbox, macOS ends it as soon as it starts. Apple’s sandbox already confines it to its own container; to wall it off completely, switch it to Virtual Mac in its details."))
     }
 
     /// #! 脚本第一行指定的解释器

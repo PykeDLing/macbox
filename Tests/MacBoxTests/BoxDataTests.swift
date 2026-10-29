@@ -171,11 +171,13 @@ struct BoxDataTests {
         #expect(issues.map(\.source) == old.map(\.source))
         Localization.$testLanguage.withValue(.chinese) {
             #expect(issues.map(\.localizedTitle) == old.map(\.title))
-            // 没通过公证的两条换了说法（spctl 的英文不再原样显示），其余照旧
+            // 没通过公证的两条换了说法（spctl 的英文不再原样显示）；自带苹果沙盒的改了说明（本机隔离装不下它，
+            // 以前说的“数据存进盒子”不对）。其余照旧
             let shown = old.enumerated().map { index, issue in
                 switch index {
                 case 2: "有开发者签名，但没有经过公证。打开时 macOS 会询问你是否信任它，请确认来源可靠。"
                 case 3: "签名没有通过检查。打开时 macOS 会询问你是否信任它，请确认来源可靠。"
+                case 11: "它已经被苹果的沙盒关在自己的容器里，读不到你的文稿和其他 App 的数据。本机隔离装不下它：套上 MacBox 的沙盒后，它一启动就会被系统结束。要完全隔开，请改用虚拟 Mac。"
                 default: issue.detail
                 }
             }

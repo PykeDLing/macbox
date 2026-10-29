@@ -27,6 +27,26 @@ struct CompatibilityPrompt: Identifiable {
     /// 运行时被挡住的拦截（BlockEvent.id）。用户选“继续使用本机隔离”时记进盒子，同样的拦截以后不再问；
     /// 导入时静态检查出的问题只问这一次，不用记
     var blocks: [String] = []
+    /// 本机隔离里一定运行不了（见 Box.cannotRunNatively）：标题和说明不说“可能”
+    var cannotRunNatively = false
+
+    var title: String {
+        cannotRunNatively
+            ? L("「\(appName)」无法在本机隔离中运行", "“\(appName)” can’t run in Native Isolation")
+            : L("「\(appName)」在本机隔离中可能无法正常使用", "“\(appName)” may not work properly in Native Isolation")
+    }
+
+    var message: String {
+        var lines = [reasons.prefix(4).joined(separator: "\n"),
+                     cannotRunNatively
+                         ? L("要在 MacBox 里运行它，只能改用虚拟 Mac。", "To run it in MacBox, use Virtual Mac.")
+                         : L("改用虚拟 Mac 运行可以获得完整功能。", "Run it in a Virtual Mac to get full functionality.")]
+        // 运行时的拦截：选了继续使用本机隔离，同样的拦截以后不再问（见 BoxStore.keepNativeIsolation），要先说清楚
+        if !blocks.isEmpty {
+            lines.append(L("选「继续使用本机隔离」后，同样的拦截不再询问。", "If you keep Native Isolation, MacBox won’t ask about these again."))
+        }
+        return lines.joined(separator: "\n\n")
+    }
 }
 
 /// 安装包里只有驱动、插件这类系统组件，没有能单独运行的 App：建议把它放进虚拟 Mac 安装
@@ -185,6 +205,7 @@ final class BoxStore {
         }
         boxes = loaded.sorted { $0.config.createdAt < $1.config.createdAt }
         brokenBoxes = broken
+        recheckAppSandbox(boxes)
         // 启动器被删掉、被覆盖或者是旧写法的时补上、重写，没有主人的清掉（读不出的盒子也算主人）
         let keep = Set(boxes.map(\.id) + brokenBoxes.map(\.id))
         let wanted = boxes.filter(\.config.wantsLauncher)
@@ -194,6 +215,29 @@ final class BoxStore {
                 box.syncLauncher()
             }
         }
+    }
+
+    /// 0.4.1 及以前只看权限里有没有苹果沙盒这一项、不看值，写着“否”的也记成了“自带苹果沙盒”，而且只当作参考信息。
+    /// 记着这一条的盒子按值重新判断：不用的去掉，真用的换成现在的这一条（本机隔离装不下，见 CompatibilityIssue.Code.appSandbox）。
+    /// 只读签名，不必等
+    private func recheckAppSandbox(_ boxes: [Box]) {
+        let marked = boxes.filter { $0.config.issues.contains { $0.code == .appSandbox } }
+        guard !marked.isEmpty else { return }
+        Task {
+            for box in marked {
+                let app = box.appURL
+                let sandboxed = await Background.run { AppInspector.usesAppSandbox(app) }
+                let issues = Self.recheckedAppSandbox(box.config.issues, usesAppSandbox: sandboxed)
+                if issues != box.config.issues { box.config.issues = issues }
+            }
+        }
+    }
+
+    /// 按值重新判断苹果沙盒之后的兼容性问题：不用的去掉“自带苹果沙盒”，真用的原地换成现在的级别和说明
+    nonisolated static func recheckedAppSandbox(_ issues: [CompatibilityIssue], usesAppSandbox: Bool) -> [CompatibilityIssue] {
+        usesAppSandbox
+            ? issues.map { $0.code == .appSandbox ? CompatibilityIssue(.appSandbox) : $0 }
+            : issues.filter { $0.code != .appSandbox }
     }
 
     /// 启动时收不回偏好设置的提示。一个应用时不用复数
@@ -440,8 +484,10 @@ final class BoxStore {
             if let index = prompts.firstIndex(where: { $0.boxID == box.id }) {
                 prompts[index].reasons += reasons.filter { !prompts[index].reasons.contains($0) }
                 prompts[index].blocks += blocks.filter { !prompts[index].blocks.contains($0) }
+                prompts[index].cannotRunNatively = box.cannotRunNatively
             } else {
-                prompts.append(CompatibilityPrompt(boxID: box.id, appName: box.config.name, reasons: reasons, blocks: blocks))
+                prompts.append(CompatibilityPrompt(boxID: box.id, appName: box.config.name, reasons: reasons, blocks: blocks,
+                                                   cannotRunNatively: box.cannotRunNatively))
             }
             if prompt == nil { prompt = prompts.removeFirst() }
         case .switchAutomatically:

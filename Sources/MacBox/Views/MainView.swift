@@ -51,7 +51,7 @@ struct MainView: View {
         }
         // 下面几种提示都排队，一次显示一条。按钮只做选择对应的事，移出队列统一在关闭时做（isPresented 被置为 false）：
         // 按钮里就移出的话，关闭时 SwiftUI 再置一次 false，会把排在后面的那条也当成已关闭
-        .alert(promptTitle,
+        .alert(store.prompt?.title ?? "",
                isPresented: Binding(get: { store.prompt != nil }, set: { [id = store.prompt?.id] in
                    // 按显示着的那条的 id 移出：同一次关闭里再置一次 false、或者绑定已经换成下一条时，都不会误关下一条
                    if !$0, let id { store.dismissPrompt(id: id) }
@@ -61,7 +61,7 @@ struct MainView: View {
             // 记下这次的拦截：同样的拦截以后不再问，每次退出都弹一次没有意义
             Button(L("继续使用本机隔离", "Keep Native Isolation"), role: .cancel) { store.keepNativeIsolation(prompt) }
         } message: { prompt in
-            Text(promptMessage(prompt))
+            Text(prompt.message)
         }
         .alert(L("「\(store.virtualMacOffers.first?.file.lastPathComponent ?? "")」需要在虚拟 Mac 里安装",
                  "“\(store.virtualMacOffers.first?.file.lastPathComponent ?? "")” needs to be installed in the Virtual Mac"),
@@ -89,20 +89,6 @@ struct MainView: View {
         }
     }
 
-    private var promptTitle: String {
-        let name = store.prompt?.appName ?? ""
-        return L("「\(name)」在本机隔离中可能无法正常使用", "“\(name)” may not work properly in Native Isolation")
-    }
-
-    private func promptMessage(_ prompt: CompatibilityPrompt) -> String {
-        var lines = [prompt.reasons.prefix(4).joined(separator: "\n"),
-                     L("改用虚拟 Mac 运行可以获得完整功能。", "Run it in a Virtual Mac to get full functionality.")]
-        // 运行时的拦截：选了继续使用本机隔离，同样的拦截以后不再问（见 BoxStore.keepNativeIsolation），要先说清楚
-        if !prompt.blocks.isEmpty {
-            lines.append(L("选「继续使用本机隔离」后，同样的拦截不再询问。", "If you keep Native Isolation, MacBox won’t ask about these again."))
-        }
-        return lines.joined(separator: "\n\n")
-    }
 }
 
 /// 正在退出 MacBox：等应用退出、收尾、维护和添加做完

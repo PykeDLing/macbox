@@ -92,6 +92,32 @@ nonisolated enum TestDetachedHelper {
     }
 }
 
+/// 主程序是编译好的空程序、按给定权限做 ad-hoc 签名的 App 包，用来测签名里的权限（见 AppInspector.entitlements）。
+/// 只造不运行：用苹果沙盒的 App 一运行，系统就会在你真实的 ~/Library/Containers 里给它建容器
+nonisolated enum SignedTestApp {
+    private static let compiled = Task { try await compileC("int main(void) { return 0; }\n", name: "signed") }
+
+    /// entitlements 为 nil 时签名不带权限；signed 为 false 时不签名
+    static func make(at app: URL, identifier: String, entitlements: [String: Any]?, signed: Bool = true) async throws {
+        let info: [String: Any] = ["CFBundleIdentifier": identifier, "CFBundleExecutable": "main", "CFBundleName": "Signed",
+                                   "CFBundlePackageType": "APPL"]
+        try AppPaths.ensure(app.appending(path: "Contents"))
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: app.appending(path: "Contents/Info.plist"))
+        try installCompiled(try await compiled.value, at: app.appending(path: "Contents/MacOS/main"))
+        guard signed else { return }
+        let arguments = ["-s", "-", "-f"]
+        if let entitlements {
+            let file = app.deletingLastPathComponent().appending(path: "\(UUID().uuidString).entitlements")
+            defer { try? FileManager.default.removeItem(at: file) }
+            try PropertyListSerialization.data(fromPropertyList: entitlements, format: .xml, options: 0).write(to: file)
+            try await Shell.run("/usr/bin/codesign", arguments + ["--entitlements", file.path, app.path])
+        } else {
+            try await Shell.run("/usr/bin/codesign", arguments + [app.path])
+        }
+    }
+}
+
 /// 把一段 C 源码编译到临时目录里
 nonisolated func compileC(_ source: String, name: String) async throws -> URL {
     let folder = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-\(name)-\(UUID().uuidString)")

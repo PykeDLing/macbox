@@ -413,6 +413,59 @@ struct LifecycleTests {
         #expect(second.config.acknowledgedBlocks == nil, "换了运行环境，之前的选择不再算数")
     }
 
+    @Test("启动时更正旧盒子的“自带苹果沙盒”：写着“否”的去掉，真用的改成本机隔离装不下；打开真用的不启动它、说明原因",
+          .timeLimit(.minutes(1)))
+    func appSandboxRecheck() async throws {
+        let fixture = LifecycleFixture()
+        defer { await fixture.cleanup() }
+        var old = CompatibilityIssue(.appSandbox) // 0.4.1 及以前记下的：当作参考信息
+        old.severity = .info
+        old.detail = "在 MacBox 中它改由 MacBox 的沙盒约束，数据存进盒子；请经由 MacBox 打开它。"
+        let declinedPaths = try await fixture.makeBox("Declined", script: "exit 0\n") { $0.issues = [old, CompatibilityIssue(.loginItem)] }
+        let sandboxedPaths = try await fixture.makeBox("Sandboxed", script: "exit 0\n") { $0.issues = [old] }
+        for (paths, value) in [(declinedPaths, false), (sandboxedPaths, true)] {
+            let config = try paths.loadConfig()
+            let app = paths.app(config)
+            try FileOps.removeTree(app)
+            try await SignedTestApp.make(at: app, identifier: config.bundleIdentifier,
+                                         entitlements: ["com.apple.security.app-sandbox": value])
+            try AppLock.lock(app)
+        }
+        let store = await fixture.start()
+        let declined = try #require(store.box(id: try declinedPaths.loadConfig().id))
+        let sandboxed = try #require(store.box(id: try sandboxedPaths.loadConfig().id))
+        #expect(await eventually(.seconds(5)) { declined.config.issues == [CompatibilityIssue(.loginItem)] })
+        #expect(await eventually(.seconds(5)) { sandboxed.config.issues == [CompatibilityIssue(.appSandbox)] })
+        #expect(sandboxed.config.issues.first?.severity == .needsVirtualMac)
+        #expect(try declinedPaths.loadConfig().issues == declined.config.issues, "要存回 box.json")
+        #expect(try sandboxedPaths.loadConfig().issues == sandboxed.config.issues, "要存回 box.json")
+
+        // 一定运行不了：卡片和询问都不说“可能”；其他问题照旧
+        Localization.$testLanguage.withValue(.chinese) {
+            #expect(BoxStatusTag.State(sandboxed).title == "需要虚拟 Mac")
+            #expect(!BoxStatusTag.State(declined).title.contains("虚拟 Mac"))
+            #expect(BoxInspector.virtualMacLinkTitle(sandboxed) == "本机隔离运行不了它，改用虚拟 Mac 运行")
+            #expect(BoxInspector.virtualMacLinkTitle(declined) == "软件不正常？改用虚拟 Mac 运行")
+        }
+        #expect(!store.reviewCompatibility(of: sandboxed))
+        let prompt = try #require(store.prompt)
+        #expect(prompt.boxID == sandboxed.id && prompt.cannotRunNatively)
+        Localization.$testLanguage.withValue(.chinese) {
+            #expect(prompt.title == "「Sandboxed」无法在本机隔离中运行")
+            #expect(prompt.message.hasSuffix("要在 MacBox 里运行它，只能改用虚拟 Mac。"))
+        }
+        store.dismissPrompt(id: prompt.id)
+
+        let container = AppPaths.realHome.appending(path: "Library/Containers/\(sandboxed.config.bundleIdentifier)")
+        await sandboxed.open()
+        #expect(await eventually(.seconds(10)) { sandboxed.activity == .idle && sandboxed.lastError != nil })
+        #expect(sandboxed.lastError?.contains("Sandboxed") == true, "要说是哪个应用")
+        #expect(sandboxed.lastError.map { $0.contains("自带苹果沙盒") || $0.contains("uses the App Sandbox") } == true,
+                "要说是因为苹果沙盒，不是“很快以非 0 退出”")
+        #expect(!FileManager.default.fileExists(atPath: container.path), "不该启动它：一启动，系统就会在真实的 ~/Library/Containers 里建容器")
+        #expect(AppLock.isLocked(sandboxed.appURL))
+    }
+
     @Test("Spotlight 启动器：不用 open -g，写着版本；旧写法的、旧版留下的子文件夹里和隐藏的启动器，启动时重写、清掉",
           .timeLimit(.minutes(1)))
     func launchersAreRewritten() async throws {

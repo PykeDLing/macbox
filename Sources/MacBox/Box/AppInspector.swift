@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Security
 
 nonisolated struct AppInfo: Sendable {
     let url: URL
@@ -365,15 +366,34 @@ nonisolated enum AppInspector {
             }
         }
 
-        let entitlements = (try? await Shell.run("/usr/bin/codesign", ["-d", "--entitlements", "-", "--xml", app.path]))?.output ?? ""
-        if entitlements.contains("com.apple.developer.networking.networkextension") {
+        let entitlements = entitlements(of: app)
+        if entitlements["com.apple.developer.networking.networkextension"] != nil {
             issues.append(CompatibilityIssue(.networkExtension))
         }
-        if entitlements.contains("com.apple.security.app-sandbox") {
+        if usesAppSandbox(entitlements) {
             issues.append(CompatibilityIssue(.appSandbox))
         }
         return issues
     }
+
+    /// App 主程序签名里的权限（entitlements）。经由 Security 框架直接读签名，不校验、不运行 codesign；
+    /// 上了锁（没有执行权限，见 AppLock）的 App 也读得出。没有签名、读不出时为空
+    static func entitlements(of app: URL) -> [String: Any] {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(app as CFURL, [], &code) == errSecSuccess, let code else { return [:] }
+        var information: CFDictionary?
+        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+              let information = information as? [String: Any] else { return [:] }
+        return information[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:]
+    }
+
+    /// 真的用苹果沙盒：com.apple.security.app-sandbox 的值是“是”。只看有没有这一项不够，
+    /// 不少 App 写着“否”（Docker、Telegram、网易有道翻译），它们不用苹果沙盒，在本机隔离里照常运行
+    static func usesAppSandbox(_ entitlements: [String: Any]) -> Bool {
+        entitlements["com.apple.security.app-sandbox"] as? Bool == true
+    }
+
+    static func usesAppSandbox(_ app: URL) -> Bool { usesAppSandbox(entitlements(of: app)) }
 
     /// 用 Gatekeeper 同样的规则检查 App：通过公证的，去掉盒子里副本的“来自互联网”标记，
     /// 免得系统在 MacBox 已经确认过之后再弹一次“确定要打开吗”；没通过的保留标记，由系统拦下。

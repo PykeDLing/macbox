@@ -192,6 +192,13 @@ struct BoxInspector: View {
 
     // MARK: - 运行环境
 
+    /// 本机隔离时改用虚拟 Mac 的链接。自带苹果沙盒的一定运行不了（见 Box.cannotRunNatively），不问“不正常吗”
+    static func virtualMacLinkTitle(_ box: Box) -> String {
+        box.cannotRunNatively
+            ? L("本机隔离运行不了它，改用虚拟 Mac 运行", "It can’t run in Native Isolation. Run in Virtual Mac instead")
+            : L("软件不正常？改用虚拟 Mac 运行", "Not working right? Run in Virtual Mac instead")
+    }
+
     private var runtimeSection: some View {
         Section {
             Picker(L("运行环境", "Runtime"), selection: $box.config.runtime) {
@@ -210,7 +217,7 @@ struct BoxInspector: View {
             }
 
             if box.config.runtime == .isolated {
-                Button(L("软件不正常？改用虚拟 Mac 运行", "Not working right? Run in Virtual Mac instead")) { box.config.runtime = .virtualMac }
+                Button(Self.virtualMacLinkTitle(box)) { box.config.runtime = .virtualMac }
                     .buttonStyle(.link)
                     .disabled(box.isRunning || box.isBusy)
             } else {
