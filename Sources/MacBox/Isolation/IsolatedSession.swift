@@ -50,9 +50,11 @@ final class IsolatedSession {
     /// 运行 App，直到它和它的辅助进程全部退出、收尾完成才返回。
     /// - onStart：App 已启动，交出会话（切到前台、请求退出）
     /// - onActivity：运行期间陆续得到的记录：拦截、启动的程序、连到的服务器（运行报告用）
+    /// - onExited：进程全部退出了，接下来是收尾（收回设置、对比改动，要几秒）。会话这时已经没有可以切换、请求退出的了
     static func run(paths: BoxPaths, config: BoxConfig,
                     onStart: (IsolatedSession) -> Void,
-                    onActivity: @escaping (RunActivity) -> Void) async throws -> Outcome {
+                    onActivity: @escaping (RunActivity) -> Void,
+                    onExited: () -> Void = {}) async throws -> Outcome {
         let plan = try await prepare(paths, config: config)
         try await BoxKeychain.prepare(paths)
         // 运行前的样子，退出后对比出这次写了哪些文件、改了哪些设置（运行报告）。主目录、钥匙串由 MacBox 准备好之后再记。
@@ -109,6 +111,7 @@ final class IsolatedSession {
 
         let main = await session.waitUntilAllExited()
         connections.cancel()
+        onExited()
         // 先把偏好设置还回去，再做可能较慢的收尾（卸载映像、在主目录里找安装包），尽量缩短借出的时间：
         // 这期间 MacBox 可能正在退出，来不及做完的收尾下次还能补，借出的设置留在系统里却会被本机的 App 读到
         let preferencesError = await returnPreferences(lease)
@@ -334,15 +337,19 @@ final class IsolatedSession {
         return lstat(path, &info) == 0 && info.st_mode & S_IFMT == S_IFLNK
     }
 
-    private static func environment(for paths: BoxPaths) -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
+    /// 盒子里的 App 的环境变量：MacBox 自己的（inherited）去掉不该传下去的，主目录、临时目录换成盒子里的
+    static func environment(for paths: BoxPaths, inherited: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+        var environment = inherited
         let home = paths.home.path
         environment["HOME"] = home
         environment["CFFIXED_USER_HOME"] = home
         environment["TMPDIR"] = paths.tmp.path + "/"
         // MacBox 自己的启动信息不传下去：XPC_SERVICE_NAME 是 launchd 给 MacBox 的服务名，
-        // 盒子里的 App 带着它会被当成 MacBox 的一部分；MACBOX_DATA_ROOT 只给 MacBox 自己用
-        for key in ["__CFBundleIdentifier", "XPC_SERVICE_NAME", "MACBOX_DATA_ROOT"] { environment.removeValue(forKey: key) }
+        // 盒子里的 App 带着它会被当成 MacBox 的一部分；MACBOX_DATA_ROOT 只给 MacBox 自己用。
+        // ssh-agent 的位置也不传：拿着它能让 agent 用你的钥匙替它签名（沙盒规则另外挡住了连它，见 SandboxProfile）
+        for key in ["__CFBundleIdentifier", "XPC_SERVICE_NAME", "MACBOX_DATA_ROOT", "SSH_AUTH_SOCK", "SSH_AGENT_PID"] {
+            environment.removeValue(forKey: key)
+        }
         return environment
     }
 

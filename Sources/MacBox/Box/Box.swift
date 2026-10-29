@@ -264,6 +264,10 @@ final class Box: Identifiable {
                 }
             }, onActivity: { [weak self] activity in
                 self?.record(activity)
+            }, onExited: { [weak self] in
+                // 进程都退出了就不再算运行中：收尾要几秒，这期间点打开是等收尾完再打开，
+                // 而不是去“切换过去”、请一个已经不在的应用退出
+                self?.activity = .finishing
             })
         } catch {
             pendingOpen = nil // 启动不了：不再重试

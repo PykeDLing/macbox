@@ -408,7 +408,7 @@ final class BoxStore {
             try AppPaths.ensure(paths.sourceDirectory)
             let source = paths.sourceDirectory.appending(path: url.lastPathComponent)
             // 来自其他卷（外接硬盘、网络位置）时是真正的复制，可能很慢
-            try await Background.run { try FileOps.clone(url, to: source) }
+            try await Background.run { try FileOps.clone(url, to: source, followingSymlink: true) } // 拖进来的替身要的是它指向的安装包
 
             importStatus = L("正在取出 App…", "Extracting the app…")
             let extracted = try await PackageExtractor.extractApp(from: source, into: paths.appDirectory)

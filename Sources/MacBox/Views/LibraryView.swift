@@ -339,7 +339,7 @@ struct BoxStatusTag: View {
             } else if box.config.isInstaller {
                 (L("安装器", "Installer"), "shippingbox", .secondary)
             } else if !box.config.allowsNetwork {
-                (L("本机隔离 · 不联网", "Isolated · Offline"), "network.slash", Color.secondary.opacity(0.8))
+                (L("本机隔离 · 不联网", "Native Isolation · Offline"), "network.slash", Color.secondary.opacity(0.8))
             } else {
                 (L("本机隔离", "Native Isolation"), "lock.fill", Color.secondary.opacity(0.8))
             }

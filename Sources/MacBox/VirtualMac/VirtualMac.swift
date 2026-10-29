@@ -518,7 +518,7 @@ final class VirtualMac: NSObject {
         try FileOps.removeIfExists(temp)
         try AppPaths.ensure(temp)
         for file in bundle.restorableFiles where FileManager.default.fileExists(atPath: file.path) {
-            try FileOps.clone(file, to: temp.appending(path: file.lastPathComponent))
+            try FileOps.clone(file, to: temp.appending(path: file.lastPathComponent), followingSymlink: false)
         }
         try FileOps.removeIfExists(bundle.restorePointURL)
         try FileManager.default.moveItem(at: temp, to: bundle.restorePointURL)
@@ -531,7 +531,7 @@ final class VirtualMac: NSObject {
         for file in bundle.restorableFiles {
             try FileOps.removeIfExists(file)
             let source = bundle.restorePointURL.appending(path: file.lastPathComponent)
-            if FileManager.default.fileExists(atPath: source.path) { try FileOps.clone(source, to: file) }
+            if FileManager.default.fileExists(atPath: source.path) { try FileOps.clone(source, to: file, followingSymlink: false) }
         }
         refreshFlags()
     }
@@ -659,7 +659,7 @@ final class VirtualMac: NSObject {
                 // 名字里不带原名：原名接近 255 字节的上限时再加后缀会超长
                 let temp = incoming.appending(path: ".\(UUID().uuidString)\(partialSuffix)")
                 do {
-                    try FileOps.clone(url, to: temp)
+                    try FileOps.clone(url, to: temp, followingSymlink: true) // 你选的文件；拖进来的替身要的是它指向的东西
                     if exists {
                         try swapItems(temp, destination)
                         try? removeTree(temp) // 交换之后这里是旧的那份

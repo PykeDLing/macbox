@@ -99,8 +99,8 @@ const features: readonly {
     title: ['也挡住乱读', 'And against stray reads'],
     // 字符串里的 \u2060 让路径不在连字符处折行
     text: [
-      '读不到邮件、信息、Safari、Cookie、iCloud 云盘，其他 App 的 Application Support、容器、缓存和 WebKit 网站数据，SSH、GPG、AWS、Kubernetes 的密钥，以及 ~/.config、~/.netrc、~/.git-\u2060credentials、~/.docker 等处命令行工具的凭证。别处照常读得到，例如文稿、桌面。',
-      'No reading Mail, Messages, Safari, cookies or iCloud Drive; other apps’ Application Support, containers, caches or WebKit website data; SSH, GPG, AWS or Kubernetes keys; or command-line credentials in ~/.config, ~/.netrc, ~/.git-\u2060credentials, ~/.docker and the like. Everything else, such as Documents and Desktop, can still be read.',
+      '读不到邮件、信息、Safari、Cookie、iCloud 云盘，其他 App 的 Application Support、容器、缓存和 WebKit 网站数据，SSH、GPG、AWS、Kubernetes 的密钥，以及 ~/.config、~/.netrc、~/.git-\u2060credentials、~/.docker 等处命令行工具的凭证；也连不上 ssh-agent、Docker 这类替你保管钥匙和身份的程序。别处照常读得到，例如文稿、桌面。',
+      'No reading Mail, Messages, Safari, cookies or iCloud Drive; other apps’ Application Support, containers, caches or WebKit website data; SSH, GPG, AWS or Kubernetes keys; or command-line credentials in ~/.config, ~/.netrc, ~/.git-\u2060credentials, ~/.docker and the like; and no connecting to programs that hold your keys and identities, such as ssh-agent or Docker. Everything else, such as Documents and Desktop, can still be read.',
     ],
   },
   {

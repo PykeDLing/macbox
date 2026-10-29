@@ -187,6 +187,28 @@ struct SessionTests {
         #expect(AppLock.isLocked(paths.app(config)), "运行结束后 App 要重新锁上")
     }
 
+    @Test("进程全部退出（包括主程序留下的）时就通知，之后才收回偏好设置：界面不在收尾的几秒里还显示运行中",
+          .timeLimit(.minutes(1)))
+    func exitedBeforeFinishing() async throws {
+        let (paths, config) = try await makeBox(script: """
+        ( sleep 0.6 ) &
+        exit 0
+        """)
+        defer { try? FileManager.default.removeItem(at: paths.url) }
+        let lease = lease(paths, config)
+        var steps: [String] = []
+        var started = ContinuousClock.now
+        _ = try await IsolatedSession.run(paths: paths, config: config, onStart: { _ in
+            started = .now
+            steps.append("start")
+        }, onActivity: { _ in }, onExited: {
+            steps.append(ContinuousClock.now - started >= .milliseconds(500) ? "all exited" : "too early")
+            steps.append(lease.isOutstanding ? "lent" : "returned")
+        })
+        steps.append(lease.isOutstanding ? "lent" : "returned")
+        #expect(steps == ["start", "all exited", "lent", "returned"])
+    }
+
     @Test("运行报告：对比出这次写下的文件、改了的设置；MacBox 自己的准备不算", .timeLimit(.minutes(1)))
     func reportChanges() async throws {
         // 偏好设置域就是 App 的标识符（从 Info.plist 读，测试专用的前缀）：写进系统里借出的域，收回时进盒子

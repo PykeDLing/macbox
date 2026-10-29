@@ -704,16 +704,21 @@ extension RunReport {
 
     /// 一行概要：写入 120 个文件 · 改了 34 项设置 · 连接 12 个服务器 · 启动 5 个程序 · 拦下 3 次
     var summaryLine: String {
+        /// 英文按单复数：“1 file written”“2 files written”
+        func english(_ count: Int, _ one: String, _ many: String) -> String { "\(count) \(count == 1 ? one : many)" }
         var parts: [String] = []
-        if let totals = fileTotals { parts.append(L("写入 \(totals.count) 个文件", "\(totals.count) files written")) }
-        if let keys = preferenceKeyCount { parts.append(L("改了 \(keys) 项设置", "\(keys) settings changed")) }
+        if let totals = fileTotals {
+            parts.append(L("写入 \(totals.count) 个文件", english(totals.count, "file written", "files written")))
+        }
+        if let keys = preferenceKeyCount { parts.append(L("改了 \(keys) 项设置", english(keys, "setting changed", "settings changed"))) }
         if let strays = strayPreferences, !strays.isEmpty {
-            parts.append(L("\(strays.count) 个设置文件写在盒子外", "\(strays.count) preference files outside the box"))
+            parts.append(L("\(strays.count) 个设置文件写在盒子外",
+                           english(strays.count, "preference file outside the box", "preference files outside the box")))
         }
         parts.append(networkBlocked ? L("已断网", "offline")
-                                    : L("连接 \(servers.count) 个服务器", "\(servers.count) servers contacted"))
-        parts.append(L("启动 \(programs.count) 个程序", "\(programs.count) programs launched"))
-        parts.append(L("拦下 \(blockCount) 次", "\(blockCount) attempts blocked"))
+                                    : L("连接 \(servers.count) 个服务器", english(servers.count, "server contacted", "servers contacted")))
+        parts.append(L("启动 \(programs.count) 个程序", english(programs.count, "program launched", "programs launched")))
+        parts.append(L("拦下 \(blockCount) 次", english(blockCount, "attempt blocked", "attempts blocked")))
         return parts.joined(separator: " · ")
     }
 

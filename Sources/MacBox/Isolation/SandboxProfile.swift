@@ -9,9 +9,9 @@ import Foundation
 ///
 /// Seatbelt 按规则先后匹配，后面的规则覆盖前面的（同一个操作名之间）
 nonisolated enum SandboxProfile {
-    static func make(box: BoxPaths, config: BoxConfig) -> String {
+    /// home：你的主目录的真实路径（测试时用临时目录代替，套接字的路径有长度上限）
+    static func make(box: BoxPaths, config: BoxConfig, home: String = FileOps.realPath(AppPaths.realHome)) -> String {
         let boxRoot = FileOps.realPath(box.url)
-        let home = FileOps.realPath(AppPaths.realHome)
 
         let systemWritable = ["/private/var/folders", "/private/tmp", "/dev"]
         // 共享时放行写你的「下载」，并且每次写都在系统日志里记一笔：运行报告靠它知道应用在里面写了什么。
@@ -72,10 +72,22 @@ nonisolated enum SandboxProfile {
         (deny mach-lookup
         \(blockedServices.map { "  (global-name \(quote($0)))" }.joined(separator: "\n"))
           (global-name-regex #"^com\\.apple\\.(usernoted|usernotifications|UNCUserNotification)"))
+
+        ; 不许连你主目录里别的程序的套接字：gpg-agent、1Password 的 SSH 代理、Docker（/var/run/docker.sock 也指向这里）……
+        ; 连上就能借它们的身份做事（用你的钥匙签名、起一个挂载你主目录的容器），挡读文件挡不住这个。
+        ; 盒子里的照常，是应用自己的。按真实路径匹配，从别处建个链接指过来也一样挡住
+        (deny network-outbound (remote unix-socket (subpath \(quote(home)))))
+        (allow network-outbound (remote unix-socket (subpath \(quote(boxRoot)))))
+        ; 系统的 ssh-agent 在 launchd 给的临时目录里，环境变量不传下去（见 IsolatedSession.environment），路径也猜得到
+        (deny network-outbound (remote unix-socket (path-regex #"\(sshAgentSocket)")))
         \(config.isInstaller ? installerRules : "")
         \(config.allowsNetwork ? "" : offlineRules)
         """
     }
+
+    /// 系统的 ssh-agent 的套接字（SSH_AUTH_SOCK）：launchd 按需启动它，放在 /var/run（以前是 /tmp）下 launchd 的临时目录里。
+    /// 规则和拦截记录（见 ViolationMonitor.networkEvent）共用
+    static let sshAgentSocket = #"^/private/(tmp|var/run)/com\.apple\.launchd\.[^/]+/Listeners$"#
 
     /// 在线安装器不许挂载磁盘映像：否则它会把下载的 dmg 挂上，再经由系统从卷上启动 App（不在沙盒里）。
     /// 挂载失败后安装器会报错退出，MacBox 接手它下载好的安装包完成安装。

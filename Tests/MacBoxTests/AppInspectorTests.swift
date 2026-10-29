@@ -134,6 +134,26 @@ final class AppInspectorTests {
         #expect(AppInspector.looksLikeInstaller(appInfo(name: name, file: file, id: id)) == expected)
     }
 
+    @Test("Chromium 系：按这台 Mac 上实际的几种 App 包认，加上 --no-sandbox；单独用 Crashpad 的普通 App 不算",
+          arguments: [
+            (["Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler"], true), // Electron（抖音、Claude）
+            (["Chromium Embedded Framework.framework", "NeteaseMusic Helper (Renderer).app"], true), // CEF（网易云音乐）
+            (["QQ Helper (Renderer).app", "QQ Helper.app"], true), // QQ 只有这个
+            (["Microsoft Edge Framework.framework/Versions/A/Helpers/msedge_crashpad_handler"], true),
+            (["Codex Framework.framework/Versions/A/Helpers/browser_crashpad_handler"], true), // ChatGPT
+            (["Sentry.framework", "crashpad_handler"], false), // 微信：单独用 Crashpad
+            (["Sparkle.framework/Versions/B/Updater.app"], false),
+            ([], false),
+          ] as [([String], Bool)])
+    func chromium(items: [String], expected: Bool) throws {
+        let app = try directory("chromium").appending(path: "App.app")
+        for item in ["Contents/MacOS"] + items.map({ "Contents/Frameworks/" + $0 }) {
+            try AppPaths.ensure(app.appending(path: item))
+        }
+        #expect(AppInspector.isChromium(app) == expected)
+        #expect(AppInspector.launchArguments(for: app) == (expected ? ["--no-sandbox"] : []))
+    }
+
     @Test("名字里有 Downloader 的：只有像个安装器桩程序（很小、没有 Frameworks）时才算")
     func downloaderStub() throws {
         let base = try directory()

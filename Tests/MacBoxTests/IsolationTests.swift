@@ -17,8 +17,9 @@ struct IsolationTests {
     }
 
     /// 在盒子的沙盒中运行一段 shell，返回输出
-    func sandboxed(_ paths: BoxPaths, _ config: BoxConfig, _ script: String, environment: [String: String] = [:]) async throws -> String {
-        let profile = SandboxProfile.make(box: paths, config: config)
+    func sandboxed(_ paths: BoxPaths, _ config: BoxConfig, _ script: String, environment: [String: String] = [:],
+                   home: String? = nil) async throws -> String {
+        let profile = home.map { SandboxProfile.make(box: paths, config: config, home: $0) } ?? SandboxProfile.make(box: paths, config: config)
         var options = ChildProcess.Options()
         options.environment.merge(environment) { $1 }
         options.environment["HOME"] = paths.home.path
@@ -189,6 +190,74 @@ struct IsolationTests {
         #expect(config.blockNetwork == nil)
         let encoded = String(decoding: try JSONEncoder().encode(config), as: UTF8.self)
         #expect(!encoded.contains("blockNetwork"))
+    }
+
+    @Test("套接字：主目录里别的程序的连不上（从别处建链接指过去也不行），盒子里的照常；联不联网都一样；ssh-agent 连不上")
+    func sockets() async throws {
+        // 套接字的路径最长 104 字节：代表主目录的临时目录放在 /private/tmp 下，名字要短
+        let home = URL(fileURLWithPath: "/private/tmp/mbx-\(UUID().uuidString.prefix(6))")
+        let alias = home.path + ".sock"
+        defer {
+            try? FileOps.removeTree(home)
+            try? FileManager.default.removeItem(atPath: alias)
+        }
+        let paths = BoxPaths(url: home.appending(path: "B"))
+        for folder in [paths.keychains, paths.tmp, paths.appDirectory, paths.home, home.appending(path: ".gnupg")] {
+            try AppPaths.ensure(folder)
+        }
+        var config = BoxConfig(id: UUID(), name: "T", bundleIdentifier: "dev.macboxtest.app", appFolderName: "T.app")
+        let agent = home.appending(path: ".gnupg/S.agent").path, own = paths.home.appending(path: "own.sock").path
+        try FileManager.default.createSymbolicLink(atPath: alias, withDestinationPath: agent)
+        // 沙盒外监听（代表 gpg-agent、应用自己在盒子里建的）。listen 之后不用 accept，内核替它完成连接
+        var options = ChildProcess.Options()
+        options.output = .pipe
+        let listener = try ChildProcess.spawn("/usr/bin/python3", ["-I", "-c", """
+        import socket, sys, time
+        held = []
+        for path in sys.argv[1:]:
+            s = socket.socket(socket.AF_UNIX); s.bind(path); s.listen(16); held.append(s)
+        print("ready", flush=True)
+        time.sleep(60)
+        """, agent, own], options: options)
+        defer { listener.signal(SIGKILL) }
+        var lines = listener.standardOutput.lines().makeAsyncIterator()
+        try #require(await lines.next() == "ready")
+        let probe = """
+        /usr/bin/python3 -I -c '
+        import socket, sys
+        def connect(path):
+            try:
+                s = socket.socket(socket.AF_UNIX); s.connect(path); return "open"
+            except Exception: return "closed"
+        print(" ".join(connect(path) for path in sys.argv[1:]))
+        ' '\(agent)' '\(alias)' '\(own)'
+        """
+        #expect(try await sandboxed(paths, config, probe, home: home.path) == "closed closed open")
+        config.allowsNetwork = false
+        #expect(try await sandboxed(paths, config, probe, home: home.path) == "closed closed open")
+        config.allowsNetwork = true
+
+        // 系统的 ssh-agent：ssh-add 连不上时退出码是 2（连上了是 0 或 1）
+        let launchd = try? await Shell.run("/bin/launchctl", ["getenv", "SSH_AUTH_SOCK"])
+        let socket = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"]
+            ?? launchd?.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let socket, !socket.isEmpty, FileManager.default.fileExists(atPath: socket) {
+            let output = try await sandboxed(paths, config, "/usr/bin/ssh-add -l >/dev/null 2>&1; echo $?",
+                                             environment: ["SSH_AUTH_SOCK": socket], home: home.path)
+            #expect(output == "2", "\(socket)")
+        }
+    }
+
+    @Test("环境变量：ssh-agent 的位置、MacBox 自己的启动信息不传给盒子里的 App；主目录、临时目录换成盒子里的")
+    func environment() {
+        let paths = BoxPaths(url: root.appending(path: "E.box"))
+        let environment = IsolatedSession.environment(for: paths, inherited: [
+            "SSH_AUTH_SOCK": "/private/var/run/com.apple.launchd.x/Listeners", "SSH_AGENT_PID": "42",
+            "XPC_SERVICE_NAME": "application.dev.pyke.MacBox", "__CFBundleIdentifier": "dev.pyke.MacBox",
+            "MACBOX_DATA_ROOT": "/tmp/data", "HOME": "/Users/me", "LANG": "zh_CN.UTF-8",
+        ])
+        #expect(environment == ["LANG": "zh_CN.UTF-8", "HOME": paths.home.path, "CFFIXED_USER_HOME": paths.home.path,
+                                "TMPDIR": paths.tmp.path + "/"])
     }
 
     @Test("盒子路径带引号和反斜杠时规则仍然有效")

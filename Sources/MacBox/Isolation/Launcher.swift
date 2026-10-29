@@ -122,17 +122,22 @@ actor Launcher {
             "MacBoxBoxID": config.id.uuidString,
             "MacBoxLauncherVersion": Self.version,
         ]
-        // 沿用原 App 的图标（.icns 或 Assets.car）
+        // 沿用原 App 的图标（.icns 或 Assets.car）。App 改得到它们：把图标换成指向 ~/.ssh 的链接的话，
+        // 跟随着克隆就是不在沙盒里的 MacBox 把盒子外的东西复制到了启动器里，而沙盒不挡读 ~/Applications。
+        // 所以只克隆盒子里的 App 目录下的普通文件，文件名里不许有 /（同 AppIcon.load）
         let app = paths.app(config)
         let appResources = app.appending(path: "Contents/Resources")
         let appInfo = NSDictionary(contentsOf: app.appending(path: "Contents/Info.plist")) as? [String: Any] ?? [:]
-        if var iconFile = appInfo["CFBundleIconFile"] as? String {
+        if var iconFile = appInfo["CFBundleIconFile"] as? String, !iconFile.isEmpty, !iconFile.contains("/") {
             if !iconFile.hasSuffix(".icns") { iconFile += ".icns" }
-            try? FileOps.clone(appResources.appending(path: iconFile), to: resources.appending(path: "AppIcon.icns"))
-            info["CFBundleIconFile"] = "AppIcon"
+            if (try? FileOps.cloneRegularFile(appResources.appending(path: iconFile), inside: paths.appDirectory,
+                                              to: resources.appending(path: "AppIcon.icns"))) != nil {
+                info["CFBundleIconFile"] = "AppIcon"
+            }
         }
-        if let iconName = appInfo["CFBundleIconName"] as? String {
-            try? FileOps.clone(appResources.appending(path: "Assets.car"), to: resources.appending(path: "Assets.car"))
+        if let iconName = appInfo["CFBundleIconName"] as? String,
+           (try? FileOps.cloneRegularFile(appResources.appending(path: "Assets.car"), inside: paths.appDirectory,
+                                          to: resources.appending(path: "Assets.car"))) != nil {
             info["CFBundleIconName"] = iconName
         }
         let plist = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)

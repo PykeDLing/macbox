@@ -466,7 +466,7 @@ private struct StrayRow: View {
                     if status == .adopted { Tag(text: L("已收进盒子", "Moved Into Box"), systemImage: "checkmark", tint: .green) }
                 }
                 Text(stray.keys.isEmpty ? L("没有设置项", "No keys")
-                                        : L("\(stray.keys.count) 项：", "\(stray.keys.count) keys: ") + stray.keys.joined(separator: L("、", ", ")))
+                                        : L("\(stray.keys.count) 项：", stray.keys.count == 1 ? "1 key: " : "\(stray.keys.count) keys: ") + stray.keys.joined(separator: L("、", ", ")))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(3)
                 if case .listedOnly(let reason) = status {
                     Text(reason).font(.caption).foregroundStyle(.secondary)

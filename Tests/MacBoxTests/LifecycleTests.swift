@@ -516,6 +516,61 @@ struct LifecycleTests {
         await store.box(id: config.id)?.syncLauncher().value
     }
 
+    @Test("启动器沿用图标时不跟随链接：App 把图标换成指向盒子外的链接，盒子外的东西不会被复制到启动器里",
+          .timeLimit(.minutes(1)))
+    func launcherIconDoesNotFollowLinks() async throws {
+        let fixture = LifecycleFixture()
+        let outside = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-launcher-\(UUID().uuidString)")
+        defer {
+            await fixture.cleanup()
+            for launcher in FileOps.contents(of: AppPaths.launchers) {
+                _ = try? await Shell.run(Shell.lsregister, ["-u", launcher.path])
+            }
+            try? FileOps.removeTree(AppPaths.launchers)
+            try? FileOps.removeTree(outside)
+        }
+        // 代表 ~/.ssh：盒子里的 App 读不到它
+        try AppPaths.ensure(outside)
+        try "secret".write(to: outside.appending(path: "id_ed25519"), atomically: true, encoding: .utf8)
+
+        let paths = try await fixture.makeBox("Icon", script: "exit 0\n")
+        let config = try paths.loadConfig()
+        let app = paths.app(config)
+        let resources = app.appending(path: "Contents/Resources")
+        try AppPaths.ensure(resources)
+        let infoURL = app.appending(path: "Contents/Info.plist")
+        var info = try #require(NSDictionary(contentsOf: infoURL) as? [String: Any])
+        info["CFBundleIconFile"] = "AppIcon"
+        info["CFBundleIconName"] = "AppIcon"
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0).write(to: infoURL)
+        try FileManager.default.createSymbolicLink(at: resources.appending(path: "AppIcon.icns"), withDestinationURL: outside)
+        try FileManager.default.createSymbolicLink(at: resources.appending(path: "Assets.car"),
+                                                   withDestinationURL: outside.appending(path: "id_ed25519"))
+
+        func installed() async throws -> (resources: URL, info: [String: Any]) {
+            try await Launcher.shared.install(paths: paths, config: config)
+            let launcher = try #require(FileOps.contents(of: AppPaths.launchers).first { Launcher.boxID(of: $0) == config.id.uuidString })
+            let info = try #require(NSDictionary(contentsOf: launcher.appending(path: "Contents/Info.plist")) as? [String: Any])
+            return (launcher.appending(path: "Contents/Resources"), info)
+        }
+
+        let linked = try await installed()
+        #expect(!FileOps.exists(linked.resources.appending(path: "AppIcon.icns")), "跟着链接把盒子外的文件夹复制了出来")
+        #expect(!FileOps.exists(linked.resources.appending(path: "Assets.car")), "跟着链接把盒子外的文件复制了出来")
+        #expect(linked.info["CFBundleIconFile"] == nil && linked.info["CFBundleIconName"] == nil, "没有图标就不写，用通用图标")
+
+        // 真的图标照常沿用
+        for name in ["AppIcon.icns", "Assets.car"] {
+            try FileOps.removeIfExists(resources.appending(path: name))
+            try name.write(to: resources.appending(path: name), atomically: true, encoding: .utf8)
+        }
+        let real = try await installed()
+        #expect(FileOps.regularFileContents(real.resources.appending(path: "AppIcon.icns")) == Data("AppIcon.icns".utf8))
+        #expect(FileOps.regularFileContents(real.resources.appending(path: "Assets.car")) == Data("Assets.car".utf8))
+        #expect(real.info["CFBundleIconFile"] as? String == "AppIcon")
+        #expect(real.info["CFBundleIconName"] as? String == "AppIcon")
+    }
+
     @Test("退出 MacBox：应用不肯退出时不强制结束，返回它们由用户决定；等待期间打开的不会启动；取消后照常", .timeLimit(.minutes(2)))
     func quitAllAsksInsteadOfKilling() async throws {
         let fixture = LifecycleFixture()

@@ -305,6 +305,53 @@ struct FileOpsTests {
         #expect(FileOps.regularFileContents(outside) == nil)
         #expect(FileOps.regularFileContents(root.appending(path: "missing")) == nil)
     }
+
+    @Test("只克隆 App 里的普通文件：最后一级、中间一级是指到外面的链接，或者是目录、FIFO 时都不克隆")
+    func cloneRegularFile() throws {
+        defer { cleanUp() }
+        let app = root.appending(path: "Box/App/Fake.app")
+        let resources = app.appending(path: "Contents/Resources")
+        try AppPaths.ensure(resources)
+        let icon = resources.appending(path: "AppIcon.icns")
+        try write("icon", icon)
+        let copies = root.appending(path: "Launcher")
+        try AppPaths.ensure(copies)
+        func copy(_ source: URL) -> URL? {
+            let destination = copies.appending(path: UUID().uuidString)
+            do {
+                try FileOps.cloneRegularFile(source, inside: root.appending(path: "Box/App"), to: destination)
+                return destination
+            } catch {
+                #expect(!FileManager.default.fileExists(atPath: destination.path), "失败时不留下目标")
+                return nil
+            }
+        }
+
+        let copied = try #require(copy(icon))
+        #expect(FileOps.regularFileContents(copied) == Data("icon".utf8))
+
+        // App 把图标换成指向盒子外的链接：文件（~/.zsh_history）、文件夹（~/.ssh）
+        let fileLink = resources.appending(path: "File.icns"), folderLink = resources.appending(path: "Folder.icns")
+        try FileManager.default.createSymbolicLink(at: fileLink, withDestinationURL: canary)
+        try FileManager.default.createSymbolicLink(at: folderLink, withDestinationURL: outside)
+        #expect(copy(fileLink) == nil)
+        #expect(copy(folderLink) == nil)
+        // 中间一级是链接：Resources 换成指向盒子外的文件夹
+        let linkedResources = app.appending(path: "Contents/Linked")
+        try FileManager.default.createSymbolicLink(at: linkedResources, withDestinationURL: outside)
+        #expect(copy(linkedResources.appending(path: "canary.txt")) == nil)
+        // 指向 App 里另一个文件的链接也不跟：只要普通文件
+        let inside = resources.appending(path: "Inside.icns")
+        try FileManager.default.createSymbolicLink(at: inside, withDestinationURL: icon)
+        #expect(copy(inside) == nil)
+
+        #expect(copy(resources) == nil, "目录不克隆")
+        let fifo = resources.appending(path: "Fifo.icns")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        #expect(copy(fifo) == nil, "FIFO 不克隆、不卡住")
+        #expect(copy(resources.appending(path: "Missing.icns")) == nil)
+        #expect(FileOps.contents(of: copies).count == 1, "只有那一份真图标")
+    }
 }
 
 extension FileOpsTests {

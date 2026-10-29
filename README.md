@@ -69,7 +69,7 @@ MacBox 让它们在一个隔离的“盒子”里运行——像普通 App 一�
 
 | 手段 | 作用 |
 | --- | --- |
-| Seatbelt 沙盒（`sandbox-exec`），子进程自动继承 | 写操作默认全部禁止，只放行盒子里 App 的主目录、App 本身、临时目录和你的「下载」文件夹（默认共享，App 能在里面新建、修改、删除文件；可在详情面板里按应用关闭），以及你在详情面板里给它选的可以写入的文件夹（选的时候解析成真实路径，之后不再解析：App 把文件夹换成指向别处的链接也写不到别处）。盒子里 MacBox 自己的记录（借出日志、本机设置的备份、钥匙串密码、还原点）App 既改不了也读不到。也禁止读取邮件、信息、Safari、Cookie、iCloud 云盘、其他 App 的数据（Application Support、容器、缓存、WebKit 网站数据），以及 SSH、GPG、AWS、Kubernetes 的密钥和 `~/.config`、`~/.netrc`、`~/.git-credentials`、`~/.docker` 等处命令行工具的凭证。禁止注册登录项和后台服务、发送通知、用 Apple 事件控制其他 App |
+| Seatbelt 沙盒（`sandbox-exec`），子进程自动继承 | 写操作默认全部禁止，只放行盒子里 App 的主目录、App 本身、临时目录和你的「下载」文件夹（默认共享，App 能在里面新建、修改、删除文件；可在详情面板里按应用关闭），以及你在详情面板里给它选的可以写入的文件夹（选的时候解析成真实路径，之后不再解析：App 把文件夹换成指向别处的链接也写不到别处）。盒子里 MacBox 自己的记录（借出日志、本机设置的备份、钥匙串密码、还原点）App 既改不了也读不到。也禁止读取邮件、信息、Safari、Cookie、iCloud 云盘、其他 App 的数据（Application Support、容器、缓存、WebKit 网站数据），以及 SSH、GPG、AWS、Kubernetes 的密钥和 `~/.config`、`~/.netrc`、`~/.git-credentials`、`~/.docker` 等处命令行工具的凭证。也连不上你主目录里其他程序的套接字（gpg-agent、1Password 的 SSH 代理、Docker 等）和系统的 ssh-agent，ssh-agent 的位置（`SSH_AUTH_SOCK`）也不传给 App：连上它们就能借用你的钥匙和身份。禁止注册登录项和后台服务、发送通知、用 Apple 事件控制其他 App |
 | 重定向主目录（`HOME` + `CFFIXED_USER_HOME`） | App 的 Application Support、Caches、Cookies 都落在盒子里 |
 | 每个盒子一个独立钥匙串 | 主目录里的 `login.keychain-db` 指向盒子钥匙串，凭证和设备 ID 不进你的「登录」钥匙串 |
 | 偏好设置“借出再收回” | cfprefsd 代写的 UserDefaults 沙盒挡不住，所以启动前把系统里这些域**整体替换**为盒子的内容，退出后完整收回、再把本机原来的内容整体换回。按事务处理：先写日志 `Prefs/.lease.json` 再动系统，中途失败立即回滚，MacBox 崩溃后下次启动按日志恢复 |

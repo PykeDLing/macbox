@@ -96,6 +96,13 @@ nonisolated enum WritableFolders {
         return check(folder, home: home, dataRoot: dataRoot) == nil ? folder : nil
     }
 
+    /// 被挡住的一次写入直接写在「下载」里（不共享「下载」时）：可以建议共享「下载」。
+    /// 写在「下载」的子文件夹里的不算，那些可以单独允许写入（见 folder(forBlockedWrite:)）
+    static func isDirectlyInDownloads(blockedWrite target: String, home: String = realHome) -> Bool {
+        let path = target.hasPrefix("~/") ? home + target.dropFirst(1) : target
+        return (path as NSString).deletingLastPathComponent == home + "/Downloads"
+    }
+
     /// 显示的路径：主目录写成 ~（导出、分享的报告里不带你的用户名）
     static func displayPath(_ path: String, home: String = realHome) -> String {
         path == home ? "~" : path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path

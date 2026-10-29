@@ -287,6 +287,28 @@ struct ReportTests {
         }
         #expect(report.programs.count == 1 && report.programs[0].count == 2)
         #expect(report.preferenceKeyCount == 1 && report.blockCount == 1)
+
+        // 概要的英文按单复数
+        report.fileTotals = FileTotals(created: 1)
+        report.strayPreferences = [StrayPreference(domain: "com.example.sdk", byHost: false, keys: ["a"])]
+        Localization.$testLanguage.withValue(.english) {
+            #expect(report.summaryLine == "1 file written · 1 setting changed · 1 preference file outside the box · 1 server contacted · "
+                + "1 program launched · 1 attempt blocked")
+            report.fileTotals = FileTotals(created: 2)
+            report.blocks[0].count = 3
+            #expect(report.summaryLine.hasPrefix("2 files written · "))
+            #expect(report.summaryLine.hasSuffix(" · 3 attempts blocked"))
+        }
+    }
+
+    @Test("以后的版本加的拦截类型认不出时算“其他”，整份报告照样读得出")
+    func unknownBlockKind() throws {
+        let json = #"{"kind":"readsHome","target":"~/dev/secret","count":2,"lastSeen":0}"#
+        let event = try JSONDecoder().decode(BlockEvent.self, from: Data(json.utf8))
+        #expect(event.kind == .other && event.target == "~/dev/secret" && event.count == 2)
+        let known = try JSONEncoder().encode(BlockEvent(kind: .privacyRead, subject: .sshAgent))
+        let decoded = try JSONDecoder().decode(BlockEvent.self, from: known)
+        #expect(decoded.kind == .privacyRead && decoded.subject == .sshAgent)
     }
 
     @Test("分享用的图片：固定宽度、2 倍分辨率的 PNG")
@@ -354,6 +376,25 @@ struct ReportTests {
         #expect(contacts.map(\.transport) == ["tcp", "tcp", "udp", "quic"])
         let selected = ConnectionMonitor.parse(",state,\nPython.32512,,\ntcp4 127.0.0.1:54433<->127.0.0.1:54432,Established,\n")
         #expect(selected.map(\.endpoint) == ["127.0.0.1:54432"] && selected.first?.process == "Python")
+        // 进程名带空格（Electron、Chromium 的 Helper 几乎都是），截断后还可能以空格结尾：不能当成连接行，
+        // 否则它的连接会记到上一个进程头上
+        let helpers = ConnectionMonitor.parse("""
+        ,state,
+        Claude.34960,,
+        tcp4 192.168.18.4:61190<->160.79.104.10:443,Established,
+        Claude Helper.34970,,
+        tcp4 192.168.18.4:61191<->34.36.57.103:443,Established,
+        Microsoft Edge .785,,
+        quic6 2001:db8::5.50001<->2606:4700::1.443,,
+        raw4 192.168.18.4:1<->192.168.18.1:1,,
+        """)
+        #expect(helpers.map(\.process) == ["Claude", "Claude Helper", "Microsoft Edge"])
+        #expect(helpers.map(\.endpoint) == ["160.79.104.10:443", "34.36.57.103:443", "[2606:4700::1]:443"])
+        // 截断的带空格的名字同样按 pid 换成完整的
+        let helper = ConnectionMonitor.parse(",state,\nQuarkCloudDrive .123,,\ntcp4 10.0.0.2:5<->1.2.3.4:443,Established,\n") {
+            $0 == 123 ? "QuarkCloudDrive Helper" : nil
+        }
+        #expect(helper.first?.process == "QuarkCloudDrive Helper")
         // nettop 截断的进程名按 pid 换成完整的
         let named = ConnectionMonitor.parse(",state,\ncom.apple.WebKi.4321,,\nquic4 10.0.0.2:5<->104.20.23.154:443,,\n") {
             $0 == 4321 ? "com.apple.WebKit.Networking" : nil
@@ -411,12 +452,26 @@ struct ReportTests {
         """))
         #expect(report?.process == "QuarkCloudDrive Helper (Alerts)" && report?.pid == 29782 && report?.target == "com.apple.usernoted.client")
 
-        typealias Parser = ViolationMonitor.Parser
-        #expect(Parser.networkEvent(operation: "network-outbound", target: "remote:*:443")?.kind == .network)
-        #expect(Parser.networkEvent(operation: "network-outbound", target: "remote:*:443")?.subject == .connect(port: 443))
-        #expect(Parser.networkEvent(operation: "network-outbound", target: "remote:203.0.113.9:80")?.target == "203.0.113.9:80")
-        #expect(Parser.networkEvent(operation: "network-outbound", target: "/private/var/run/mDNSResponder")?.subject == .nameLookup)
-        #expect(Parser.networkEvent(operation: "network-inbound", target: "local:*:8080")?.subject == .listen(port: 8080))
-        #expect(Parser.networkEvent(operation: "network-outbound", target: "/private/var/run/syslog") == nil, "规则没挡别的本地套接字")
+        func network(_ operation: String, _ target: String) -> BlockEvent? {
+            ViolationMonitor.Parser.networkEvent(operation: operation, target: target, home: "/Users/me")
+        }
+        #expect(network("network-outbound", "remote:*:443")?.kind == .network)
+        #expect(network("network-outbound", "remote:*:443")?.subject == .connect(port: 443))
+        #expect(network("network-outbound", "remote:203.0.113.9:80")?.target == "203.0.113.9:80")
+        #expect(network("network-outbound", "/private/var/run/mDNSResponder")?.subject == .nameLookup)
+        #expect(network("network-inbound", "local:*:8080")?.subject == .listen(port: 8080))
+        #expect(network("network-outbound", "/private/var/run/syslog") == nil, "规则没挡别的本地套接字")
+        // 联不联网都挡的：ssh-agent（以前在 /tmp、现在在 /var/run）、主目录里别的程序的套接字，算读取私人数据
+        for agent in ["/private/var/run/com.apple.launchd.KLS8JPY1mh/Listeners", "/private/tmp/com.apple.launchd.abc/Listeners"] {
+            #expect(network("network-outbound", agent).map { [$0.kind.rawValue, $0.target] } == ["privacyRead", "ssh-agent"], "\(agent)")
+        }
+        #expect(network("network-outbound", "/private/var/run/com.apple.launchd.x/y/Listeners") == nil)
+        #expect(network("network-outbound", "/Users/me/.docker/run/docker.sock").map { [$0.kind.rawValue, $0.target] }
+                == ["privacyRead", "/Users/me/.docker/run/docker.sock"])
+        #expect(network("network-outbound", "/Users/meme/x.sock") == nil, "不在主目录里")
+        #expect(network("network-inbound", "/Users/me/x.sock") == nil)
+        Localization.$testLanguage.withValue(.chinese) {
+            #expect(BlockEvent(kind: .privacyRead, subject: .sshAgent).targetText == "SSH 代理（ssh-agent）里你的钥匙")
+        }
     }
 }
