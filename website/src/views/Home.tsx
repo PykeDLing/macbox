@@ -88,8 +88,8 @@ const features: readonly {
     wide: true,
     title: ['沙盒挡住乱写', 'A sandbox against stray writes'],
     text: [
-      '写入默认全部禁止，只放行盒子里 App 的主目录、App 本身和临时目录；「下载」默认共享，可以在详情面板里按应用关闭。盒子里 MacBox 自己的记录（偏好设置的借出日志和本机设置备份、钥匙串密码、还原点），App 读不到也改不了。不能注册开机自启和后台服务、发通知、遥控其他 App。子进程自动继承。',
-      'Writes are denied except to the app’s home folder in the box, the app itself and temp folders. Downloads is shared by default, and you can turn that off for each app in the details panel. MacBox’s own records in the box — the preferences journal and the backup of your settings, the keychain password, restore points — can’t be read or changed by the app. No login items, background services, notifications or controlling other apps. Child processes inherit it all.',
+      '写入默认全部禁止，只放行盒子里 App 的主目录、App 本身和临时目录；「下载」默认共享，可以在详情面板里按应用关闭，也可以在那里给它加别的可以写入的文件夹，例如外接硬盘上的。盒子里 MacBox 自己的记录（偏好设置的借出日志和本机设置备份、钥匙串密码、还原点），App 读不到也改不了。不能注册开机自启和后台服务、发通知、遥控其他 App。子进程自动继承。',
+      'Writes are denied except to the app’s home folder in the box, the app itself and temp folders. Downloads is shared by default; in the details panel you can turn that off for each app, or add other folders it can write to, such as one on an external drive. MacBox’s own records in the box — the preferences journal and the backup of your settings, the keychain password, restore points — can’t be read or changed by the app. No login items, background services, notifications or controlling other apps. Child processes inherit it all.',
     ],
   },
   {
@@ -155,8 +155,8 @@ const features: readonly {
     tint: 'g2',
     title: ['添加前先检查', 'Checked before it runs'],
     text: [
-      '检查驱动、系统扩展、特权辅助程序和 Apple 公证，提前告诉你本机隔离装不装得下。',
-      'Looks for drivers, system extensions, privileged helpers and notarization, and tells you up front whether it fits.',
+      '检查驱动、系统扩展、特权辅助程序、苹果沙盒和 Apple 公证，提前告诉你本机隔离装不装得下。',
+      'Looks for drivers, system extensions, privileged helpers, the App Sandbox and notarization, and tells you up front whether it fits.',
     ],
   },
 ];
@@ -414,8 +414,8 @@ export default function Home({ locale }: { locale: Locale }) {
                 <h3>{t('删掉就干净', 'Delete it, clean')}</h3>
                 <p>
                   {t(
-                    '删除盒子，应用连同它的全部数据一起移到废纸篓，后悔了也能找回。「下载」默认共享，它存进那里的文件会保留；系统临时目录里的文件和少数收不进盒子的偏好设置也会留下。',
-                    'Delete the box and the app goes to the Trash together with all of its data — and you can still put it back. Downloads is shared by default, so files it saved there stay, as do system temp files and a few preferences that can’t be kept in the box.',
+                    '删除盒子，应用连同它的全部数据一起移到废纸篓，后悔了也能找回。「下载」默认共享，它存进那里的文件会保留，存进你给它的可以写入的文件夹里的也一样；系统临时目录里的文件和少数收不进盒子的偏好设置也会留下。',
+                    'Delete the box and the app goes to the Trash together with all of its data — and you can still put it back. Downloads is shared by default, so files it saved there stay, as do files in any folders you let it write to, system temp files and a few preferences that can’t be kept in the box.',
                   )}
                 </p>
               </div>
@@ -513,8 +513,8 @@ export default function Home({ locale }: { locale: Locale }) {
                   <dt>{t('适用', 'For')}</dt>
                   <dd>
                     {t(
-                      '需要驱动、系统服务、系统扩展的应用',
-                      'Apps that need drivers, system services or extensions',
+                      '需要驱动、系统服务、系统扩展的应用，自带苹果沙盒的应用',
+                      'Apps that need drivers, system services or extensions, and apps that use the App Sandbox',
                     )}
                   </dd>
                 </dl>
@@ -522,8 +522,8 @@ export default function Home({ locale }: { locale: Locale }) {
             </div>
             <p className="note reveal">
               {t(
-                '虚拟 Mac 不会默认安装。添加应用时检查到它需要驱动或系统扩展，或者运行时它被挡住了写系统目录、安装系统服务，MacBox 会建议你改用虚拟 Mac。安装包里只有驱动这类系统组件、没有 App 的，MacBox 会提出把它放进虚拟 Mac 安装。随时可以在详情面板里切换。',
-                'The Virtual Mac isn’t installed by default. If an app turns out to need a driver or system extension — at import or while running — MacBox suggests switching. For an installer with only drivers or other system components and no app, MacBox offers to install it in the Virtual Mac. You can change runtimes any time in the details panel.',
+                '虚拟 Mac 不会默认安装。添加应用时检查到它需要驱动或系统扩展，或者运行时它被挡住了写系统目录、安装系统服务，MacBox 会建议你改用虚拟 Mac。自带苹果沙盒的应用（App Store 上的都是，官网下载的也有一部分）套上 MacBox 的沙盒后一启动就会被系统结束，所以 MacBox 不在本机隔离里启动它们，只能用虚拟 Mac；它们本来就被苹果的沙盒关在自己的容器里。安装包里只有驱动这类系统组件、没有 App 的，MacBox 会提出把它放进虚拟 Mac 安装。随时可以在详情面板里切换。',
+                'The Virtual Mac isn’t installed by default. If an app turns out to need a driver or system extension — at import or while running — MacBox suggests switching. Apps that use Apple’s App Sandbox (every App Store app, and some downloads too) are ended by macOS as soon as they start inside MacBox’s sandbox, so MacBox won’t start them in Native Isolation; they need the Virtual Mac. Apple’s sandbox already confines them to their own containers. For an installer with only drivers or other system components and no app, MacBox offers to install it in the Virtual Mac. You can change runtimes any time in the details panel.',
               )}
             </p>
           </div>
@@ -577,8 +577,8 @@ export default function Home({ locale }: { locale: Locale }) {
               <li>
                 <strong>{t('运行报告是尽力而为', 'Run reports are best effort')}</strong>
                 {t(
-                  '：启动的程序、被拦下的行为、在共享的「下载」里写的文件来自系统日志，系统会限流，没有记录不代表没有发生。连接是定时看一眼得到的，很短的连接会漏掉；服务器名字来自反向解析，常常是云服务商的机器名；经由代理的连接只显示为连到本机上的代理。',
-                  ': launched programs, blocked attempts and files written to the shared Downloads folder come from the system log, which is rate-limited, so no entry doesn’t mean nothing happened. Connections are sampled periodically, so very short ones can be missed; server names come from reverse DNS and are often cloud providers’ machine names; connections through a proxy only show up as connections to the proxy on your Mac.',
+                  '：启动的程序、被拦下的行为、在共享的「下载」和可以写入的文件夹里写的文件来自系统日志，系统会限流，没有记录不代表没有发生。连接是定时看一眼得到的，很短的连接会漏掉；服务器名字来自反向解析，常常是云服务商的机器名；经由代理的连接只显示为连到本机上的代理。',
+                  ': launched programs, blocked attempts and files written to the shared Downloads folder or the folders it can write to come from the system log, which is rate-limited, so no entry doesn’t mean nothing happened. Connections are sampled periodically, so very short ones can be missed; server names come from reverse DNS and are often cloud providers’ machine names; connections through a proxy only show up as connections to the proxy on your Mac.',
                 )}
               </li>
               <li>

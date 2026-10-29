@@ -263,8 +263,8 @@ const systemNotes: Record<string, Pair> = {
 
 /** 报告记不全的地方（App 的 RunReport.caveats） */
 export const caveats: Pair = [
-  '说明：连接是定时看一眼得到的，很短的连接可能没看到；服务器名字来自反向解析，常常是云服务商的机器名；设置了代理时，经由代理的连接只显示为连到代理。启动的程序、被拦下的行为、在共享的「下载」里写的文件来自系统日志，系统繁忙时会漏记，「下载」里的文件也没有大小。系统共用的临时文件夹不在统计之内。',
-  'Notes: connections are sampled periodically, so very short ones may be missed; server names come from reverse DNS and are often cloud providers’ machine names; with a proxy, connections through it only show up as connections to the proxy. Program launches, blocked attempts and files written to the shared Downloads folder come from the system log and can be missed when the system is busy; Downloads files have no sizes. Shared system temporary folders aren’t counted.',
+  '说明：连接是定时看一眼得到的，很短的连接可能没看到；服务器名字来自反向解析，常常是云服务商的机器名；设置了代理时，经由代理的连接只显示为连到代理。启动的程序、被拦下的行为、在共享的「下载」和可以写入的文件夹里写的文件来自系统日志，系统繁忙时会漏记，这些文件也没有大小。系统共用的临时文件夹不在统计之内。',
+  'Notes: connections are sampled periodically, so very short ones may be missed; server names come from reverse DNS and are often cloud providers’ machine names; with a proxy, connections through it only show up as connections to the proxy. Program launches, blocked attempts and files written to the shared Downloads folder or the folders it can write to come from the system log and can be missed when the system is busy, and those files have no sizes. Shared system temporary folders aren’t counted.',
 ];
 
 /** “拷贝文字”拷贝的 Markdown，格式照着 App 的 RunReport.markdown()，开头注明是网页上的演示 */
