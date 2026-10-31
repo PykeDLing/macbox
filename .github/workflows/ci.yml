@@ -1,0 +1,54 @@
+name: CI
+
+# 编译 App 并跑全部测试。网站有自己的工作流（pages.yml）；发布前 release.yml 也调用这里
+on:
+  push:
+    branches: ['**']
+    paths-ignore:
+      - 'website/**'
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+      - '.github/workflows/release.yml'
+      - '.github/release-notes.md'
+  pull_request:
+    paths-ignore:
+      - 'website/**'
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+      - '.github/workflows/release.yml'
+      - '.github/release-notes.md'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# 组名写死成 ci-：被 release.yml 调用时 github.workflow 是调用方的名字，和它的组重名会互相等待
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # 本仓库分支上的 PR 推送时已经跑过，只给来自 fork 的 PR 再跑一次
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    # 项目要 Swift 6.4（Xcode 27），macos-26 镜像上只有 Xcode 26。xcode-27 镜像基于 macOS 27，目前是预览
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      # build.sh 直接调用 swiftc，Package.swift 给 swift test 用。两边的编译选项是手写同步的，都编一遍才看得出哪边漏改
+      - name: Build app
+        run: ./build.sh release
+      # 测试用的是真实的钥匙串、系统日志、sandbox-exec、hdiutil，并行时按时间判断的测试会失败。
+      # 设置了 MACBOX_DATA_ROOT，生命周期、守卫、会话这些测试才运行
+      - name: Test
+        run: |
+          MACBOX_DATA_ROOT=$(mktemp -d "$RUNNER_TEMP/macbox.XXXXXX")
+          export MACBOX_DATA_ROOT
+          swift test --no-parallel

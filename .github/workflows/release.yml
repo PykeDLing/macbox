@@ -1,0 +1,85 @@
+name: Release
+
+# 推送 v<版本> 标签时：核对版本号 → 跑 CI → 打包 dmg → 生成构建来源证明 → 建 Release 草稿，上传 dmg 和 .sha256。
+# 草稿的说明从 .github/release-notes.md 生成，在 GitHub 上补上这一版的变化后手动发布。
+# 已经有这个标签的草稿时（比如先写好了说明），只替换它的文件；已经发布的不动。
+# 手动运行（workflow_dispatch）只测试和打包，dmg 留在这次运行的产物里，不生成证明、不建 Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: read
+        run: |
+          version=$(python3 -c 'import plistlib; print(plistlib.load(open("Resources/Info.plist", "rb"))["CFBundleShortVersionString"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::标签是 $GITHUB_REF_NAME，但 Info.plist 里的版本号是 $version"
+            exit 1
+          fi
+
+  test:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: [version, test]
+    runs-on: xcode-27
+    timeout-minutes: 20
+    permissions:
+      contents: write # 建 Release、上传文件
+      id-token: write # 构建来源证明
+      attestations: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Package
+        run: |
+          xcodebuild -version
+          ./scripts/package-dmg.sh
+      - name: Attest build provenance
+        if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/MacBox-${{ env.VERSION }}.dmg
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MacBox-${{ env.VERSION }}
+          path: |
+            dist/MacBox-${{ env.VERSION }}.dmg
+            dist/MacBox-${{ env.VERSION }}.dmg.sha256
+          if-no-files-found: error
+      - name: Create draft release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          files=("dist/MacBox-$VERSION.dmg" "dist/MacBox-$VERSION.dmg.sha256")
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != true ]; then
+              echo "::error::$TAG 已经发布了，不替换它的文件"
+              exit 1
+            fi
+            gh release upload "$TAG" "${files[@]}" --clobber
+          else
+            sed "s/{{VERSION}}/$VERSION/g" .github/release-notes.md > "$RUNNER_TEMP/notes.md"
+            gh release create "$TAG" "${files[@]}" --draft --verify-tag --title "MacBox $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          echo "草稿：$(gh release view "$TAG" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"
