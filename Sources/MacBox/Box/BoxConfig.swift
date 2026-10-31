@@ -8,13 +8,11 @@ nonisolated enum Runtime: String, Codable, CaseIterable, Identifiable, Sendable 
     case virtualMac
 
     var id: String { rawValue }
-    var title: String { self == .isolated ? L("本机隔离", "Native Isolation") : L("虚拟 Mac", "Virtual Mac") }
+    var title: String { self == .isolated ? String(localized: "本机隔离") : String(localized: "虚拟 Mac") }
     var summary: String {
         switch self {
-        case .isolated: L("像普通 App 一样运行，写下的文件、设置和钥匙串都收在 MacBox 里，删除即清空。",
-                          "Runs like a regular app. Files, settings and keychain items it writes stay inside MacBox and are gone when you delete it.")
-        case .virtualMac: L("在一台独立的虚拟 Mac 里运行，与本机完全隔开。兼容性最好，但占用约 30 GB、启动较慢。",
-                            "Runs in a separate virtual Mac, fully walled off from this Mac. Best compatibility, but takes about 30 GB and starts more slowly.")
+        case .isolated: String(localized: "像普通 App 一样运行，写下的文件、设置和钥匙串都收在 MacBox 里，删除即清空。")
+        case .virtualMac: String(localized: "在一台独立的虚拟 Mac 里运行，与本机完全隔开。兼容性最好，但占用约 30 GB、启动较慢。")
         }
     }
 }
@@ -48,16 +46,13 @@ nonisolated struct CompatibilityIssue: Codable, Hashable, Identifiable, Sendable
         severity = code.severity
         self.code = code
         self.source = source
-        title = code.title.0
-        detail = code.detail(source: source).0
+        title = code.title(bundle: .simplifiedChinese)
+        detail = code.detail(source: source, bundle: .simplifiedChinese)
     }
 
-    var localizedTitle: String { code.map { L($0.title.0, $0.title.1) } ?? title }
+    var localizedTitle: String { code?.title() ?? title }
 
-    var localizedDetail: String {
-        guard let text = code?.detail(source: source) else { return detail }
-        return L(text.0, text.1)
-    }
+    var localizedDetail: String { code?.detail(source: source) ?? detail }
 }
 
 nonisolated extension CompatibilityIssue.Code {
@@ -69,61 +64,54 @@ nonisolated extension CompatibilityIssue.Code {
         }
     }
 
-    /// 标题的中文和英文
-    var title: (String, String) {
+    /// 标题。bundle 是取译文的地方：界面上用 .main，存进 box.json 的中文用 .simplifiedChinese
+    func title(bundle: Bundle = .main) -> String {
         switch self {
-        case .privilegedHelper: ("需要管理员权限的辅助程序", "Privileged helper tool")
-        case .systemService: ("系统级后台服务", "System-wide background service")
-        case .systemExtension: ("系统扩展或内核扩展", "System or kernel extension")
-        case .driver: ("硬件或音频驱动", "Hardware or audio driver")
-        case .loginItem: ("开机自启动", "Launch at login")
-        case .finderIntegration: ("访达集成", "Finder integration")
-        case .networkExtension: ("网络扩展", "Network extension")
-        case .appSandbox: ("自带苹果沙盒", "Uses the App Sandbox")
-        case .notarized: ("已通过 Apple 公证检查", "Passed Apple notarization check")
-        case .notNotarized: ("未通过 Apple 公证检查", "Failed Apple notarization check")
-        case .installerScriptsSkipped: ("安装脚本已跳过", "Installer scripts skipped")
+        case .privilegedHelper: String(localized: "需要管理员权限的辅助程序", bundle: bundle)
+        case .systemService: String(localized: "系统级后台服务", bundle: bundle)
+        case .systemExtension: String(localized: "系统扩展或内核扩展", bundle: bundle)
+        case .driver: String(localized: "硬件或音频驱动", bundle: bundle)
+        case .loginItem: String(localized: "开机自启动", bundle: bundle)
+        case .finderIntegration: String(localized: "访达集成", bundle: bundle)
+        case .networkExtension: String(localized: "网络扩展", bundle: bundle)
+        case .appSandbox: String(localized: "自带苹果沙盒", bundle: bundle)
+        case .notarized: String(localized: "已通过 Apple 公证检查", bundle: bundle)
+        case .notNotarized: String(localized: "未通过 Apple 公证检查", bundle: bundle)
+        case .installerScriptsSkipped: String(localized: "安装脚本已跳过", bundle: bundle)
         }
     }
 
-    /// 说明的中文和英文。公证检查的两条带上 spctl 给出的来源：认得出的固定说法换成两种语言（见 spctlSource）；
+    /// 说明。公证检查的两条带上 spctl 给出的来源：认得出的固定说法换成界面语言（见 spctlSource）；
     /// 通过时的来源多半是开发者证书名（origin），专有名词，原样显示；没通过、又认不出的不显示英文原文
-    func detail(source: String?) -> (String, String) {
-        let known = source.flatMap(Self.spctlSource)
-        let rejection = known ?? ("签名没有通过检查", "The signature didn’t pass the check")
+    func detail(source: String?, bundle: Bundle = .main) -> String {
+        let known = source.flatMap { Self.spctlSource($0, bundle: bundle) }
+        let rejection = known ?? String(localized: "签名没有通过检查", bundle: bundle)
         return switch self {
-        case .privilegedHelper: ("会以 root 身份在系统里安装常驻服务，本机隔离无法容纳。",
-                                 "Installs a resident service that runs as root, which Native Isolation can’t contain.")
-        case .systemService: ("会注册开机即运行的系统服务。", "Registers a system service that runs at startup.")
-        case .systemExtension: ("需要加载到系统内核或系统扩展框架中。",
-                                "Needs to be loaded into the kernel or the system extensions framework.")
-        case .driver: ("驱动需要安装到系统目录。", "Drivers must be installed into system folders.")
-        case .loginItem: ("自启动项会被阻止，只有你打开时它才运行。", "Login items are blocked; it only runs when you open it.")
-        case .finderIntegration: ("同步状态图标、右键菜单等访达扩展不可用。",
-                                  "Finder extensions such as sync status badges and context menu items won’t work.")
-        case .networkExtension: ("VPN、代理等网络扩展需要系统级安装。",
-                                 "Network extensions such as VPNs and proxies require a system-wide install.")
-        case .appSandbox: ("它已经被苹果的沙盒关在自己的容器里，读不到你的文稿和其他 App 的数据。本机隔离装不下它：套上 MacBox 的沙盒后，它一启动就会被系统结束。要完全隔开，请改用虚拟 Mac。",
-                           "Apple’s sandbox already confines it to its own container, where it can’t read your documents or other apps’ data. Native Isolation can’t hold it: inside MacBox’s sandbox, macOS ends it as soon as it starts. To wall it off completely, use Virtual Mac.")
-        case .notarized: known ?? source.map { ($0, $0) } ?? ("来源已验证", "Source verified")
-        case .notNotarized: ("\(rejection.0)。打开时 macOS 会询问你是否信任它，请确认来源可靠。",
-                             "\(rejection.1). macOS will ask whether you trust it when you open it; make sure it comes from a source you trust.")
-        case .installerScriptsSkipped: ("安装包带有安装脚本（通常用于安装后台服务或驱动），MacBox 没有执行它们。功能异常时请改用虚拟 Mac。",
-                                        "The package contains installer scripts (usually for installing background services or drivers), which MacBox didn’t run. If something doesn’t work, switch to Virtual Mac.")
+        case .privilegedHelper: String(localized: "会以 root 身份在系统里安装常驻服务，本机隔离无法容纳。", bundle: bundle)
+        case .systemService: String(localized: "会注册开机即运行的系统服务。", bundle: bundle)
+        case .systemExtension: String(localized: "需要加载到系统内核或系统扩展框架中。", bundle: bundle)
+        case .driver: String(localized: "驱动需要安装到系统目录。", bundle: bundle)
+        case .loginItem: String(localized: "自启动项会被阻止，只有你打开时它才运行。", bundle: bundle)
+        case .finderIntegration: String(localized: "同步状态图标、右键菜单等访达扩展不可用。", bundle: bundle)
+        case .networkExtension: String(localized: "VPN、代理等网络扩展需要系统级安装。", bundle: bundle)
+        case .appSandbox: String(localized: "它已经被苹果的沙盒关在自己的容器里，读不到你的文稿和其他 App 的数据。本机隔离装不下它：套上 MacBox 的沙盒后，它一启动就会被系统结束。要完全隔开，请改用虚拟 Mac。", bundle: bundle)
+        case .notarized: known ?? source ?? String(localized: "来源已验证", bundle: bundle)
+        case .notNotarized: String(localized: "\(rejection)。打开时 macOS 会询问你是否信任它，请确认来源可靠。", bundle: bundle)
+        case .installerScriptsSkipped: String(localized: "安装包带有安装脚本（通常用于安装后台服务或驱动），MacBox 没有执行它们。功能异常时请改用虚拟 Mac。", bundle: bundle)
         }
     }
 
-    /// spctl 给出的来源（source=…）是英文的固定说法，换成两种语言；认不出的为 nil
-    static func spctlSource(_ source: String) -> (String, String)? {
+    /// spctl 给出的来源（source=…）是英文的固定说法，换成界面语言；认不出的为 nil
+    static func spctlSource(_ source: String, bundle: Bundle = .main) -> String? {
         switch source.lowercased() {
-        case "no usable signature": ("没有可用的签名", "No usable signature")
-        case "unnotarized developer id": ("有开发者签名，但没有经过公证", "Signed by a developer but not notarized")
-        case "notarized developer id": ("已公证的开发者签名", "Notarized developer signature")
-        case "developer id": ("开发者签名", "Developer ID signature")
-        case "apple system": ("苹果系统软件", "Apple system software")
-        case "mac app store": ("来自 Mac App Store", "From the Mac App Store")
-        case "explicit preference": ("你在系统设置里允许过", "Allowed by you in System Settings")
-        case "obsolete resource envelope": ("签名格式过旧", "Outdated signature format")
+        case "no usable signature": String(localized: "没有可用的签名", bundle: bundle)
+        case "unnotarized developer id": String(localized: "有开发者签名，但没有经过公证", bundle: bundle)
+        case "notarized developer id": String(localized: "已公证的开发者签名", bundle: bundle)
+        case "developer id": String(localized: "开发者签名", bundle: bundle)
+        case "apple system": String(localized: "苹果系统软件", bundle: bundle)
+        case "mac app store": String(localized: "来自 Mac App Store", bundle: bundle)
+        case "explicit preference": String(localized: "你在系统设置里允许过", bundle: bundle)
+        case "obsolete resource envelope": String(localized: "签名格式过旧", bundle: bundle)
         default: nil
         }
     }

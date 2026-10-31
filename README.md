@@ -50,7 +50,7 @@ MacBox 让它们在隔离的“盒子”里运行：有自己的窗口，在程�
 - **详情面板**：兼容性检查、运行报告、运行环境、联网开关、数据和还原点都在这里
 - **可以写入的文件夹**：应用默认只能写盒子和「下载」。要让它存到别的文件夹或外接硬盘，在详情面板 › 文件 里添加，重新打开应用后生效
 - **退出**：「退出」和 ⌘Q 一样，应用可以先问你要不要存储；几秒后还没退出，旁边才会出现「强制退出」
-- **语言**：在 设置 › 语言 里切换，默认跟随系统
+- **语言**：在 设置 › 语言 里切换，默认跟随系统；和 Apple 自己的 App 一样，退出并重新打开 MacBox 后生效
 
 ## 两种运行环境
 
@@ -102,6 +102,7 @@ MACBOX_DATA_ROOT=$(mktemp -d) swift test --no-parallel  # 测试，约四分钟
 
 - `build.sh` 直接调用 `swiftc` 并做带 `com.apple.security.virtualization` entitlement 的 ad-hoc 签名；`Package.swift` 给 Xcode 和 `swift test` 用。两边的编译选项要保持一致
 - 测试（Swift Testing）会真实地启动沙盒进程、创建钥匙串、读系统日志、挂载 dmg、读写偏好设置，但只用临时目录和 `dev.macboxtest.` 开头的域。生命周期测试只在设置了 `MACBOX_DATA_ROOT` 时运行；必须加 `--no-parallel`，并行时按时间判断的测试会失败
+- 界面文字用 String Catalog：代码里写简体中文原文（视图里 `Text("添加应用")`，别处 `String(localized: "添加应用")`），英文译文和单复数在 `Resources/Localizable.xcstrings`。`./build.sh` 会把新用到的文字同步进去，在 Xcode 里打开它补上英文；测试会检查每句都有译文
 - 不碰真实数据地手动试用：`open -n build/MacBox.app --env MACBOX_DATA_ROOT=/tmp/macbox-test`
 - 版本号在 `Resources/Info.plist`；`Resources/icon/make_icns.sh` 从原图生成图标；网站在 [`website/`](website/README.md)
 - CI：推送和 PR 都会编译 App、跑全部测试（[ci.yml](.github/workflows/ci.yml)）

@@ -22,7 +22,7 @@ struct MacBoxApp: App {
         }
 
         // 虚拟 Mac 也在数据目录里：另一个 MacBox 管理着时，不能在这里再启动同一台
-        Window(Text(L("虚拟 Mac", "Virtual Mac")), id: WindowID.virtualMac.rawValue) {
+        Window(Text("虚拟 Mac"), id: WindowID.virtualMac.rawValue) {
             if store.managesBoxes { VirtualMacWindow() } else { NotManagingView() }
         }
         .environment(store)
@@ -38,11 +38,11 @@ private struct MacBoxCommands: Commands {
     var body: some Commands {
         // 设置在主窗口侧边栏里，⌘, 直接切过去
         CommandGroup(replacing: .appSettings) {
-            Button(L("设置…", "Settings…")) { store.show(.settings) }
+            Button("设置…") { store.show(.settings) }
                 .keyboardShortcut(",")
         }
         CommandGroup(replacing: .newItem) {
-            Button(L("添加应用…", "Add App…")) { importApps?() }
+            Button("添加应用…") { importApps?() }
                 .keyboardShortcut("o")
                 .disabled(importApps == nil)
         }
@@ -171,10 +171,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 虚拟 Mac 正在设置：退出会中断设置，先问
     private func confirmCancellingSetup() -> Bool {
         let alert = NSAlert()
-        alert.messageText = L("要取消虚拟 Mac 的设置并退出吗？", "Cancel the Virtual Mac setup and quit?")
-        alert.informativeText = L("设置会中断，下次需要重新开始。", "Setup will stop, and you’ll need to start it again next time.")
-        alert.addButton(withTitle: L("继续设置", "Continue Setup"))
-        let quit = alert.addButton(withTitle: L("取消设置并退出", "Cancel Setup and Quit"))
+        alert.messageText = String(localized: "要取消虚拟 Mac 的设置并退出吗？")
+        alert.informativeText = String(localized: "设置会中断，下次需要重新开始。")
+        alert.addButton(withTitle: String(localized: "继续设置"))
+        let quit = alert.addButton(withTitle: String(localized: "取消设置并退出"))
         quit.hasDestructiveAction = true
         NSApp.activate()
         return alert.runModal() == .alertSecondButtonReturn
@@ -196,12 +196,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let names = boxes.map(\.config.name)
         let alert = NSAlert()
         alert.messageText = names.count == 1
-            ? L("「\(names[0])」没有退出", "“\(names[0])” didn’t quit")
-            : L("\(names.count) 个应用没有退出", "\(names.count) apps didn’t quit")
-        alert.informativeText = L("\(BoxStore.chineseList(names))可能在等你存储文稿，或者没有响应。可以切过去处理后再退出 MacBox；强制退出会丢失没有存储的内容。",
-                                  "\(BoxStore.englishList(names)) may be waiting for you to save changes, or may not be responding. You can switch to \(names.count == 1 ? "it" : "them") and quit MacBox again later. If you force \(names.count == 1 ? "it" : "them") to quit, any unsaved changes will be lost.")
-        alert.addButton(withTitle: L("取消", "Cancel"))
-        let force = alert.addButton(withTitle: L("强制退出并退出 MacBox", "Force Quit and Quit MacBox"))
+            ? String(localized: "「\(names[0])」没有退出")
+            : String(localized: "\(names.count) 个应用没有退出")
+        let list = quotedList(names)
+        // 英文按一个还是几个变化，中文多个时说“都”
+        alert.informativeText = names.count == 1
+            ? String(localized: "\(list)可能在等你存储文稿，或者没有响应。可以切过去处理后再退出 MacBox；强制退出会丢失没有存储的内容。")
+            : String(localized: "\(list)可能都在等你存储文稿，或者没有响应。可以切过去处理后再退出 MacBox；强制退出会丢失没有存储的内容。")
+        alert.addButton(withTitle: String(localized: "取消"))
+        let force = alert.addButton(withTitle: String(localized: "强制退出并退出 MacBox"))
         force.hasDestructiveAction = true
         return alert.runModal() == .alertSecondButtonReturn
     }
@@ -209,12 +212,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 虚拟 Mac 睡不了：强制关机再退出，还是取消退出
     private func confirmForceStop(_ vm: VirtualMac) -> Bool {
         let alert = NSAlert()
-        alert.messageText = L("虚拟 Mac 无法进入睡眠", "The Virtual Mac couldn’t go to sleep")
-        alert.informativeText = [vm.lastError, L("强制关机会丢失虚拟 Mac 里没有存储的内容。",
-                                                 "If you force it to shut down, any unsaved changes in the Virtual Mac will be lost.")]
+        alert.messageText = String(localized: "虚拟 Mac 无法进入睡眠")
+        alert.informativeText = [vm.lastError, String(localized: "强制关机会丢失虚拟 Mac 里没有存储的内容。")]
             .compactMap { $0 }.joined(separator: "\n\n")
-        alert.addButton(withTitle: L("取消", "Cancel"))
-        let force = alert.addButton(withTitle: L("强制关机并退出 MacBox", "Force Shut Down and Quit MacBox"))
+        alert.addButton(withTitle: String(localized: "取消"))
+        let force = alert.addButton(withTitle: String(localized: "强制关机并退出 MacBox"))
         force.hasDestructiveAction = true
         NSApp.activate()
         return alert.runModal() == .alertSecondButtonReturn

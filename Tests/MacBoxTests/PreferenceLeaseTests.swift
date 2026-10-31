@@ -300,7 +300,7 @@ struct PreferenceLeaseTests {
         let error = await #expect(throws: (any Error).self) { try await lease().checkOut() }
         let message = error?.localizedDescription ?? ""
         #expect(message.contains(domain))
-        #expect(message.contains(L("存回盒子", "back to the box")), "要说明卡在哪一步：\(message)")
+        #expect(message.contains("存回盒子"), "要说明卡在哪一步：\(message)")
         #expect(lease().isOutstanding, "失败时不能丢掉日志和本机设置的备份")
         #expect(await systemRead(domain) == ["who": "box-changed"])
 

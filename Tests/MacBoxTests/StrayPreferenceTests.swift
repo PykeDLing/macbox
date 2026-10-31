@@ -164,19 +164,15 @@ struct StrayPreferenceTests {
         let legacy = try #require(loaded.first { $0.appName == "Old" })
         #expect(legacy.strayPreferences == nil && legacy.files == [])
 
-        Localization.$testLanguage.withValue(.chinese) {
-            let text = report.markdown()
-            for expected in ["## 可能属于这个应用、但写在了盒子外的设置", "- `\(sdk)`", "`deviceId`", "- `\(app)`（仅限本机）"] {
-                #expect(text.contains(expected), "\(expected)")
-            }
-            #expect(report.summaryLine.contains("2 个设置文件写在盒子外"))
-            #expect(legacy.markdown().contains("旧版 MacBox 的报告没有这一项。"))
-            #expect(!legacy.summaryLine.contains("盒子外"))
+        let text = report.markdown()
+        for expected in ["## 可能属于这个应用、但写在了盒子外的设置", "- `\(sdk)`", "`deviceId`", "- `\(app)`（仅限本机）"] {
+            #expect(text.contains(expected), "\(expected)")
         }
-        Localization.$testLanguage.withValue(.english) {
-            #expect(report.markdown().contains("- `\(app)` (this Mac only)"))
-            #expect(report.summaryLine.contains("2 preference files outside the box"))
-        }
+        #expect(report.summaryLine.contains("2 个设置文件写在盒子外"))
+        #expect(legacy.markdown().contains("旧版 MacBox 的报告没有这一项。"))
+        #expect(!legacy.summaryLine.contains("盒子外"))
+        #expect(English.text("（仅限本机）") == " (this Mac only)")
+        #expect(English.text("\(2) 个设置文件写在盒子外") == "2 preference files outside the box")
     }
 
     @Test("报告页每一项的状态：仅限本机的、整个厂商的名字只列出；在借出范围里的是已收进盒子")
@@ -244,13 +240,13 @@ struct StrayPreferenceTests {
         }
         #expect(await refusal(strays: []).contains(sdk))
         #expect(await refusal().contains("\(sdk).native"), "运行前就有的子域是本机的设置，不能收进盒子")
-        #expect(await refusal("dev.macboxtest").contains(L("厂商", "vendor")))
+        #expect(await refusal("dev.macboxtest").contains("厂商"))
         #expect(await refusal(strays: [sdk, "\(sdk).native"], installed: ["\(sdk).helper"]).contains("\(sdk).helper"))
-        #expect(await refusal(strays: [sdk, "\(sdk).native"], otherBoxes: [["\(sdk).native"]]).contains(L("另一个盒子", "another box")))
+        #expect(await refusal(strays: [sdk, "\(sdk).native"], otherBoxes: [["\(sdk).native"]]).contains("另一个盒子"))
         // 借出没收回
         try saveBox(app, ["who": "box"])
         try await lease([app]).checkIn()
-        #expect(await refusal(strays: [sdk, "\(sdk).native"]).contains(L("没收回", "returned")))
+        #expect(await refusal(strays: [sdk, "\(sdk).native"]).contains("没收回"))
         try await lease([app]).checkOut()
 
         #expect(systemRead(sdk) == ["deviceId": "from-run"])

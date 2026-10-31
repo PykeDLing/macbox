@@ -293,7 +293,7 @@ final class IsolatedSession {
             try AppLock.unlock(app)
             guard access(executable, X_OK) == 0 else {
                 let reason = String(cString: strerror(errno)), name = (executable as NSString).lastPathComponent
-                throw MacBoxError(L("无法运行 App 的主程序「\(name)」：\(reason)", "Couldn’t run the app’s executable “\(name)”: \(reason)"))
+                throw MacBoxError(String(localized: "无法运行 App 的主程序「\(name)」：\(reason)"))
             }
         } catch {
             try? AppLock.lock(app)
@@ -320,14 +320,12 @@ final class IsolatedSession {
     nonisolated static func checkLayout(_ paths: BoxPaths, app: URL) throws {
         if let replaced = paths.skeleton.first(where: { isSymlink($0.path) }) {
             let name = replaced.lastPathComponent
-            throw MacBoxError(L("盒子里的「\(name)」文件夹被换成了指向别处的链接。为了不改动盒子以外的文件，这个应用不会打开。可以删除它再重新添加。",
-                                "The “\(name)” folder in this box was replaced with a link to another location. To avoid changing files outside the box, the app won’t open. Try deleting it and adding it again."))
+            throw MacBoxError(String(localized: "盒子里的「\(name)」文件夹被换成了指向别处的链接。为了不改动盒子以外的文件，这个应用不会打开。可以删除它再重新添加。"))
         }
         // App 不存在时由读取 App 信息的那一步报告
         let folder = FileOps.realPath(paths.url) + "/" + paths.appDirectory.lastPathComponent + "/"
         guard !FileManager.default.fileExists(atPath: app.path) || FileOps.realPath(app).hasPrefix(folder) else {
-            throw MacBoxError(L("盒子里的 App 被换成了指向别处的链接。为了不改动盒子以外的文件，这个应用不会打开。可以删除它再重新添加。",
-                                "The app in this box was replaced with a link to another location. To avoid changing files outside the box, the app won’t open. Try deleting it and adding it again."))
+            throw MacBoxError(String(localized: "盒子里的 App 被换成了指向别处的链接。为了不改动盒子以外的文件，这个应用不会打开。可以删除它再重新添加。"))
         }
     }
 
@@ -393,17 +391,14 @@ final class IsolatedSession {
         let name = executable.lastPathComponent
         var info = stat()
         guard stat(executable.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG else {
-            throw MacBoxError(L("找不到 App 的主程序「\(name)」，App 可能已损坏。可以删除它再重新添加。",
-                                "The app’s executable “\(name)” is missing. The app may be damaged. Try deleting it and adding it again."))
+            throw MacBoxError(String(localized: "找不到 App 的主程序「\(name)」，App 可能已损坏。可以删除它再重新添加。"))
         }
         // 上锁的 App 没有执行权限（启动前才解锁），按内容判断解锁后能不能执行
         guard access(executable.path, X_OK) == 0 || AppLock.looksExecutable(executable.path) else {
-            throw MacBoxError(L("App 的主程序「\(name)」不是可以运行的程序，App 可能已损坏。",
-                                "The app’s executable “\(name)” isn’t a program that can run. The app may be damaged."))
+            throw MacBoxError(String(localized: "App 的主程序「\(name)」不是可以运行的程序，App 可能已损坏。"))
         }
         if let interpreter = interpreter(of: executable), access(interpreter, X_OK) != 0 {
-            throw MacBoxError(L("App 的主程序是脚本，需要「\(interpreter)」才能运行，但这台 Mac 上没有它。",
-                                "The app’s executable is a script that needs “\(interpreter)” to run, but it isn’t on this Mac."))
+            throw MacBoxError(String(localized: "App 的主程序是脚本，需要「\(interpreter)」才能运行，但这台 Mac 上没有它。"))
         }
     }
 
@@ -412,8 +407,7 @@ final class IsolatedSession {
     /// 每次启动前按盒子里现在的 App 判断：App 可能在盒子里更新过，box.json 里记的兼容性问题不一定是现在的
     nonisolated static func refuseAppSandbox(_ app: URL, name: String) throws {
         guard AppInspector.usesAppSandbox(app) else { return }
-        throw MacBoxError(L("「\(name)」自带苹果沙盒，本机隔离装不下它：套上 MacBox 的沙盒后，它一启动就会被系统结束。它已经被苹果的沙盒关在自己的容器里；要完全隔开，请在详情面板里改用虚拟 Mac。",
-                            "“\(name)” uses the App Sandbox, which Native Isolation can’t hold: inside MacBox’s sandbox, macOS ends it as soon as it starts. Apple’s sandbox already confines it to its own container; to wall it off completely, switch it to Virtual Mac in its details."))
+        throw MacBoxError(String(localized: "「\(name)」自带苹果沙盒，本机隔离装不下它：套上 MacBox 的沙盒后，它一启动就会被系统结束。它已经被苹果的沙盒关在自己的容器里；要完全隔开，请在详情面板里改用虚拟 Mac。"))
     }
 
     /// #! 脚本第一行指定的解释器
@@ -447,7 +441,7 @@ final class IsolatedSession {
                     if isEmptyFolder(downloads) {
                         try manager.removeItem(at: downloads)
                     } else {
-                        try manager.moveItem(at: downloads, to: FileOps.uniqueURL(in: paths.home, name: L("盒子里的下载", "Box Downloads")))
+                        try manager.moveItem(at: downloads, to: FileOps.uniqueURL(in: paths.home, name: String(localized: "盒子里的下载")))
                     }
                 }
                 try manager.createSymbolicLink(at: downloads, withDestinationURL: realDownloads)
@@ -473,7 +467,7 @@ final class IsolatedSession {
             if isEmptyFolder(item) {
                 try FileManager.default.removeItem(at: item)
             } else {
-                try FileManager.default.moveItem(at: item, to: FileOps.uniqueURL(in: paths.home, name: L("盒子里的下载", "Box Downloads")))
+                try FileManager.default.moveItem(at: item, to: FileOps.uniqueURL(in: paths.home, name: String(localized: "盒子里的下载")))
             }
         }
     }

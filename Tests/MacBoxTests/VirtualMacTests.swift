@@ -198,7 +198,7 @@ final class VirtualMacTests {
         #expect(vm.isInstalling)
         await vm.cancelSetupAndWait()
         #expect(vm.status == .notSetUp && !vm.isInstalling)
-        #expect(vm.lastError == L("已取消设置", "Setup canceled"))
+        #expect(vm.lastError == "已取消设置")
         for file in bundle.setupArtifacts { #expect(!exists(file)) }
         await vm.cancelSetupAndWait() // 没在设置时立即返回
     }
@@ -213,7 +213,7 @@ final class VirtualMacTests {
         let deadline = Date().addingTimeInterval(30)
         while vm.isInstalling, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
         #expect(vm.status == .notSetUp)
-        #expect(vm.lastError != nil && vm.lastError != L("已取消设置", "Setup canceled"))
+        #expect(vm.lastError != nil && vm.lastError != "已取消设置")
         for file in bundle.setupArtifacts { #expect(!exists(file)) }
         #expect(VirtualMac(bundle: bundle).status == .notSetUp)
     }
@@ -262,10 +262,10 @@ final class VirtualMacTests {
 
     @Test("状态文字：关机但留有睡眠状态显示「睡眠中」；英文的关机状态不和「Shut Down」按钮同名")
     func displayStatus() {
-        #expect(VirtualMac.displayStatus(.stopped, isAsleep: true) == L("睡眠中", "Asleep"))
+        #expect(VirtualMac.displayStatus(.stopped, isAsleep: true) == "睡眠中")
         #expect(VirtualMac.displayStatus(.stopped, isAsleep: false) == VirtualMac.Status.stopped.title)
         #expect(VirtualMac.displayStatus(.running, isAsleep: true) == VirtualMac.Status.running.title)
-        #expect(VirtualMac.Status.stopped.title != L("关机", "Shut Down"))
+        #expect(VirtualMac.Status.stopped.title != "关机")
     }
 
     @Test("操作失败后的状态：迟到的失败不改状态；当前虚拟机已停止则为已停止，绝不凭空改回「运行中」")
@@ -686,15 +686,11 @@ final class VirtualMacTests {
 
     @Test("标不上的项目会告诉用户是哪些")
     func quarantineFailureMessage() {
-        // 两种语言都查，名字要和说明文字撞不上：以前用单个字母，系统是英文时 “couldn’t” 里的 d 就让测试失败
-        for language in [AppLanguage.chinese, .english] {
-            Localization.$testLanguage.withValue(language) {
-                let one = VirtualMac.quarantineFailureMessage(["a.command"])
-                let many = VirtualMac.quarantineFailureMessage(["Alpha.app", "Bravo.app", "Charlie.app", "Delta.app"])
-                #expect(one.contains("a.command"), "\(language)")
-                #expect(many.contains("4") && many.contains("Charlie.app") && !many.contains("Delta.app"), "\(language)")
-            }
-        }
+        // 名字要和说明文字撞不上：以前用单个字母，英文里 “couldn’t” 的 d 就让测试失败。英文的说法见 LocalizationTests.plurals
+        let one = VirtualMac.quarantineFailureMessage(["a.command"])
+        let many = VirtualMac.quarantineFailureMessage(["Alpha.app", "Bravo.app", "Charlie.app", "Delta.app"])
+        #expect(one.contains("a.command"))
+        #expect(many.contains("4") && many.contains("Charlie.app") && !many.contains("Delta.app") && many.contains("其他几项"))
     }
 
     @Test("虚拟 Mac 运行期间别的进程写进「传出」的新文件随即被标记，0555 的也一样，并保持原来的权限")

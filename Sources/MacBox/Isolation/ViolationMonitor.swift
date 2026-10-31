@@ -11,17 +11,17 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
 
         var title: String {
             switch self {
-            case .escapedLaunch: L("在沙盒外启动程序", "Launch a program outside the sandbox")
-            case .diskMount: L("挂载磁盘映像", "Mount a disk image")
-            case .autostart: L("注册开机自启动", "Register to open at login")
-            case .backgroundService: L("注册后台服务", "Register a background service")
-            case .systemInstall: L("写入系统目录", "Write to system folders")
-            case .personalFiles: L("写入你的个人文件夹", "Write to your personal folders")
-            case .privacyRead: L("读取私人数据", "Read private data")
-            case .notification: L("发送通知", "Send notifications")
-            case .appleEvent: L("控制其他 App", "Control other apps")
-            case .network: L("联网", "Access the network")
-            case .other: L("其他系统操作", "Other system operations")
+            case .escapedLaunch: String(localized: "在沙盒外启动程序")
+            case .diskMount: String(localized: "挂载磁盘映像")
+            case .autostart: String(localized: "注册开机自启动")
+            case .backgroundService: String(localized: "注册后台服务")
+            case .systemInstall: String(localized: "写入系统目录")
+            case .personalFiles: String(localized: "写入你的个人文件夹")
+            case .privacyRead: String(localized: "读取私人数据")
+            case .notification: String(localized: "发送通知")
+            case .appleEvent: String(localized: "控制其他 App")
+            case .network: String(localized: "联网")
+            case .other: String(localized: "其他系统操作")
             }
         }
 
@@ -76,16 +76,17 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
 
         var text: String {
             switch self {
-            case .notificationCenter: L("通知中心", "Notification Center")
-            case .nameLookup: L("域名解析（DNS）", "Name lookups (DNS)")
-            case .backgroundDownloads: L("后台下载服务", "Background download service")
-            case .installerPackage: L("安装器自己下载的安装包", "Installer package downloaded by the installer")
-            case .loginItems: L("登录项与后台项", "Login items and background items")
-            case .sshAgent: L("SSH 代理（ssh-agent）里你的钥匙", "Your keys in the SSH agent (ssh-agent)")
-            case .connect(nil): L("连接服务器", "Connect to a server")
-            case .connect(let port?): L("连接服务器的 \(port) 端口", "Connect to a server on port \(port)")
-            case .listen(nil): L("等待别的设备连进来", "Wait for other devices to connect")
-            case .listen(let port?): L("在 \(port) 端口等待别的设备连进来", "Wait for other devices to connect on port \(port)")
+            case .notificationCenter: String(localized: "通知中心")
+            case .nameLookup: String(localized: "域名解析（DNS）")
+            case .backgroundDownloads: String(localized: "后台下载服务")
+            case .installerPackage: String(localized: "安装器自己下载的安装包")
+            case .loginItems: String(localized: "登录项与后台项")
+            case .sshAgent: String(localized: "SSH 代理（ssh-agent）里你的钥匙")
+            case .connect(nil): String(localized: "block.subject.connect", defaultValue: "连接服务器", comment: "被挡住的动作：连接任意端口的服务器")
+            // 端口是编号，按字符串插进去：整数插值会按本地习惯加千位分隔符（8,080）
+            case .connect(let port?): String(localized: "连接服务器的 \(String(port)) 端口")
+            case .listen(nil): String(localized: "等待别的设备连进来")
+            case .listen(let port?): String(localized: "在 \(String(port)) 端口等待别的设备连进来")
             }
         }
 

@@ -12,8 +12,7 @@ nonisolated enum PackageExtractor {
     /// 单独一种错误类型，导入时可以据此提供“放进虚拟 Mac”，而不是只报个错就把用户晾在那里。
     /// 文字和 MacBoxError 一样在生成时定下语言
     nonisolated struct NeedsVirtualMac: LocalizedError, Sendable {
-        let message = L("这个安装包里没有可以直接运行的 App，它需要在系统里安装组件。请改用虚拟 Mac。",
-                        "This installer package has no app that can run on its own; it needs to install components into the system. Use Virtual Mac instead.")
+        let message = String(localized: "这个安装包里没有可以直接运行的 App，它需要在系统里安装组件。请改用虚拟 Mac。")
         var errorDescription: String? { message }
     }
 
@@ -29,31 +28,28 @@ nonisolated enum PackageExtractor {
         let values = try? package.resolvingSymlinksInPath()
             .resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isReadableKey])
         if values?.isDirectory == true, !["app", "pkg", "mpkg"].contains(ext) {
-            throw MacBoxError(L("「\(name)」是文件夹，不是安装包。请拖入 .dmg、.app、.pkg 或 .zip。",
-                                "“\(name)” is a folder, not an installer. Drag in a .dmg, .app, .pkg or .zip file."))
+            throw MacBoxError(String(localized: "「\(name)」是文件夹，不是安装包。请拖入 .dmg、.app、.pkg 或 .zip。"))
         }
         guard supportedExtensions.contains(ext) else { throw unsupported(package) }
         guard let values else { return }
         if ext == "app", values.isDirectory != true { throw notAnApp(name) }
         if ["dmg", "zip"].contains(ext), values.isRegularFile != true {
-            throw MacBoxError(L("「\(name)」不是有效的 .\(ext) 文件。", "“\(name)” isn’t a valid .\(ext) file."))
+            throw MacBoxError(String(localized: "「\(name)」不是有效的 .\(ext) 文件。"))
         }
         if values.isReadable == false {
-            throw MacBoxError(L("没有权限读取「\(name)」。", "You don’t have permission to read “\(name)”."))
+            throw MacBoxError(String(localized: "没有权限读取「\(name)」。"))
         }
     }
 
     private static func unsupported(_ package: URL) -> MacBoxError {
         let ext = package.pathExtension
         return MacBoxError(ext.isEmpty
-            ? L("不支持这种文件。请拖入 .dmg、.app、.pkg 或 .zip。",
-                "This kind of file isn’t supported. Drag in a .dmg, .app, .pkg or .zip file.")
-            : L("不支持的文件类型：.\(ext)。请拖入 .dmg、.app、.pkg 或 .zip。",
-                "Unsupported file type: .\(ext). Drag in a .dmg, .app, .pkg or .zip file."))
+            ? String(localized: "不支持这种文件。请拖入 .dmg、.app、.pkg 或 .zip。")
+            : String(localized: "不支持的文件类型：.\(ext)。请拖入 .dmg、.app、.pkg 或 .zip。"))
     }
 
     private static func notAnApp(_ name: String) -> MacBoxError {
-        MacBoxError(L("「\(name)」不是有效的 App", "“\(name)” is not a valid app"))
+        MacBoxError(String(localized: "「\(name)」不是有效的 App"))
     }
 
     /// 复制、展开都很耗时，整个过程在后台执行
@@ -91,8 +87,7 @@ nonisolated enum PackageExtractor {
         do {
             // 有的 dmg 把 App 放在子文件夹里，所以往下找三层
             let result = try await fromFolder(mount.mountPoint, appDepth: 3, into: destination, nesting: nesting,
-                                              notFound: L("磁盘映像里没有找到 App 或安装包",
-                                                          "No app or installer package was found in the disk image"))
+                                              notFound: String(localized: "磁盘映像里没有找到 App 或安装包"))
             await DiskImage.detach(mount.device)
             return result
         } catch {
@@ -107,7 +102,7 @@ nonisolated enum PackageExtractor {
         defer { try? FileManager.default.removeItem(at: work) }
         try await Shell.run("/usr/bin/ditto", ["-x", "-k", zip.path, work.path])
         return try await fromFolder(work, appDepth: .max, into: destination, nesting: nesting,
-                                    notFound: L("压缩包里没有找到 App 或安装包", "No app or installer package was found in the archive"))
+                                    notFound: String(localized: "压缩包里没有找到 App 或安装包"))
     }
 
     /// 在挂载的 dmg 或展开的 zip 里找：先找 App（顶层的优先，再往下找），
@@ -136,7 +131,7 @@ nonisolated enum PackageExtractor {
             throw MacBoxError(notFound)
         }
         let name = failed.container.lastPathComponent, detail = failed.error.localizedDescription
-        throw MacBoxError(L("\(notFound)。「\(name)」：\(detail)", "\(notFound). “\(name)”: \(detail)"))
+        throw MacBoxError(String(localized: "\(notFound)。「\(name)」：\(detail)"))
     }
 
     /// 展开 pkg，只取出其中的 .app；安装脚本不执行

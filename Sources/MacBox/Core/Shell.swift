@@ -20,7 +20,7 @@ nonisolated enum Shell {
             let message = result.error.isEmpty ? result.output : result.error
             let tool = (executable as NSString).lastPathComponent
             let detail = message.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw MacBoxError(L("\(tool) 失败：\(detail)", "\(tool) failed: \(detail)"))
+            throw MacBoxError(String(localized: "\(tool) 失败：\(detail)"))
         }
         return result
     }

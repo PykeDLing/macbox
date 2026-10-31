@@ -30,21 +30,14 @@ nonisolated enum WritableFolders {
 
         var message: String {
             switch self {
-            case .disk: L("不能选整块磁盘，请在里面选一个文件夹。", "You can’t choose a whole disk. Choose a folder on it instead.")
-            case .home: L("范围太大：不能选你的主目录或它的上级，请选里面的一个文件夹。",
-                          "That’s too broad: you can’t choose your home folder or a folder above it. Choose a folder inside it.")
-            case .library: L("「资源库」里是各个 App 的数据和设置，不能选。",
-                             "The Library folder holds every app’s data and settings, so it can’t be chosen.")
-            case .applications: L("这里有聚焦里的启动器，应用改了它们就能在盒子外运行，不能选。",
-                                  "This holds the Spotlight launchers. An app that changed them could run outside the box, so it can’t be chosen.")
-            case .downloads: L("「下载」本身请用「共享「下载」文件夹」；里面的文件夹可以选。",
-                               "For Downloads itself, use “Share Downloads Folder”. Folders inside it can be chosen.")
-            case .macBoxData: L("这是 MacBox 存放盒子的地方，不能选。应用本来就能写它自己盒子里的文件夹。",
-                                "This is where MacBox keeps its boxes, so it can’t be chosen. Apps can already write to the folders in their own box.")
-            case .hidden: L("隐藏文件夹里多是配置和凭证，写进去的配置会被你自己的终端和工具执行，不能选。",
-                            "Hidden folders mostly hold settings and credentials, and settings written there would be run by your own terminal and tools, so they can’t be chosen.")
-            case .system: L("这里是系统和你安装的 App，不能选。",
-                            "This holds the system and the apps you’ve installed, so it can’t be chosen.")
+            case .disk: String(localized: "不能选整块磁盘，请在里面选一个文件夹。")
+            case .home: String(localized: "范围太大：不能选你的主目录或它的上级，请选里面的一个文件夹。")
+            case .library: String(localized: "「资源库」里是各个 App 的数据和设置，不能选。")
+            case .applications: String(localized: "这里有聚焦里的启动器，应用改了它们就能在盒子外运行，不能选。")
+            case .downloads: String(localized: "「下载」本身请用「共享「下载」文件夹」；里面的文件夹可以选。")
+            case .macBoxData: String(localized: "这是 MacBox 存放盒子的地方，不能选。应用本来就能写它自己盒子里的文件夹。")
+            case .hidden: String(localized: "隐藏文件夹里多是配置和凭证，写进去的配置会被你自己的终端和工具执行，不能选。")
+            case .system: String(localized: "这里是系统和你安装的 App，不能选。")
             }
         }
     }
@@ -125,10 +118,10 @@ nonisolated enum WritableFolders {
 
         var name: String {
             switch self {
-            case .drive: L("外接硬盘、网络磁盘", "external or network drives")
-            case .documents: L("「文稿」", "Documents")
-            case .desktop: L("「桌面」", "Desktop")
-            case .downloads: L("「下载」", "Downloads")
+            case .drive: String(localized: "外接硬盘、网络磁盘")
+            case .documents: String(localized: "「文稿」")
+            case .desktop: String(localized: "「桌面」")
+            case .downloads: String(localized: "「下载」")
             }
         }
     }

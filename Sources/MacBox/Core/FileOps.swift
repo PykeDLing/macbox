@@ -67,7 +67,7 @@ nonisolated enum FileOps {
         var opened = [CChar](repeating: 0, count: Int(MAXPATHLEN))
         guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG, fcntl(descriptor, F_GETPATH, &opened) == 0,
               String(cString: opened).hasPrefix(realPath(root) + "/") else {
-            throw MacBoxError(L("「\(source.lastPathComponent)」不是 App 里的普通文件", "“\(source.lastPathComponent)” isn’t a regular file in the app"))
+            throw MacBoxError(String(localized: "「\(source.lastPathComponent)」不是 App 里的普通文件"))
         }
         if fclonefileat(descriptor, AT_FDCWD, fileSystemPath(destination), 0) != 0 {
             // 跨卷时退化为复制，读的还是已经打开的这个文件
@@ -260,8 +260,7 @@ nonisolated enum FileOps {
                 code = errno
             }
         }
-        throw MacBoxError(L("无法把「\(from)」改名为「\(to)」：\(String(cString: strerror(code)))",
-                            "Couldn’t rename “\(from)” to “\(to)”: \(String(cString: strerror(code)))"))
+        throw MacBoxError(String(localized: "无法把「\(from)」改名为「\(to)」：\(String(cString: strerror(code)))"))
     }
 
     /// 正在删除的一层目录
@@ -376,7 +375,7 @@ nonisolated enum FileOps {
         }
         guard info.st_dev == expected.device, info.st_ino == expected.inode else {
             close(parent)
-            throw removalFailure(path(), reason: L("删除过程中文件夹被移到了别处", "The folder was moved while it was being deleted"))
+            throw removalFailure(path(), reason: String(localized: "删除过程中文件夹被移到了别处"))
         }
         return parent
     }
@@ -450,7 +449,7 @@ nonisolated enum FileOps {
     }
 
     private static func removalFailure(_ path: String, reason: String) -> MacBoxError {
-        MacBoxError(L("无法删除「\(path)」：\(reason)", "Couldn’t delete “\(path)”: \(reason)"))
+        MacBoxError(String(localized: "无法删除「\(path)」：\(reason)"))
     }
 
     /// 给系统调用用的路径：去掉结尾的 /（否则 lstat、rename 会跟随指向目录的符号链接）

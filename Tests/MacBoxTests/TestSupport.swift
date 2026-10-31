@@ -176,3 +176,36 @@ nonisolated func makeFakeApp(at app: URL, identifier: String, script: String) th
     try script.write(to: main, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: main.path)
 }
+
+/// 英文译文：把 Resources/Localizable.xcstrings 编译进临时目录，从里面的 en.lproj 取。
+/// 产品代码按 Bundle.main 取文字，测试进程里没有译文，取到的都是简体中文原文；要看英文就用这里
+nonisolated enum English {
+    /// 仓库根目录：本文件在 Tests/MacBoxTests/ 下
+    static let repo = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+
+    /// 编译出来的目录，里面有 en.lproj，以及 zh-Hans.lproj 里同名的空表（和 build.sh 组装的 App 一样）
+    static let compiled: URL = {
+        let output = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-strings-\(UUID().uuidString)")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.arguments = ["xcstringstool", "compile", repo.appending(path: "Resources/Localizable.xcstrings").path,
+                             "--output-directory", output.path]
+        try? process.run()
+        process.waitUntilExit()
+        let chinese = output.appending(path: "zh-Hans.lproj")
+        try? AppPaths.ensure(chinese)
+        for table in (try? FileManager.default.contentsOfDirectory(atPath: output.appending(path: "en.lproj").path)) ?? [] {
+            try? PropertyListSerialization.data(fromPropertyList: [String: String](), format: .xml, options: 0)
+                .write(to: chinese.appending(path: table))
+        }
+        return output
+    }()
+
+    static let bundle = Bundle(url: compiled.appending(path: "en.lproj"))!
+
+    /// 按英文取一句。要给 locale：单独拿 lproj 当 bundle 时，不给的话单复数规则认不出是英文
+    static func text(_ value: String.LocalizationValue) -> String {
+        String(localized: value, bundle: bundle, locale: Locale(identifier: "en"))
+    }
+}

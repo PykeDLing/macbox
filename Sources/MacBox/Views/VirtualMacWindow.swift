@@ -24,28 +24,28 @@ struct VirtualMacWindow: View {
                     }
                     .overlay(alignment: .top) { messages }
             } else if vm.status == .starting {
-                ProgressView(L("正在启动…", "Starting…"))
+                ProgressView(String(localized: "正在启动…"))
             } else {
                 ContentUnavailableView {
-                    Label(vm.config.installed ? L("虚拟 Mac 未运行", "Virtual Mac Isn’t Running")
-                                              : L("虚拟 Mac 还没有设置", "Virtual Mac Isn’t Set Up"),
+                    Label(vm.config.installed ? String(localized: "虚拟 Mac 未运行")
+                                              : String(localized: "虚拟 Mac 还没有设置"),
                           systemImage: "desktopcomputer")
                 } description: {
                     Text(vm.lastError ?? vm.notice ?? "")
                 } actions: {
                     if vm.status == .stopped {
-                        Button(vm.isAsleep ? L("唤醒", "Wake") : L("启动", "Start")) { Task { await vm.start() } }
+                        Button(vm.isAsleep ? String(localized: "唤醒") : String(localized: "启动")) { Task { await vm.start() } }
                             .buttonStyle(.borderedProminent)
                     } else if vm.status == .notSetUp {
-                        Button(L("前往设置虚拟 Mac…", "Set Up Virtual Mac…")) { store.show(.virtualMac) }
+                        Button("前往设置虚拟 Mac…") { store.show(.virtualMac) }
                     } else if case .unreadable = vm.status {
-                        Button(L("查看详情…", "Show Details…")) { store.show(.virtualMac) }
+                        Button("查看详情…") { store.show(.virtualMac) }
                     }
                 }
             }
         }
         .frame(minWidth: 800, minHeight: 500)
-        .navigationTitle(L("虚拟 Mac", "Virtual Mac"))
+        .navigationTitle("虚拟 Mac")
         .navigationSubtitle(vm.displayStatus)
         .dropDestination(for: URL.self) { urls, _ in
             // 复制在后台进行，这里只能同步回答「收下了」
@@ -58,28 +58,29 @@ struct VirtualMacWindow: View {
                 if vm.isSending {
                     ProgressView()
                         .controlSize(.small)
-                        .help(L("正在复制到虚拟 Mac…", "Copying to the Virtual Mac…"))
+                        .help("正在复制到虚拟 Mac…")
                 }
                 Button { choosingFiles = true } label: {
-                    Label(L("放入文件", "Add Files"), systemImage: "tray.and.arrow.down")
+                    Label("放入文件", systemImage: "tray.and.arrow.down")
                 }
-                .help(L("复制到虚拟 Mac 的「传入」文件夹", "Copy to the Virtual Mac’s “传入” (Incoming) folder"))
+                .help("复制到虚拟 Mac 的「传入」文件夹")
                 .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item, .folder], allowsMultipleSelection: true) { result in
                     if case .success(let urls) = result { Task { await vm.sendToGuest(urls) } }
                 }
                 Button {
                     Task { await vm.openOutgoingFolder() }
                 } label: {
-                    Label(L("传出", "Outgoing"), systemImage: "tray.and.arrow.up")
+                    Label(String(localized: "virtualMac.toolbar.outgoing", defaultValue: "传出", comment: "工具栏按钮：打开「传出」文件夹"),
+                          systemImage: "tray.and.arrow.up")
                 }
-                .help(L("打开虚拟 Mac 的「传出」文件夹", "Open the Virtual Mac’s “传出” (Outgoing) folder"))
+                .help("打开虚拟 Mac 的「传出」文件夹")
                 if vm.status == .running || vm.status == .paused {
                     Button { Task { await vm.togglePause() } } label: {
-                        vm.status == .paused ? Label(L("继续", "Resume"), systemImage: "play.fill")
-                                             : Label(L("暂停", "Pause"), systemImage: "pause.fill")
+                        vm.status == .paused ? Label("继续", systemImage: "play.fill")
+                                             : Label("暂停", systemImage: "pause.fill")
                     }
-                    Button { Task { await vm.sleep() } } label: { Label(L("睡眠", "Sleep"), systemImage: "moon.zzz.fill") }
-                        .help(L("保存当前状态并关闭，下次几秒内恢复", "Save the current state and close; resumes in seconds next time"))
+                    Button { Task { await vm.sleep() } } label: { Label("睡眠", systemImage: "moon.zzz.fill") }
+                        .help("保存当前状态并关闭，下次几秒内恢复")
                     shutDownMenu
                 }
             }
@@ -111,12 +112,12 @@ struct VirtualMacWindow: View {
     private var shutDownMenu: some View {
         let canShutDown = vm.status == .running
         let items = Group {
-            Button(L("关机", "Shut Down")) { vm.requestShutdown() }
+            Button("关机") { vm.requestShutdown() }
                 .disabled(!canShutDown)
             Divider()
-            Button(L("强制关机", "Force Shut Down"), role: .destructive) { Task { await vm.forceStop() } }
+            Button("强制关机", role: .destructive) { Task { await vm.forceStop() } }
         }
-        let label = Label(L("关机", "Shut Down"), systemImage: "power")
+        let label = Label("关机", systemImage: "power")
         if canShutDown {
             Menu { items } label: { label } primaryAction: { vm.requestShutdown() }
         } else {

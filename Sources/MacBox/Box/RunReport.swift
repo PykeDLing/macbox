@@ -218,10 +218,10 @@ nonisolated struct ServerContact: Codable, Hashable, Identifiable, Sendable {
     var title: String {
         if let name { return name }
         switch scope {
-        case .loopback: return L("本机（可能是代理）", "This Mac (possibly a proxy)")
-        case .localNetwork: return L("局域网里的设备", "A device on your local network")
-        case .multicast: return L("局域网广播（查找设备）", "Local network broadcast (device discovery)")
-        case .proxyMapped: return L("代理分配的地址（真实服务器未知）", "Proxy-assigned address (real server unknown)")
+        case .loopback: return String(localized: "本机（可能是代理）")
+        case .localNetwork: return String(localized: "局域网里的设备")
+        case .multicast: return String(localized: "局域网广播（查找设备）")
+        case .proxyMapped: return String(localized: "代理分配的地址（真实服务器未知）")
         case .internet: return address
         }
     }
@@ -230,7 +230,7 @@ nonisolated struct ServerContact: Codable, Hashable, Identifiable, Sendable {
     var endpoint: String { address.contains(":") ? "[\(address)]:\(port)" : "\(address):\(port)" }
 
     /// 跟在 title 旁边的：title 已经是地址了（公网地址、没解析出名字）就只写端口，免得把地址写两遍
-    var place: String { name == nil && scope == .internet ? L("端口 \(port)", "port \(port)") : endpoint }
+    var place: String { name == nil && scope == .internet ? String(localized: "端口 \(String(port))") : endpoint }
 }
 
 /// 启动过的一个程序
@@ -243,51 +243,51 @@ nonisolated struct ProgramLaunch: Codable, Hashable, Identifiable, Sendable {
 
     /// 这个程序是做什么的：应用自己的、它放在主目录里的、常见的系统工具。其余为 nil
     var note: String? {
-        if path.hasPrefix("~/") { return L("应用放在主目录里的程序（下载或解压出来的）", "A program the app put in its home folder (downloaded or unpacked)") }
-        if !path.hasPrefix("/") { return L("应用自己的程序", "The app’s own program") }
-        return Self.systemNotes[path].map { L($0.0, $0.1) }
+        if path.hasPrefix("~/") { return String(localized: "应用放在主目录里的程序（下载或解压出来的）") }
+        if !path.hasPrefix("/") { return String(localized: "应用自己的程序") }
+        return Self.systemNotes[path].map { String(localized: $0) }
     }
 
     /// 常见的系统工具。说的是这个工具能做什么，不是应用拿它做了什么（参数没有记下）
-    private static let systemNotes: [String: (String, String)] = [
-        "/usr/sbin/ioreg": ("读取硬件信息，可以拿到序列号、硬件 UUID", "Reads hardware info, which can include the serial number and hardware UUID"),
-        "/usr/sbin/system_profiler": ("读取系统和硬件的详细信息", "Reads detailed system and hardware info"),
-        "/usr/sbin/sysctl": ("读取系统参数（型号、处理器等）", "Reads system parameters (model, processor and so on)"),
-        "/sbin/ifconfig": ("读取网卡信息，包括 MAC 地址", "Reads network interfaces, including MAC addresses"),
-        "/usr/sbin/networksetup": ("读取或修改网络设置", "Reads or changes network settings"),
-        "/usr/sbin/scutil": ("读取系统配置（电脑名称、代理、DNS）", "Reads system configuration (computer name, proxies, DNS)"),
-        "/usr/sbin/arp": ("读取局域网里其他设备的地址", "Reads addresses of other devices on the local network"),
-        "/usr/bin/sw_vers": ("读取 macOS 版本", "Reads the macOS version"),
-        "/usr/bin/uname": ("读取系统版本和架构", "Reads the system version and architecture"),
-        "/usr/bin/whoami": ("读取你的用户名", "Reads your user name"),
-        "/usr/bin/id": ("读取你的用户名和用户组", "Reads your user name and groups"),
-        "/bin/launchctl": ("管理后台服务和登录项", "Manages background services and login items"),
-        "/usr/bin/osascript": ("运行 AppleScript / JavaScript 脚本", "Runs AppleScript or JavaScript"),
-        "/usr/bin/security": ("访问钥匙串和证书", "Accesses the keychain and certificates"),
-        "/usr/bin/defaults": ("读写偏好设置", "Reads or writes preferences"),
-        "/usr/bin/plutil": ("读写属性列表文件", "Reads or writes property list files"),
-        "/bin/ps": ("列出正在运行的程序", "Lists running programs"),
-        "/usr/bin/pgrep": ("查找正在运行的程序", "Looks for running programs"),
-        "/usr/bin/pkill": ("结束其他程序", "Ends other programs"),
-        "/usr/bin/killall": ("结束其他程序", "Ends other programs"),
-        "/bin/kill": ("结束其他程序", "Ends other programs"),
-        "/usr/sbin/lsof": ("列出打开的文件和网络连接", "Lists open files and network connections"),
-        "/usr/bin/curl": ("下载或上传数据", "Downloads or uploads data"),
-        "/usr/bin/open": ("打开文件、网址或其他 App", "Opens files, URLs or other apps"),
-        "/usr/bin/codesign": ("检查程序签名", "Checks code signatures"),
-        "/usr/sbin/spctl": ("查询 Gatekeeper 的设置", "Queries Gatekeeper settings"),
-        "/usr/bin/xattr": ("读写文件的扩展属性（比如去掉下载标记）", "Reads or writes extended attributes (for example, removes the download quarantine flag)"),
-        "/usr/bin/hdiutil": ("挂载磁盘映像", "Mounts disk images"),
-        "/usr/sbin/diskutil": ("读取磁盘信息", "Reads disk info"),
-        "/usr/bin/mdfind": ("用聚焦搜索文件", "Searches files with Spotlight"),
-        "/usr/bin/ditto": ("复制、解压文件", "Copies or unpacks files"),
-        "/usr/bin/unzip": ("解压文件", "Unpacks files"),
-        "/bin/rm": ("删除文件", "Deletes files"),
-        "/bin/sh": ("运行 shell 脚本或命令", "Runs a shell script or command"),
-        "/bin/bash": ("运行 shell 脚本或命令", "Runs a shell script or command"),
-        "/bin/zsh": ("运行 shell 脚本或命令", "Runs a shell script or command"),
-        "/usr/bin/python3": ("运行 Python 脚本", "Runs a Python script"),
-        "/usr/bin/perl": ("运行 Perl 脚本", "Runs a Perl script"),
+    private static let systemNotes: [String: LocalizedStringResource] = [
+        "/usr/sbin/ioreg": "读取硬件信息，可以拿到序列号、硬件 UUID",
+        "/usr/sbin/system_profiler": "读取系统和硬件的详细信息",
+        "/usr/sbin/sysctl": "读取系统参数（型号、处理器等）",
+        "/sbin/ifconfig": "读取网卡信息，包括 MAC 地址",
+        "/usr/sbin/networksetup": "读取或修改网络设置",
+        "/usr/sbin/scutil": "读取系统配置（电脑名称、代理、DNS）",
+        "/usr/sbin/arp": "读取局域网里其他设备的地址",
+        "/usr/bin/sw_vers": "读取 macOS 版本",
+        "/usr/bin/uname": "读取系统版本和架构",
+        "/usr/bin/whoami": "读取你的用户名",
+        "/usr/bin/id": "读取你的用户名和用户组",
+        "/bin/launchctl": "管理后台服务和登录项",
+        "/usr/bin/osascript": "运行 AppleScript / JavaScript 脚本",
+        "/usr/bin/security": "访问钥匙串和证书",
+        "/usr/bin/defaults": "读写偏好设置",
+        "/usr/bin/plutil": "读写属性列表文件",
+        "/bin/ps": "列出正在运行的程序",
+        "/usr/bin/pgrep": "查找正在运行的程序",
+        "/usr/bin/pkill": "结束其他程序",
+        "/usr/bin/killall": "结束其他程序",
+        "/bin/kill": "结束其他程序",
+        "/usr/sbin/lsof": "列出打开的文件和网络连接",
+        "/usr/bin/curl": "下载或上传数据",
+        "/usr/bin/open": "打开文件、网址或其他 App",
+        "/usr/bin/codesign": "检查程序签名",
+        "/usr/sbin/spctl": "查询 Gatekeeper 的设置",
+        "/usr/bin/xattr": "读写文件的扩展属性（比如去掉下载标记）",
+        "/usr/bin/hdiutil": "挂载、制作磁盘映像",
+        "/usr/sbin/diskutil": "读取磁盘信息",
+        "/usr/bin/mdfind": "用聚焦搜索文件",
+        "/usr/bin/ditto": "复制、解压文件",
+        "/usr/bin/unzip": "解压文件",
+        "/bin/rm": "删除文件",
+        "/bin/sh": "运行 shell 脚本或命令",
+        "/bin/bash": "运行 shell 脚本或命令",
+        "/bin/zsh": "运行 shell 脚本或命令",
+        "/usr/bin/python3": "运行 Python 脚本",
+        "/usr/bin/perl": "运行 Perl 脚本",
     ]
 }
 
@@ -685,105 +685,97 @@ extension RunReport {
     /// “18 分钟”“1 小时 5 分钟”“不到 1 分钟”
     var durationText: String {
         let minutes = Int(duration / 60)
-        if minutes < 1 { return L("不到 1 分钟", "less than a minute") }
+        if minutes < 1 { return String(localized: "不到 1 分钟") }
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = minutes >= 60 ? [.hour, .minute] : [.minute]
         formatter.unitsStyle = .full
         var calendar = Calendar(identifier: .gregorian)
-        calendar.locale = Locale(identifier: Localization.shared.isEnglish ? "en" : "zh-Hans")
+        calendar.locale = .interface
         formatter.calendar = calendar
         return formatter.string(from: TimeInterval(minutes * 60)) ?? "\(minutes)"
     }
 
     var timeText: String {
         let start = startedAt.formatted(date: .abbreviated, time: .shortened)
-        guard let endedAt else { return L("\(start) 开始，仍在运行", "Started \(start), still running") }
+        guard let endedAt else { return String(localized: "\(start) 开始，仍在运行") }
         let end = endedAt.formatted(date: .omitted, time: .shortened)
-        return L("\(start) – \(end)（\(durationText)）", "\(start) – \(end) (\(durationText))")
+        return String(localized: "\(start) – \(end)（\(durationText)）")
     }
 
     /// 一行概要：写入 120 个文件 · 改了 34 项设置 · 连接 12 个服务器 · 启动 5 个程序 · 拦下 3 次
     var summaryLine: String {
-        /// 英文按单复数：“1 file written”“2 files written”
-        func english(_ count: Int, _ one: String, _ many: String) -> String { "\(count) \(count == 1 ? one : many)" }
+        // 英文按单复数（“1 file written”“2 files written”），在 Localizable.xcstrings 里
         var parts: [String] = []
-        if let totals = fileTotals {
-            parts.append(L("写入 \(totals.count) 个文件", english(totals.count, "file written", "files written")))
-        }
-        if let keys = preferenceKeyCount { parts.append(L("改了 \(keys) 项设置", english(keys, "setting changed", "settings changed"))) }
-        if let strays = strayPreferences, !strays.isEmpty {
-            parts.append(L("\(strays.count) 个设置文件写在盒子外",
-                           english(strays.count, "preference file outside the box", "preference files outside the box")))
-        }
-        parts.append(networkBlocked ? L("已断网", "offline")
-                                    : L("连接 \(servers.count) 个服务器", english(servers.count, "server contacted", "servers contacted")))
-        parts.append(L("启动 \(programs.count) 个程序", english(programs.count, "program launched", "programs launched")))
-        parts.append(L("拦下 \(blockCount) 次", english(blockCount, "attempt blocked", "attempts blocked")))
+        if let totals = fileTotals { parts.append(String(localized: "写入 \(totals.count) 个文件")) }
+        if let keys = preferenceKeyCount { parts.append(String(localized: "改了 \(keys) 项设置")) }
+        if let strays = strayPreferences, !strays.isEmpty { parts.append(String(localized: "\(strays.count) 个设置文件写在盒子外")) }
+        parts.append(networkBlocked ? String(localized: "已断网") : String(localized: "连接 \(servers.count) 个服务器"))
+        parts.append(String(localized: "启动 \(programs.count) 个程序"))
+        parts.append(String(localized: "拦下 \(blockCount) 次"))
         return parts.joined(separator: " · ")
     }
 
     /// 写入文件的一句话说明：新建、修改、删除了多少，路径是什么样子。报告页和导出的文字共用
     func filesSummary(_ totals: FileTotals) -> String {
-        let outside = writableFolders == nil ? L("「下载」除外", "except Downloads")
-                                             : L("「下载」和可以写入的文件夹除外", "except Downloads and the folders it can write to")
-        return L("新建 \(totals.created)、修改 \(totals.modified)、删除 \(totals.deleted)，共 \(FileOps.formatBytes(totals.bytes))。路径是应用眼里的位置，实际都写进了 MacBox 的盒子（\(outside)）。",
-                 "\(totals.created) created, \(totals.modified) modified, \(totals.deleted) deleted, \(FileOps.formatBytes(totals.bytes)) in total. Paths are where the app thinks it wrote; everything actually went into the MacBox box (\(outside)).")
+        let outside = writableFolders == nil ? String(localized: "「下载」除外")
+                                             : String(localized: "「下载」和可以写入的文件夹除外")
+        return String(localized: "新建 \(totals.created)、修改 \(totals.modified)、删除 \(totals.deleted)，共 \(FileOps.formatBytes(totals.bytes))。路径是应用眼里的位置，实际都写进了 MacBox 的盒子（\(outside)）。")
     }
 
     /// 完整的 Markdown 文字，用于拷贝、存储为文件
     func markdown() -> String {
         var lines: [String] = []
-        lines.append(L("# 「\(appName)」运行报告", "# Run report: \(appName)"))
+        lines.append(String(localized: "# 「\(appName)」运行报告"))
         lines.append("")
-        lines.append(L("- 时间：\(timeText)", "- Time: \(timeText)"))
-        lines.append(L("- 应用：\(appName)\(version.map { " \($0)" } ?? "")（\(bundleIdentifier)）",
-                       "- App: \(appName)\(version.map { " \($0)" } ?? "") (\(bundleIdentifier))"))
-        lines.append(L("- 网络：\(networkBlocked ? "已断开" : "允许")；「下载」文件夹：\(sharesDownloads ? "共享" : "不共享")",
-                       "- Network: \(networkBlocked ? "blocked" : "allowed"); Downloads folder: \(sharesDownloads ? "shared" : "not shared")"))
+        lines.append(String(localized: "- 时间：\(timeText)"))
+        lines.append(String(localized: "- 应用：\(appName)\(version.map { " \($0)" } ?? "")（\(bundleIdentifier)）"))
+        let network = networkBlocked ? String(localized: "- 网络：已断开") : String(localized: "- 网络：允许")
+        let downloads = sharesDownloads ? String(localized: "「下载」文件夹：共享") : String(localized: "「下载」文件夹：不共享")
+        lines.append(String(localized: "\(network)；\(downloads)", comment: "报告里的网络、「下载」两项"))
         if let writableFolders {
-            lines.append(L("- 可以写入的文件夹：", "- Folders it can write to: ") + writableFolders.joined(separator: L("、", ", ")))
+            lines.append(String(localized: "- 可以写入的文件夹：") + writableFolders.joined(separator: String(localized: "、")))
         }
-        lines.append(L("- 由 MacBox 隔离运行并记录：\(Self.projectURL)", "- Run in isolation and recorded by MacBox: \(Self.projectURL)"))
+        lines.append(String(localized: "- 由 MacBox 隔离运行并记录：\(Self.projectURL)"))
         lines.append("")
-        lines.append(L("**概要**：", "**Summary**: ") + summaryLine)
+        lines.append(String(localized: "**概要**：") + summaryLine)
 
         lines.append("")
-        lines.append(L("## 写入的文件", "## Files written"))
+        lines.append(String(localized: "## 写入的文件"))
         lines.append("")
         if let files, let totals = fileTotals {
             if files.isEmpty {
-                lines.append(L("没有写入文件。", "No files were written."))
+                lines.append(String(localized: "没有写入文件。"))
             } else {
                 lines.append(filesSummary(totals))
                 lines.append("")
-                lines.append(L("| 位置 | 新建 | 修改 | 删除 | 大小 |", "| Location | Created | Modified | Deleted | Size |"))
+                lines.append(String(localized: "| 位置 | 新建 | 修改 | 删除 | 大小 |"))
                 lines.append("| --- | ---: | ---: | ---: | ---: |")
                 for area in files {
                     lines.append("| \(cell(area.path)) | \(area.totals.created) | \(area.totals.modified) | \(area.totals.deleted) | \(FileOps.formatBytes(area.totals.bytes)) |")
                 }
                 if files.reduce(0, { $0 + $1.totals.count }) < totals.count {
                     lines.append("")
-                    lines.append(L("（只列出改动最多的 \(files.count) 处）", "(Only the \(files.count) busiest locations are listed)"))
+                    lines.append(String(localized: "（只列出改动最多的 \(files.count) 处）"))
                 }
             }
         } else {
-            lines.append(isRunning ? L("应用退出后统计。", "Counted after the app quits.") : L("没能统计。", "Couldn’t be counted."))
+            lines.append(isRunning ? String(localized: "应用退出后统计。") : String(localized: "没能统计。"))
         }
 
         lines.append("")
-        lines.append(L("## 修改的设置", "## Settings changed"))
+        lines.append(String(localized: "## 修改的设置"))
         lines.append("")
         if let preferences {
-            if preferences.isEmpty { lines.append(L("没有改动偏好设置。", "No preferences were changed.")) }
+            if preferences.isEmpty { lines.append(String(localized: "没有改动偏好设置。")) }
             for change in preferences {
-                lines.append("- `\(change.domain)`" + (change.isNew ? L("（新建）", " (new)") : ""))
-                if !change.added.isEmpty { lines.append(L("  - 新增：", "  - Added: ") + keyList(change.added)) }
-                if !change.changed.isEmpty { lines.append(L("  - 修改：", "  - Changed: ") + keyList(change.changed)) }
-                if !change.removed.isEmpty { lines.append(L("  - 删除：", "  - Removed: ") + keyList(change.removed)) }
+                lines.append("- `\(change.domain)`" + (change.isNew ? String(localized: "（新建）") : ""))
+                if !change.added.isEmpty { lines.append(String(localized: "  - 新增：") + keyList(change.added)) }
+                if !change.changed.isEmpty { lines.append(String(localized: "  - 修改：") + keyList(change.changed)) }
+                if !change.removed.isEmpty { lines.append(String(localized: "  - 删除：") + keyList(change.removed)) }
             }
         } else {
-            lines.append(isRunning ? L("应用退出后统计。", "Counted after the app quits.")
-                                   : L("偏好设置没能收回，这次没有统计。", "Preferences couldn’t be returned, so they weren’t counted."))
+            lines.append(isRunning ? String(localized: "应用退出后统计。")
+                                   : String(localized: "偏好设置没能收回，这次没有统计。"))
         }
 
         lines.append("")
@@ -791,29 +783,29 @@ extension RunReport {
         lines.append("")
         if let strayPreferences {
             if strayPreferences.isEmpty {
-                lines.append(L("没有发现。", "None found."))
+                lines.append(String(localized: "没有发现。"))
             } else {
                 lines.append(Self.strayExplanation)
                 lines.append("")
                 for stray in strayPreferences {
-                    lines.append("- `\(stray.domain)`" + (stray.byHost ? L("（仅限本机）", " (this Mac only)") : ""))
-                    if !stray.keys.isEmpty { lines.append(L("  - 设置项：", "  - Keys: ") + keyList(stray.keys)) }
+                    lines.append("- `\(stray.domain)`" + (stray.byHost ? String(localized: "（仅限本机）") : ""))
+                    if !stray.keys.isEmpty { lines.append(String(localized: "  - 设置项：") + keyList(stray.keys)) }
                 }
             }
         } else {
-            lines.append(isRunning ? L("应用退出后统计。", "Counted after the app quits.")
-                                   : L("旧版 MacBox 的报告没有这一项。", "Reports from older versions of MacBox don’t include this."))
+            lines.append(isRunning ? String(localized: "应用退出后统计。")
+                                   : String(localized: "旧版 MacBox 的报告没有这一项。"))
         }
 
         lines.append("")
-        lines.append(L("## 连接的服务器", "## Servers contacted"))
+        lines.append(String(localized: "## 连接的服务器"))
         lines.append("")
         if networkBlocked {
-            lines.append(L("这次运行不允许联网。", "Network access was blocked for this run."))
+            lines.append(String(localized: "这次运行不允许联网。"))
         } else if servers.isEmpty {
-            lines.append(L("没有看到网络连接。", "No network connections were seen."))
+            lines.append(String(localized: "没有看到网络连接。"))
         } else {
-            lines.append(L("| 服务器 | 地址 | 协议 | 首次连接 |", "| Server | Address | Protocol | First seen |"))
+            lines.append(String(localized: "| 服务器 | 地址 | 协议 | 首次连接 |"))
             lines.append("| --- | --- | --- | --- |")
             for server in servers {
                 lines.append("| \(cell(server.title)) | \(server.endpoint) | \(server.transport.uppercased()) | \(server.firstSeen.formatted(date: .omitted, time: .standard)) |")
@@ -821,23 +813,23 @@ extension RunReport {
         }
 
         lines.append("")
-        lines.append(L("## 启动的程序", "## Programs launched"))
+        lines.append(String(localized: "## 启动的程序"))
         lines.append("")
         if programs.isEmpty {
-            lines.append(L("没有看到启动程序。", "No program launches were seen."))
+            lines.append(String(localized: "没有看到启动程序。"))
         } else {
-            lines.append(L("| 程序 | 次数 | 说明 |", "| Program | Times | Note |"))
+            lines.append(String(localized: "| 程序 | 次数 | 说明 |"))
             lines.append("| --- | ---: | --- |")
             for program in programs { lines.append("| \(cell(program.path)) | \(program.count) | \(cell(program.note ?? "")) |") }
         }
 
         lines.append("")
-        lines.append(L("## 被拦下的行为", "## Blocked attempts"))
+        lines.append(String(localized: "## 被拦下的行为"))
         lines.append("")
         if blocks.isEmpty {
-            lines.append(L("没有记录到被拦下的行为。", "No blocked attempts were recorded."))
+            lines.append(String(localized: "没有记录到被拦下的行为。"))
         } else {
-            lines.append(L("| 行为 | 对象 | 次数 |", "| Attempt | Target | Times |"))
+            lines.append(String(localized: "| 行为 | 对象 | 次数 |"))
             lines.append("| --- | --- | ---: |")
             for block in blocks { lines.append("| \(block.kind.title) | \(cell(block.targetText)) | \(block.count) |") }
         }
@@ -851,22 +843,20 @@ extension RunReport {
 
     /// 写在盒子外的设置那一栏的标题和说明，报告页和导出的文字共用
     static var strayTitle: String {
-        L("可能属于这个应用、但写在了盒子外的设置", "Settings Possibly From This App, Written Outside the Box")
+        String(localized: "可能属于这个应用、但写在了盒子外的设置")
     }
 
     static var strayExplanation: String {
-        L("这次运行期间，你真实的偏好设置目录（~/Library/Preferences）里新出现了这些设置，它们不在 MacBox 借出、收回的范围里，删除盒子后仍然留在这台 Mac 上。偏好设置由系统服务替所有程序代写，分不出是谁写的，同一时间别的程序新建的也会列进来。只记设置项的名字，不记内容。",
-          "During this run, these settings newly appeared in your real preferences folder (~/Library/Preferences). They’re outside what MacBox lends and returns, so they stay on this Mac after you delete the box. A system service writes preferences for every program, so MacBox can’t tell who wrote them; anything another program created at the same time shows up here too. Only the names of the settings are recorded, not their values.")
+        String(localized: "这次运行期间，你真实的偏好设置目录（~/Library/Preferences）里新出现了这些设置，它们不在 MacBox 借出、收回的范围里，删除盒子后仍然留在这台 Mac 上。偏好设置由系统服务替所有程序代写，分不出是谁写的，同一时间别的程序新建的也会列进来。只记设置项的名字，不记内容。")
     }
 
     /// 报告记不全的地方，报告页和导出的文字都附上
     static var caveats: String {
-        L("说明：连接是定时看一眼得到的，很短的连接可能没看到；服务器名字来自反向解析，常常是云服务商的机器名；设置了代理时，经由代理的连接只显示为连到代理。启动的程序、被拦下的行为、在共享的「下载」和可以写入的文件夹里写的文件来自系统日志，系统繁忙时会漏记，这些文件也没有大小。系统共用的临时文件夹不在统计之内。",
-          "Notes: connections are sampled periodically, so very short ones may be missed; server names come from reverse DNS and are often cloud providers’ machine names; with a proxy, connections through it only show up as connections to the proxy. Program launches, blocked attempts and files written to the shared Downloads folder or the folders it can write to come from the system log and can be missed when the system is busy, and those files have no sizes. Shared system temporary folders aren’t counted.")
+        String(localized: "说明：连接是定时看一眼得到的，很短的连接可能没看到；服务器名字来自反向解析，常常是云服务商的机器名；设置了代理时，经由代理的连接只显示为连到代理。启动的程序、被拦下的行为、在共享的「下载」和可以写入的文件夹里写的文件来自系统日志，系统繁忙时会漏记，这些文件也没有大小。系统共用的临时文件夹不在统计之内。")
     }
 
     private func keyList(_ keys: [String]) -> String {
-        keys.map { "`\($0)`" }.joined(separator: L("、", ", "))
+        keys.map { "`\($0)`" }.joined(separator: String(localized: "、"))
     }
 
     /// 表格单元格里的竖线、换行会破坏表格

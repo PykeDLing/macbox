@@ -57,6 +57,7 @@ README 里「工作原理」「限制」两节的完整版：本机隔离每一�
 - **会话是结构化的**：`IsolatedSession.run` 从准备到收尾是一个 async 函数，每借一样东西紧接着 `defer` 归还，失败、取消都按相反顺序归还
 - **状态集中**：盒子只有一个 `activity` 状态（空闲 / 启动中 / 运行中 / 收尾中 / 维护中），“能不能做某事”都从它推出
 - **共享的系统事件**：整个 MacBox 只开一个 `log stream`，按盒子分发；守卫只认登记过的会话
+- **界面文字**：String Catalog，源语言是简体中文，键就是中文原文；英文在 `Resources/Localizable.xcstrings`。`build.sh` 用 `swiftc -emit-localized-strings` 提取、`xcstringstool sync` 同步、`compile` 编译进 `en.lproj`。开发语言是英文，偏好语言里中英文都没有时显示英文；简体中文没有可编译的文件，`build.sh` 在 `zh-Hans.lproj` 里给每张表放一张空表，否则查不到的句子会退回英文。box.json 里给旧版本读的中文取自只查 `zh-Hans.lproj` 的 bundle（`Bundle.simplifiedChinese`），不随界面语言变化；列表、日期按界面实际用的语言（`Locale.interface`）
 
 ## 数据目录
 

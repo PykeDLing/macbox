@@ -6,7 +6,7 @@ import Observation
 enum CompatibilityPolicy: String, CaseIterable, Identifiable {
     case ask, switchAutomatically
     var id: String { rawValue }
-    var title: String { self == .ask ? L("询问我", "Ask Me") : L("自动改用虚拟 Mac", "Switch to Virtual Mac Automatically") }
+    var title: String { self == .ask ? String(localized: "询问我") : String(localized: "自动改用虚拟 Mac") }
     static let key = "compatibilityPolicy"
     static var current: CompatibilityPolicy {
         CompatibilityPolicy(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .ask
@@ -32,18 +32,18 @@ struct CompatibilityPrompt: Identifiable {
 
     var title: String {
         cannotRunNatively
-            ? L("「\(appName)」无法在本机隔离中运行", "“\(appName)” can’t run in Native Isolation")
-            : L("「\(appName)」在本机隔离中可能无法正常使用", "“\(appName)” may not work properly in Native Isolation")
+            ? String(localized: "「\(appName)」无法在本机隔离中运行")
+            : String(localized: "「\(appName)」在本机隔离中可能无法正常使用")
     }
 
     var message: String {
         var lines = [reasons.prefix(4).joined(separator: "\n"),
                      cannotRunNatively
-                         ? L("要在 MacBox 里运行它，只能改用虚拟 Mac。", "To run it in MacBox, use Virtual Mac.")
-                         : L("改用虚拟 Mac 运行可以获得完整功能。", "Run it in a Virtual Mac to get full functionality.")]
+                         ? String(localized: "要在 MacBox 里运行它，只能改用虚拟 Mac。")
+                         : String(localized: "改用虚拟 Mac 运行可以获得完整功能。")]
         // 运行时的拦截：选了继续使用本机隔离，同样的拦截以后不再问（见 BoxStore.keepNativeIsolation），要先说清楚
         if !blocks.isEmpty {
-            lines.append(L("选「继续使用本机隔离」后，同样的拦截不再询问。", "If you keep Native Isolation, MacBox won’t ask about these again."))
+            lines.append(String(localized: "选「继续使用本机隔离」后，同样的拦截不再询问。"))
         }
         return lines.joined(separator: "\n\n")
     }
@@ -242,22 +242,19 @@ final class BoxStore {
 
     /// 启动时收不回偏好设置的提示。一个应用时不用复数
     static func unreturnedMessage(_ names: [String]) -> String {
+        let list = quotedList(names)
         if names.count == 1 {
-            return L("MacBox 上次没有正常退出，\(chineseList(names))借出的偏好设置没能收回，这台 Mac 上这个应用的设置暂时还是盒子里的内容。详情见它的详情面板；下次打开它或重新打开 MacBox 时会再试。",
-                     "MacBox didn’t quit normally last time, and the preferences lent to \(englishList(names)) couldn’t be returned, so this Mac’s settings for it are still the box’s for now. See the app’s details. MacBox will try again the next time you open it or MacBox.")
+            return String(localized: "MacBox 上次没有正常退出，\(list)借出的偏好设置没能收回，这台 Mac 上这个应用的设置暂时还是盒子里的内容。详情见它的详情面板；下次打开它或重新打开 MacBox 时会再试。")
         }
-        return L("MacBox 上次没有正常退出，\(chineseList(names))借出的偏好设置没能收回，这台 Mac 上这些应用的设置暂时还是盒子里的内容。详情见各应用的详情面板；下次打开它们或重新打开 MacBox 时会再试。",
-                 "MacBox didn’t quit normally last time, and the preferences lent to \(englishList(names)) couldn’t be returned, so this Mac’s settings for these apps are still the boxes’ for now. See each app’s details. MacBox will try again the next time you open them or MacBox.")
+        return String(localized: "MacBox 上次没有正常退出，\(list)借出的偏好设置没能收回，这台 Mac 上这些应用的设置暂时还是盒子里的内容。详情见各应用的详情面板；下次打开它们或重新打开 MacBox 时会再试。")
     }
 
     private static func describeLoadError(_ error: Error) -> String {
-        if (error as? CocoaError)?.code == .fileReadNoSuchFile { return L("缺少配置文件 box.json", "The configuration file box.json is missing") }
+        if (error as? CocoaError)?.code == .fileReadNoSuchFile { return String(localized: "缺少配置文件 box.json") }
         if error is DecodingError {
-            return L("配置文件 box.json 格式无法识别，可能来自更新版本的 MacBox 或已损坏",
-                     "The configuration file box.json isn’t in a recognized format. It may be from a newer version of MacBox, or damaged.")
+            return String(localized: "配置文件 box.json 格式无法识别，可能来自更新版本的 MacBox 或已损坏")
         }
-        return L("无法读取配置文件 box.json：\(error.localizedDescription)",
-                 "Couldn’t read the configuration file box.json: \(error.localizedDescription)")
+        return String(localized: "无法读取配置文件 box.json：\(error.localizedDescription)")
     }
 
     func box(id: UUID) -> Box? { boxes.first { $0.id == id } }
@@ -301,8 +298,7 @@ final class BoxStore {
                     try FileOps.removeTree(paths.appStaging)
                 }
             } catch {
-                box.lastError = L("上次没有做完的还原、清除数据没能收拾好：\(error.localizedDescription)",
-                                  "Couldn’t clean up a restore or data clearing that was interrupted last time: \(error.localizedDescription)")
+                box.lastError = String(localized: "上次没有做完的还原、清除数据没能收拾好：\(error.localizedDescription)")
             }
         }
         await Background.run {
@@ -317,12 +313,11 @@ final class BoxStore {
             guard lease.isOutstanding else { continue }
             do { try await lease.checkOut() } catch {
                 unreturned.append(box.config.name)
-                box.lastError = L("无法收回上次运行留下的偏好设置，这台 Mac 上这个应用的设置暂时还是盒子里的内容。下次打开它或重新打开 MacBox 时会再试。原因：\(error.localizedDescription)",
-                                  "Couldn’t return the preferences left over from the last session, so this Mac’s settings for the app are still the box’s for now. MacBox will try again the next time you open the app or MacBox. \(error.localizedDescription)")
+                box.lastError = String(localized: "无法收回上次运行留下的偏好设置，这台 Mac 上这个应用的设置暂时还是盒子里的内容。下次打开它或重新打开 MacBox 时会再试。原因：\(error.localizedDescription)")
             }
         }
         if !unreturned.isEmpty {
-            alerts.append(StoreAlert(title: L("无法收回偏好设置", "Couldn’t Return Preferences"), message: Self.unreturnedMessage(unreturned)))
+            alerts.append(StoreAlert(title: String(localized: "无法收回偏好设置"), message: Self.unreturnedMessage(unreturned)))
         }
         // 4. 做到一半的还原、清除数据（崩溃，或者做到一半失败）重做一遍。设置没收回的这里不做：两者都会整个替换 Prefs，
         // 连同借出的日志；标记留着，打开应用前会先收回设置再做完（见 Box.open）
@@ -379,7 +374,7 @@ final class BoxStore {
                 skippedImports += urls[index...]
                 break
             }
-            importStatus = L("正在读取「\(url.lastPathComponent)」…", "Reading “\(url.lastPathComponent)”…")
+            importStatus = String(localized: "正在读取「\(url.lastPathComponent)」…")
             do {
                 // 先看类型再复制：不支持的大文件、文件夹不必整个复制进来才报错
                 try PackageExtractor.checkSupported(url)
@@ -390,8 +385,7 @@ final class BoxStore {
                 // 只是报错的话，用户还得自己去找虚拟 Mac 的「文件交换」：直接提供“放进虚拟 Mac”
                 virtualMacOffers.append(VirtualMacOffer(file: url, message: error.message))
             } catch {
-                let message = L("无法添加「\(url.lastPathComponent)」：\(error.localizedDescription)",
-                                "Couldn’t add “\(url.lastPathComponent)”: \(error.localizedDescription)")
+                let message = String(localized: "无法添加「\(url.lastPathComponent)」：\(error.localizedDescription)")
                 // 一次添加多个、几次添加同时进行时，每个失败的都要列出来
                 importError = importError.map { "\($0)\n\n\(message)" } ?? message
             }
@@ -410,11 +404,11 @@ final class BoxStore {
             // 来自其他卷（外接硬盘、网络位置）时是真正的复制，可能很慢
             try await Background.run { try FileOps.clone(url, to: source, followingSymlink: true) } // 拖进来的替身要的是它指向的安装包
 
-            importStatus = L("正在取出 App…", "Extracting the app…")
+            importStatus = String(localized: "正在取出 App…")
             let extracted = try await PackageExtractor.extractApp(from: source, into: paths.appDirectory)
             let info = try AppInspector.info(of: extracted.app)
 
-            importStatus = L("正在检查兼容性…", "Checking compatibility…")
+            importStatus = String(localized: "正在检查兼容性…")
             var issues = extracted.issues + (await AppInspector.scan(extracted.app))
             issues.insert(await AppInspector.verifyAndTrust(extracted.app), at: 0)
             // 借出范围：App 的标识符（能放宽时放宽到同系列），加上包里同厂商的登录项、辅助程序（要读本机各 App 的 Info.plist）
@@ -428,7 +422,7 @@ final class BoxStore {
             made.showInLaunchpad = UserDefaults.standard.object(forKey: "defaultShowInLaunchpad") as? Bool ?? true
             try paths.save(made)
 
-            importStatus = L("正在准备独立的钥匙串…", "Preparing a separate keychain…")
+            importStatus = String(localized: "正在准备独立的钥匙串…")
             try await BoxKeychain.prepare(paths)
             try await Background.run {
                 // 锁上之后才算装好（见 AppLock）：MacBox 没在运行时，程序坞、聚焦都启动不了它
@@ -463,7 +457,7 @@ final class BoxStore {
         let blocking = box.config.issues.filter { $0.severity == .needsVirtualMac }
         guard !blocking.isEmpty else { return true }
         suggestVirtualMac(for: box, reasons: blocking.map {
-            L("\($0.localizedTitle)：\($0.localizedDetail)", "\($0.localizedTitle): \($0.localizedDetail)")
+            String(localized: "\($0.localizedTitle)：\($0.localizedDetail)")
         })
         return false
     }
@@ -492,8 +486,7 @@ final class BoxStore {
             if prompt == nil { prompt = prompts.removeFirst() }
         case .switchAutomatically:
             box.config.runtime = .virtualMac
-            box.notice = L("检测到兼容性问题，已按设置改用虚拟 Mac 运行。",
-                           "Compatibility issues were found. Switched to Virtual Mac as set.")
+            box.notice = String(localized: "检测到兼容性问题，已按设置改用虚拟 Mac 运行。")
         }
     }
 
@@ -525,11 +518,9 @@ final class BoxStore {
     func openInVirtualMac(_ box: Box) async {
         let vm = VirtualMac.shared
         guard vm.config.installed else {
-            box.notice = L("需要先在「虚拟 Mac」页完成一次性设置，之后这个应用就会在虚拟 Mac 中运行。",
-                           "Finish the one-time setup on the “Virtual Mac” page first. After that, this app will run in Virtual Mac.")
+            box.notice = String(localized: "需要先在「虚拟 Mac」页完成一次性设置，之后这个应用就会在虚拟 Mac 中运行。")
             // 接下来显示的是虚拟 Mac 页，说明也要放在那里，否则只是突然换了一页
-            vm.notice = L("「\(box.config.name)」设为在虚拟 Mac 中运行，需要先完成下面的一次性设置。",
-                          "“\(box.config.name)” is set to run in Virtual Mac. Finish the one-time setup below first.")
+            vm.notice = String(localized: "「\(box.config.name)」设为在虚拟 Mac 中运行，需要先完成下面的一次性设置。")
             show(.virtualMac)
             return
         }
@@ -543,8 +534,7 @@ final class BoxStore {
         let vm = VirtualMac.shared
         let name = offer.file.lastPathComponent
         guard vm.config.installed else {
-            vm.notice = L("要在虚拟 Mac 里安装「\(name)」，先完成下面的一次性设置，然后在「文件交换」里点「放入文件…」选择它。",
-                          "To install “\(name)” in the Virtual Mac, finish the one-time setup below, then choose it with “Add Files…” under “File Exchange”.")
+            vm.notice = String(localized: "要在虚拟 Mac 里安装「\(name)」，先完成下面的一次性设置，然后在「文件交换」里点「放入文件…」选择它。")
             show(.virtualMac)
             return
         }
@@ -578,9 +568,8 @@ final class BoxStore {
     /// 跟着移走的话本机这个应用原来的设置就再也恢复不了。返回盒子在废纸篓里的位置
     @discardableResult
     func delete(_ box: Box) async throws -> URL? {
-        guard !box.isRunning else { throw MacBoxError(L("请先退出「\(box.config.name)」", "Quit “\(box.config.name)” first")) }
-        guard !box.isBusy else { throw MacBoxError(L("「\(box.config.name)」正在处理其他操作，请稍候",
-                                                         "“\(box.config.name)” is busy with another operation. Try again in a moment.")) }
+        guard !box.isRunning else { throw MacBoxError(String(localized: "请先退出「\(box.config.name)」")) }
+        guard !box.isBusy else { throw MacBoxError(String(localized: "「\(box.config.name)」正在处理其他操作，请稍候")) }
         let paths = box.paths, app = box.appURL
         let trashed = try await box.performMaintenance {
             await AppRegistration.unregister(app) // 不在登记里留下指向废纸篓的 App（文件夹移走后就撤销不了包里面的了）
@@ -630,12 +619,11 @@ final class BoxStore {
         }
         let message = if let broken = brokenBoxes.first(where: { $0.id == id }) {
             // 读取失败的说明有的带句号、有的不带（系统的错误信息自己带），统一去掉再加
-            L("这个启动器对应的应用无法读取：\(Self.withoutFinalPeriod(broken.message))。可以在「全部应用」里查看或删除它。",
-              "The app for this launcher can’t be read: \(Self.withoutFinalPeriod(broken.message)). You can view or delete it in “All Apps”.")
+            String(localized: "这个启动器对应的应用无法读取：\(Self.withoutFinalPeriod(broken.message))。可以在「全部应用」里查看或删除它。")
         } else {
-            L("这个启动器对应的应用已经不在 MacBox 里了。", "The app for this launcher is no longer in MacBox.")
+            String(localized: "这个启动器对应的应用已经不在 MacBox 里了。")
         }
-        alerts.append(StoreAlert(title: L("无法打开", "Couldn’t Open App"), message: message))
+        alerts.append(StoreAlert(title: String(localized: "无法打开"), message: message))
         show(.allApps)
     }
 
@@ -746,8 +734,11 @@ final class BoxStore {
         guard !skippedImports.isEmpty else { return }
         let names = skippedImports.map(\.lastPathComponent)
         skippedImports = []
-        let message = L("正在退出 MacBox 时，\(Self.chineseList(names))没有添加。需要的话请重新添加。",
-                        "\(Self.englishList(names)) \(names.count == 1 ? "wasn’t" : "weren’t") added because MacBox was quitting. Add \(names.count == 1 ? "it" : "them") again if you still need \(names.count == 1 ? "it" : "them").")
+        let list = quotedList(names)
+        // 英文按一个还是几个变化，中文多个时说“都”
+        let message = names.count == 1
+            ? String(localized: "正在退出 MacBox 时，\(list)没有添加。需要的话请重新添加。")
+            : String(localized: "正在退出 MacBox 时，\(list)都没有添加。需要的话请重新添加。")
         importError = importError.map { "\($0)\n\n\(message)" } ?? message
     }
 
@@ -759,10 +750,4 @@ final class BoxStore {
         return text
     }
 
-    static func chineseList(_ names: [String]) -> String { names.map { "「\($0)」" }.joined(separator: "、") }
-    static func englishList(_ names: [String]) -> String {
-        let quoted = names.map { "“\($0)”" }
-        guard quoted.count > 1 else { return quoted.first ?? "" }
-        return quoted.dropLast().joined(separator: ", ") + " and " + quoted.last!
-    }
 }

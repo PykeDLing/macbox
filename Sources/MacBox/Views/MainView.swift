@@ -21,7 +21,7 @@ struct MainView: View {
             }
         }
         // 搜索框放在侧边栏顶部，不和右侧详情栏挤在一起；在其他页面输入时跳回应用页
-        .searchable(text: $query, placement: .sidebar, prompt: L("搜索应用", "Search Apps"))
+        .searchable(text: $query, placement: .sidebar, prompt: String(localized: "搜索应用"))
         .onChange(of: query) {
             if !query.isEmpty && store.destination != .allApps && store.destination != .running {
                 store.destination = .allApps
@@ -37,7 +37,7 @@ struct MainView: View {
             Task { await store.importItems(urls) }
         }
         .fileDialogDefaultDirectory(.downloadsDirectory)
-        .fileDialogMessage(L("选择要放进 MacBox 的应用", "Choose apps to put in MacBox"))
+        .fileDialogMessage(String(localized: "选择要放进 MacBox 的应用"))
         // 任何页面都可以把安装包拖进来
         .overlay { if dropTargeted { DropHighlight() } }
         .dropDestination(for: URL.self) { urls, _ in
@@ -57,33 +57,31 @@ struct MainView: View {
                    if !$0, let id { store.dismissPrompt(id: id) }
                }),
                presenting: store.prompt) { prompt in
-            Button(L("改用虚拟 Mac", "Use Virtual Mac")) { store.box(id: prompt.boxID)?.config.runtime = .virtualMac }
+            Button("改用虚拟 Mac") { store.box(id: prompt.boxID)?.config.runtime = .virtualMac }
             // 记下这次的拦截：同样的拦截以后不再问，每次退出都弹一次没有意义
-            Button(L("继续使用本机隔离", "Keep Native Isolation"), role: .cancel) { store.keepNativeIsolation(prompt) }
+            Button("继续使用本机隔离", role: .cancel) { store.keepNativeIsolation(prompt) }
         } message: { prompt in
             Text(prompt.message)
         }
-        .alert(L("「\(store.virtualMacOffers.first?.file.lastPathComponent ?? "")」需要在虚拟 Mac 里安装",
-                 "“\(store.virtualMacOffers.first?.file.lastPathComponent ?? "")” needs to be installed in the Virtual Mac"),
+        .alert(String(localized: "「\(store.virtualMacOffers.first?.file.lastPathComponent ?? "")」需要在虚拟 Mac 里安装"),
                isPresented: Binding(get: { !store.virtualMacOffers.isEmpty }, set: { if !$0 { store.dismissVirtualMacOffer() } }),
                presenting: store.virtualMacOffers.first) { offer in
-            Button(L("放进虚拟 Mac", "Put in Virtual Mac")) { Task { await store.sendToVirtualMac(offer) } }
-            Button(L("取消", "Cancel"), role: .cancel) {}
+            Button("放进虚拟 Mac") { Task { await store.sendToVirtualMac(offer) } }
+            Button("取消", role: .cancel) {}
         } message: { offer in
-            Text(offer.message + "\n\n" + L("可以把它放进虚拟 Mac 的「传入」文件夹，在虚拟 Mac 里安装。",
-                                             "You can put it in the Virtual Mac’s “传入” (Incoming) folder and install it there."))
+            Text(offer.message + "\n\n" + String(localized: "可以把它放进虚拟 Mac 的「传入」文件夹，在虚拟 Mac 里安装。"))
         }
         .alert(store.alerts.first?.title ?? "",
                isPresented: Binding(get: { !store.alerts.isEmpty }, set: { if !$0 { store.dismissAlert() } }),
                presenting: store.alerts.first) { _ in
-            Button(L("好", "OK")) {}
+            Button("好") {}
         } message: { alert in
             Text(alert.message)
         }
-        .alert(L("无法添加", "Couldn’t Add App"),
+        .alert("无法添加",
                isPresented: Binding(get: { store.importError != nil }, set: { if !$0 { store.importError = nil } }),
                presenting: store.importError) { _ in
-            Button(L("好", "OK")) {}
+            Button("好") {}
         } message: { message in
             Text(message)
         }
@@ -96,7 +94,7 @@ private struct QuittingBanner: View {
     var body: some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
-            Text(L("正在退出 MacBox…等应用退出、做完收尾后就会退出。", "Quitting MacBox… It will quit once the apps have quit and finished up."))
+            Text("正在退出 MacBox…等应用退出、做完收尾后就会退出。")
                 .font(.callout)
             Spacer(minLength: 0)
         }
@@ -117,21 +115,21 @@ private struct Sidebar: View {
 
     var body: some View {
         List(selection: Binding(get: { store.destination }, set: { if let value = $0 { store.destination = value } })) {
-            Section(L("应用", "Apps")) {
-                Label(L("全部应用", "All Apps"), systemImage: "square.grid.2x2")
+            Section("应用") {
+                Label("全部应用", systemImage: "square.grid.2x2")
                     .badge(store.boxes.count)
                     .tag(Destination.allApps)
-                Label(L("运行中", "Running"), systemImage: "play.circle")
+                Label("运行中", systemImage: "play.circle")
                     .badge(store.runningBoxes.count)
                     .tag(Destination.running)
             }
-            Section(L("运行环境", "Runtime")) {
-                Label(L("虚拟 Mac", "Virtual Mac"), systemImage: "desktopcomputer")
+            Section("运行环境") {
+                Label("虚拟 Mac", systemImage: "desktopcomputer")
                     .badge(virtualMacBadge)
                     .tag(Destination.virtualMac)
             }
             Section("MacBox") {
-                Label(L("设置", "Settings"), systemImage: "gearshape")
+                Label("设置", systemImage: "gearshape")
                     .tag(Destination.settings)
             }
         }
@@ -139,15 +137,15 @@ private struct Sidebar: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 6) {
                 Button { importApps() } label: {
-                    Label(L("添加应用", "Add App"), systemImage: "plus")
+                    Label("添加应用", systemImage: "plus")
                         .font(.body.weight(.medium))
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .disabled(store.isTerminating)
-                .help(L("选择 .dmg、.app、.pkg 或 .zip（⌘O）", "Choose a .dmg, .app, .pkg or .zip (⌘O)"))
-                Text(L("也可以把安装包拖进窗口", "Or drop an installer into the window"))
+                .help("选择 .dmg、.app、.pkg 或 .zip（⌘O）")
+                Text("也可以把安装包拖进窗口")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -158,8 +156,8 @@ private struct Sidebar: View {
 
     private var virtualMacBadge: Text? {
         switch virtualMac.status {
-        case .notSetUp: Text(L("未设置", "Not Set Up"))
-        case .unreadable: Text(L("无法读取", "Unreadable"))
+        case .notSetUp: Text("未设置")
+        case .unreadable: Text("无法读取")
         // 和「虚拟 Mac」页、窗口标题用同一套说法（关机但留有睡眠状态时是「睡眠中」）
         case .stopped: virtualMac.isAsleep ? Text(virtualMac.displayStatus) : nil
         default: Text(virtualMac.displayStatus)
@@ -173,7 +171,7 @@ private struct DropHighlight: View {
             .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 3, dash: [9, 6]))
             .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay {
-                Label(L("放进 MacBox", "Drop into MacBox"), systemImage: "tray.and.arrow.down.fill")
+                Label("放进 MacBox", systemImage: "tray.and.arrow.down.fill")
                     .font(.title2.weight(.semibold))
                     .padding(.horizontal, 18).padding(.vertical, 10)
                     .background(.regularMaterial, in: Capsule())

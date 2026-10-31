@@ -115,7 +115,6 @@ nonisolated enum AppLock {
 
     private static func failure(_ name: String) -> Error {
         let reason = String(cString: strerror(errno))
-        return MacBoxError(L("无法修改「\(name)」的执行权限：\(reason)",
-                             "Couldn’t change the execute permission of “\(name)”: \(reason)"))
+        return MacBoxError(String(localized: "无法修改「\(name)」的执行权限：\(reason)"))
     }
 }

@@ -82,16 +82,14 @@ nonisolated struct VirtualMacBundle: Sendable {
     func loadConfig() throws -> VirtualMacConfig? {
         guard FileManager.default.fileExists(atPath: configURL.path) else {
             if FileManager.default.fileExists(atPath: diskURL.path) {
-                throw MacBoxError(L("找不到配置文件 config.json，但虚拟硬盘还在",
-                                    "The configuration file config.json is missing, but the virtual disk is still there"))
+                throw MacBoxError(String(localized: "找不到配置文件 config.json，但虚拟硬盘还在"))
             }
             return nil
         }
         do {
             return try JSONDecoder().decode(VirtualMacConfig.self, from: Data(contentsOf: configURL))
         } catch is DecodingError {
-            throw MacBoxError(L("配置文件 config.json 格式无法识别，可能来自更新版本的 MacBox 或已损坏",
-                                "The configuration file config.json isn’t in a recognized format. It may be from a newer version of MacBox, or it may be damaged"))
+            throw MacBoxError(String(localized: "配置文件 config.json 格式无法识别，可能来自更新版本的 MacBox 或已损坏"))
         }
     }
 
@@ -117,7 +115,7 @@ nonisolated struct VirtualMacBundle: Sendable {
         let data = key.withUnsafeBytes { Data($0) }
         guard FileManager.default.createFile(atPath: quarantineKeyURL.path, contents: data,
                                              attributes: [.posixPermissions: 0o600]) else {
-            throw MacBoxError(L("无法保存隔离标记的密钥", "Couldn’t save the quarantine key"))
+            throw MacBoxError(String(localized: "无法保存隔离标记的密钥"))
         }
         return key
     }
@@ -138,7 +136,7 @@ nonisolated struct VirtualMacBundle: Sendable {
     func createDisk(sizeGB: Int) throws {
         try FileOps.removeIfExists(diskURL)
         guard FileManager.default.createFile(atPath: diskURL.path, contents: nil) else {
-            throw MacBoxError(L("无法创建虚拟硬盘文件", "Couldn’t create the virtual disk file"))
+            throw MacBoxError(String(localized: "无法创建虚拟硬盘文件"))
         }
         let handle = try FileHandle(forWritingTo: diskURL)
         defer { try? handle.close() }
@@ -147,15 +145,15 @@ nonisolated struct VirtualMacBundle: Sendable {
 
     func loadHardwareModel() throws -> VZMacHardwareModel {
         guard let model = VZMacHardwareModel(dataRepresentation: try Data(contentsOf: hardwareModelURL)) else {
-            throw MacBoxError(L("硬件型号数据损坏", "The hardware model data is damaged"))
+            throw MacBoxError(String(localized: "硬件型号数据损坏"))
         }
-        guard model.isSupported else { throw MacBoxError(L("这台 Mac 不支持虚拟 Mac 的硬件型号", "This Mac doesn’t support the Virtual Mac’s hardware model")) }
+        guard model.isSupported else { throw MacBoxError(String(localized: "这台 Mac 不支持虚拟 Mac 的硬件型号")) }
         return model
     }
 
     func loadMachineIdentifier() throws -> VZMacMachineIdentifier {
         guard let id = VZMacMachineIdentifier(dataRepresentation: try Data(contentsOf: machineIdentifierURL)) else {
-            throw MacBoxError(L("机器标识数据损坏", "The machine identifier data is damaged"))
+            throw MacBoxError(String(localized: "机器标识数据损坏"))
         }
         return id
     }

@@ -271,7 +271,7 @@ final class PackageExtractorTests {
 
     // MARK: - 没找到
 
-    static let notFoundInDiskImage = L("磁盘映像里没有找到 App 或安装包", "No app or installer package was found in the disk image")
+    static let notFoundInDiskImage = "磁盘映像里没有找到 App 或安装包"
 
     @Test("dmg 里只有无关的压缩包（说明文档、坏的压缩包）：报磁盘映像里没找到，不报里面压缩包的错")
     func unrelatedArchivesInDiskImage() async throws {
@@ -308,7 +308,7 @@ final class PackageExtractorTests {
             try await PackageExtractor.extractApp(from: package, into: self.output())
         }
         let error = PackageExtractor.NeedsVirtualMac()
-        #expect(error.localizedDescription == error.message && error.message.contains(L("虚拟 Mac", "Virtual Mac")))
+        #expect(error.localizedDescription == error.message && error.message.contains("虚拟 Mac"))
         #expect(await noImagesAttached())
     }
 

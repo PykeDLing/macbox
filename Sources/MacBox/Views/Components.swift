@@ -35,13 +35,13 @@ extension View {
 
     /// 强制退出前确认（详情栏和卡片的右键菜单共用）：没有存储的内容会丢失。target 非 nil 时弹出
     func forceQuitConfirmation(_ target: Binding<Box?>) -> some View {
-        confirmationDialog(L("强制退出「\(target.wrappedValue?.config.name ?? "")」？", "Force quit “\(target.wrappedValue?.config.name ?? "")”?"),
+        confirmationDialog(String(localized: "强制退出「\(target.wrappedValue?.config.name ?? "")」？"),
                            isPresented: Binding(get: { target.wrappedValue != nil }, set: { if !$0 { target.wrappedValue = nil } }),
                            titleVisibility: .visible, presenting: target.wrappedValue) { box in
-            Button(L("强制退出", "Force Quit"), role: .destructive) { Task { await box.forceQuit() } }
-            Button(L("取消", "Cancel"), role: .cancel) {}
+            Button("强制退出", role: .destructive) { Task { await box.forceQuit() } }
+            Button("取消", role: .cancel) {}
         } message: { _ in
-            Text(L("没有存储的内容会丢失。", "Any unsaved changes will be lost."))
+            Text("没有存储的内容会丢失。")
         }
     }
 }
@@ -58,7 +58,7 @@ struct Banner: View {
             Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             Button(action: onClose) { Image(systemName: "xmark") }
                 .buttonStyle(.borderless)
-                .accessibilityLabel(L("关闭", "Close"))
+                .accessibilityLabel("关闭")
         }
         .font(.callout)
     }

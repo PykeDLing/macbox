@@ -441,19 +441,15 @@ struct LifecycleTests {
         #expect(try sandboxedPaths.loadConfig().issues == sandboxed.config.issues, "要存回 box.json")
 
         // 一定运行不了：卡片和询问都不说“可能”；其他问题照旧
-        Localization.$testLanguage.withValue(.chinese) {
-            #expect(BoxStatusTag.State(sandboxed).title == "需要虚拟 Mac")
-            #expect(!BoxStatusTag.State(declined).title.contains("虚拟 Mac"))
-            #expect(BoxInspector.virtualMacLinkTitle(sandboxed) == "本机隔离运行不了它，改用虚拟 Mac 运行")
-            #expect(BoxInspector.virtualMacLinkTitle(declined) == "软件不正常？改用虚拟 Mac 运行")
-        }
+        #expect(BoxStatusTag.State(sandboxed).title == "需要虚拟 Mac")
+        #expect(!BoxStatusTag.State(declined).title.contains("虚拟 Mac"))
+        #expect(BoxInspector.virtualMacLinkTitle(sandboxed) == "本机隔离运行不了它，改用虚拟 Mac 运行")
+        #expect(BoxInspector.virtualMacLinkTitle(declined) == "软件不正常？改用虚拟 Mac 运行")
         #expect(!store.reviewCompatibility(of: sandboxed))
         let prompt = try #require(store.prompt)
         #expect(prompt.boxID == sandboxed.id && prompt.cannotRunNatively)
-        Localization.$testLanguage.withValue(.chinese) {
-            #expect(prompt.title == "「Sandboxed」无法在本机隔离中运行")
-            #expect(prompt.message.hasSuffix("要在 MacBox 里运行它，只能改用虚拟 Mac。"))
-        }
+        #expect(prompt.title == "「Sandboxed」无法在本机隔离中运行")
+        #expect(prompt.message.hasSuffix("要在 MacBox 里运行它，只能改用虚拟 Mac。"))
         store.dismissPrompt(id: prompt.id)
 
         let container = AppPaths.realHome.appending(path: "Library/Containers/\(sandboxed.config.bundleIdentifier)")

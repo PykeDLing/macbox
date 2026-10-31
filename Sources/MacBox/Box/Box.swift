@@ -186,8 +186,7 @@ final class Box: Identifiable {
             // 主进程已退出，只剩没有界面的后台程序撑着这次运行，“切换过去”什么也不会发生。
             // 请它们退出，这次运行结束后重新打开
             pendingOpen = .user
-            let message = L("「\(config.name)」的主程序已经退出，还有后台程序在运行。正在让它们退出，之后重新打开。",
-                            "“\(config.name)” has quit, but some of its background processes are still running. MacBox is asking them to quit and will then open the app again.")
+            let message = String(localized: "「\(config.name)」的主程序已经退出，还有后台程序在运行。正在让它们退出，之后重新打开。")
             notice = message
             reopenNotice = message
             quit()
@@ -228,13 +227,11 @@ final class Box: Identifiable {
         let others = (store?.boxes ?? []).filter { $0 !== self && PreferenceLease.overlaps($0.config.preferencePrefixes, prefixes) }
         if let other = others.first(where: \.isLive) {
             let name = other.config.name
-            return L("「\(name)」正在运行，它和这个应用使用同一组偏好设置，不能同时打开。请先退出「\(name)」。",
-                     "“\(name)” is running and shares preferences with this app, so they can’t be open at the same time. Quit “\(name)” first.")
+            return String(localized: "「\(name)」正在运行，它和这个应用使用同一组偏好设置，不能同时打开。请先退出「\(name)」。")
         }
         if let other = others.first(where: { PreferenceLease(box: $0.paths, prefixes: $0.config.preferencePrefixes).isOutstanding }) {
             let name = other.config.name
-            return L("「\(name)」上次运行时借出的偏好设置还没有收回，它和这个应用使用同一组偏好设置。请先打开再退出一次「\(name)」，或者重新打开 MacBox，让 MacBox 收回它的设置。",
-                     "The preferences “\(name)” used last time haven’t been returned yet, and it shares preferences with this app. Open and quit “\(name)” once, or reopen MacBox, so MacBox can return them.")
+            return String(localized: "「\(name)」上次运行时借出的偏好设置还没有收回，它和这个应用使用同一组偏好设置。请先打开再退出一次「\(name)」，或者重新打开 MacBox，让 MacBox 收回它的设置。")
         }
         let boxes = FileOps.realPath(AppPaths.boxes) + "/"
         let native = NSWorkspace.shared.runningApplications.first { app in
@@ -244,8 +241,7 @@ final class Box: Identifiable {
         }
         if let native {
             let name = native.localizedName ?? native.bundleIdentifier ?? ""
-            return L("这台 Mac 上直接安装的「\(name)」正在运行，它和盒子里的应用使用同一组偏好设置。请先退出它（没有窗口的后台程序可以在「活动监视器」里退出），再打开盒子里的应用。",
-                     "“\(name)”, installed directly on this Mac, is running and shares preferences with the app in the box. Quit it first (background processes without a window can be quit in Activity Monitor), then open the app in the box.")
+            return String(localized: "这台 Mac 上直接安装的「\(name)」正在运行，它和盒子里的应用使用同一组偏好设置。请先退出它（没有窗口的后台程序可以在「活动监视器」里退出），再打开盒子里的应用。")
         }
         return nil
     }
@@ -274,7 +270,7 @@ final class Box: Identifiable {
             report = nil // 没有运行，没有报告：换回最近一次的
             Task { await loadLatestReport() }
             activity = .idle
-            lastError = L("启动失败：\(error.localizedDescription)", "Couldn’t open the app: \(error.localizedDescription)")
+            lastError = String(localized: "无法打开应用：\(error.localizedDescription)")
             store?.reveal(self) // 从聚焦打开时主窗口可能关着，失败了要让人看到
             return
         }
@@ -310,8 +306,7 @@ final class Box: Identifiable {
                     handingOver = false
                     return
                 }
-                notice = L("安装包已下载完成，MacBox 正在接手安装…",
-                           "The installer package has finished downloading. MacBox is taking over the installation…")
+                notice = String(localized: "安装包已下载完成，MacBox 正在接手安装…")
                 try? await Task.sleep(for: .seconds(1))
                 if self.session === session { quit() } // 不肯退出时，界面上照样提供「强制退出」
             }
@@ -399,12 +394,11 @@ final class Box: Identifiable {
     /// 只看名字和现在的前缀，不读磁盘（报告页每次刷新都调用）；别的拒绝理由点「收进盒子」时才查（见 PreferenceLease.adopt）
     func status(of stray: StrayPreference) -> StrayStatus {
         if stray.byHost {
-            return .listedOnly(L("仅限本机的设置，MacBox 收不进盒子。", "A this-Mac-only setting. MacBox can’t move these into the box."))
+            return .listedOnly(String(localized: "仅限本机的设置，MacBox 收不进盒子。"))
         }
         if PreferenceLease.domain(stray.domain, isCoveredBy: config.preferencePrefixes) { return .adopted }
         if StrayPreference.isVendorWide(stray.domain) {
-            return .listedOnly(L("这是整个厂商的名字，收进来会把这个厂商以后所有 App 的设置都算进这个盒子。",
-                                 "It’s a whole vendor’s name, so every app from this vendor would have its settings put in this box."))
+            return .listedOnly(String(localized: "这是整个厂商的名字，收进来会把这个厂商以后所有 App 的设置都算进这个盒子。"))
         }
         return .adoptable
     }
@@ -480,8 +474,7 @@ final class Box: Identifiable {
         await finishReport(outcome)
         var errors: [String] = []
         if let reason = outcome.preferencesReturnError {
-            errors.append(L("无法收回偏好设置，这台 Mac 上这个应用的设置暂时还是盒子里的内容。下次打开它或重新打开 MacBox 时会再试。原因：\(reason)",
-                            "Couldn’t return the app’s preferences to the box, so this Mac’s settings for the app are still the box’s for now. MacBox will try again the next time you open the app or MacBox. \(reason)"))
+            errors.append(String(localized: "无法收回偏好设置，这台 Mac 上这个应用的设置暂时还是盒子里的内容。下次打开它或重新打开 MacBox 时会再试。原因：\(reason)"))
         }
         // 接手安装失败等途中设置的错误也保留，一起显示
         defer { if !errors.isEmpty { lastError = ([lastError].compactMap { $0 } + errors).joined(separator: "\n") } }
@@ -500,14 +493,13 @@ final class Box: Identifiable {
         if config.resetOnQuit, restorePointDate != nil {
             if outcome.preferencesReturnError != nil {
                 // 借出的日志和本机设置的备份在 Prefs 里，还原会整个替换 Prefs，本机原来的设置就再也恢复不了
-                errors.append(L("这次没有自动还原。", "The automatic restore was skipped."))
+                errors.append(String(localized: "这次没有自动还原。"))
             } else {
                 do {
                     try await rollBack()
-                    notice = L("已按设置还原到还原点，本次运行的改动已清除。",
-                               "Restored to the restore point as set. Changes from this session were discarded.")
+                    notice = String(localized: "已按设置还原到还原点，本次运行的改动已清除。")
                 } catch {
-                    errors.append(L("自动还原失败：\(error.localizedDescription)", "Automatic restore failed: \(error.localizedDescription)"))
+                    errors.append(String(localized: "自动还原失败：\(error.localizedDescription)"))
                 }
             }
         }
@@ -520,44 +512,41 @@ final class Box: Identifiable {
         let severe = blocks.filter { $0.kind.suggestsVirtualMac && !acknowledged.contains($0.id) }
         if !severe.isEmpty {
             store?.suggestVirtualMac(for: self, reasons: severe.map {
-                L("\($0.kind.title)：\($0.targetText)", "\($0.kind.title): \($0.targetText)")
+                String(localized: "\($0.kind.title)：\($0.targetText)")
             }, blocks: severe.map(\.id))
         }
     }
 
     /// 启动后很快就以非 0 退出：多半是缺少系统里没有的组件、在沙盒里无法运行。不说的话用户看到的是“点了没反应”
     nonisolated static func quickExitMessage(name: String, status: Int32) -> String {
-        let advice = L("它可能需要这台 Mac 上没有的组件，或者在沙盒里无法运行；可以试试改用虚拟 Mac。",
-                       "It may need components this Mac doesn’t have, or it may not run in the sandbox. Try running it in Virtual Mac.")
-        // 被信号结束时退出码是 128 + 信号
+        let advice = String(localized: "它可能需要这台 Mac 上没有的组件，或者在沙盒里无法运行；可以试试改用虚拟 Mac。")
+        // 被信号结束时退出码是 128 + 信号。信号、退出码是编号，按字符串插进去，不按数字格式化
         if status > 128, status < 128 + 32 {
             let signal = status - 128
             // 不用 strsignal：它只有英文，还会带上编号（“Killed: 9”）
-            if let (chinese, english) = signalNames[signal] {
-                return L("「\(name)」启动后很快就被信号 \(signal)（\(chinese)）结束了。",
-                         "“\(name)” was ended by signal \(signal) (\(english)) right after opening. ") + advice
+            if let signalName = signalNames[signal].map({ String(localized: $0) }) {
+                return String(localized: "「\(name)」启动后很快就被信号 \(String(signal))（\(signalName)）结束了。") + advice
             }
-            return L("「\(name)」启动后很快就被信号 \(signal) 结束了。", "“\(name)” was ended by signal \(signal) right after opening. ") + advice
+            return String(localized: "「\(name)」启动后很快就被信号 \(String(signal)) 结束了。") + advice
         }
-        return L("「\(name)」启动后很快就退出了（退出码 \(status)）。", "“\(name)” quit right after opening (exit code \(status)). ") + advice
+        return String(localized: "「\(name)」启动后很快就退出了（退出码 \(String(status))）。") + advice
     }
 
-    /// 常见信号的说法（中文、英文）
-    nonisolated private static let signalNames: [Int32: (String, String)] = [
-        SIGKILL: ("强制结束", "killed"),
-        SIGTERM: ("终止", "terminated"),
-        SIGSEGV: ("内存访问错误", "segmentation fault"),
-        SIGBUS: ("总线错误", "bus error"),
-        SIGABRT: ("异常中止", "abort"),
-        SIGILL: ("非法指令", "illegal instruction"),
-        SIGTRAP: ("运行时错误", "trace trap"),
+    /// 常见信号的说法
+    nonisolated private static let signalNames: [Int32: LocalizedStringResource] = [
+        SIGKILL: LocalizedStringResource("强制结束", comment: "信号名"),
+        SIGTERM: LocalizedStringResource("终止", comment: "信号名"),
+        SIGSEGV: LocalizedStringResource("内存访问错误", comment: "信号名"),
+        SIGBUS: LocalizedStringResource("总线错误", comment: "信号名"),
+        SIGABRT: LocalizedStringResource("异常中止", comment: "信号名"),
+        SIGILL: LocalizedStringResource("非法指令", comment: "信号名"),
+        SIGTRAP: LocalizedStringResource("运行时错误", comment: "信号名"),
     ]
 
     /// 在线安装器下载完整安装包后，由 MacBox 取出真正的 App 替换安装器，然后打开（和导入时一样，需要虚拟 Mac 的先问）
     private func adoptDownloadedPackage(_ package: URL) async {
         activity = .maintenance
-        notice = L("安装器已下载「\(package.lastPathComponent)」，正在完成安装…",
-                   "The installer downloaded “\(package.lastPathComponent)”. Finishing the installation…")
+        notice = String(localized: "安装器已下载「\(package.lastPathComponent)」，正在完成安装…")
         let paths = paths
         let staging = paths.appStaging
         do {
@@ -594,7 +583,7 @@ final class Box: Identifiable {
             icon = AppIcon.load(appURL)
             // 安装器尝试写入「应用程序」被拦截是预期内的，安装已由 MacBox 完成
             blocks.removeAll { [.systemInstall, .escapedLaunch, .diskMount].contains($0.kind) }
-            notice = L("「\(config.name)」已安装到 MacBox。", "“\(config.name)” was installed in MacBox.")
+            notice = String(localized: "「\(config.name)」已安装到 MacBox。")
             // 和导入时一样：需要虚拟 Mac 的先问，不直接在本机隔离里打开
             if store?.reviewCompatibility(of: self) ?? true { pendingOpen = .user }
             activity = .idle // 空闲后打开（见 becameIdle）
@@ -602,7 +591,7 @@ final class Box: Identifiable {
             try? await Background.run { try FileOps.removeTree(staging) }
             activity = .idle
             notice = nil
-            lastError = L("完成安装失败：\(error.localizedDescription)", "Couldn’t finish the installation: \(error.localizedDescription)")
+            lastError = String(localized: "完成安装失败：\(error.localizedDescription)")
         }
     }
 
@@ -640,7 +629,7 @@ final class Box: Identifiable {
     }
 
     func restoreRestorePoint() async throws {
-        guard restorePointDate != nil else { throw MacBoxError(L("还没有还原点", "There’s no restore point yet")) }
+        guard restorePointDate != nil else { throw MacBoxError(String(localized: "还没有还原点")) }
         try await performMaintenance { try await rollBack() }
     }
 
@@ -698,9 +687,8 @@ final class Box: Identifiable {
     }
 
     private func beginMaintenance() throws {
-        guard !isRunning else { throw MacBoxError(L("请先退出应用", "Quit the app first")) }
-        guard activity == .idle else { throw MacBoxError(L("「\(config.name)」正在处理其他操作，请稍候",
-                                                            "“\(config.name)” is busy with another operation. Try again in a moment.")) }
+        guard !isRunning else { throw MacBoxError(String(localized: "请先退出应用")) }
+        guard activity == .idle else { throw MacBoxError(String(localized: "「\(config.name)」正在处理其他操作，请稍候")) }
         activity = .maintenance
     }
 
@@ -738,27 +726,24 @@ final class Box: Identifiable {
         /// 重做完成后的说明。不说“MacBox 没有正常退出”：也可能是上次做到一半失败了
         var redoneNotice: String {
             switch self {
-            case .restore: L("上次的还原没有做完，已从还原点重新还原应用的数据。",
-                             "The last restore didn’t finish, so the app’s data was restored from the restore point again.")
-            case .clear: L("上次的清除数据没有做完，已重新清除。", "The last data clearing didn’t finish, so the app’s data was cleared again.")
+            case .restore: String(localized: "上次的还原没有做完，已从还原点重新还原应用的数据。")
+            case .clear: String(localized: "上次的清除数据没有做完，已重新清除。")
             }
         }
 
         /// 打开前重做失败，这次不打开
         func refusedMessage(_ reason: String) -> String {
             switch self {
-            case .restore: L("上次的还原没有做完，这次也没能完成。为了不在只还原了一部分的数据上运行，先不打开。请再试一次「还原…」，或者删除还原点。原因：\(reason)",
-                             "The last restore didn’t finish and still couldn’t be completed, so MacBox won’t open the app on partly restored data. Try Restore again, or delete the restore point. \(reason)")
-            case .clear: L("上次的清除数据没有做完，这次也没能完成。为了不在只清除了一部分的数据上运行，先不打开。请再试一次「清除数据…」。原因：\(reason)",
-                           "The last data clearing didn’t finish and still couldn’t be completed, so MacBox won’t open the app on partly cleared data. Try Clear Data again. \(reason)")
+            case .restore: String(localized: "上次的还原没有做完，这次也没能完成。为了不在只还原了一部分的数据上运行，先不打开。请再试一次「还原…」，或者删除还原点。原因：\(reason)")
+            case .clear: String(localized: "上次的清除数据没有做完，这次也没能完成。为了不在只清除了一部分的数据上运行，先不打开。请再试一次「清除数据…」。原因：\(reason)")
             }
         }
 
         /// 启动 MacBox 时重做失败
         func failedMessage(_ reason: String) -> String {
             switch self {
-            case .restore: L("上次没有做完的还原无法完成：\(reason)", "Couldn’t finish the restore that was interrupted last time: \(reason)")
-            case .clear: L("上次没有做完的清除数据无法完成：\(reason)", "Couldn’t finish clearing the data, which was interrupted last time: \(reason)")
+            case .restore: String(localized: "上次没有做完的还原无法完成：\(reason)")
+            case .clear: String(localized: "上次没有做完的清除数据无法完成：\(reason)")
             }
         }
     }
@@ -766,8 +751,7 @@ final class Box: Identifiable {
     /// 没做完的还原，还原点却已经不在了：没法重做
     nonisolated struct PartialRestore: LocalizedError {
         var errorDescription: String? {
-            L("上次的还原没有做完，而还原点已经不在了，应用的数据可能只还原了一部分。",
-              "The last restore didn’t finish and the restore point is gone, so the app’s data may be only partly restored.")
+            String(localized: "上次的还原没有做完，而还原点已经不在了，应用的数据可能只还原了一部分。")
         }
     }
 
@@ -798,8 +782,8 @@ final class Box: Identifiable {
             try Data(work.rawValue.utf8).write(to: paths.unfinishedMarker, options: .atomic)
         } catch {
             throw MacBoxError(work == .restore
-                ? L("无法开始还原：写不了盒子文件夹（\(error.localizedDescription)）", "Couldn’t start the restore: the box folder isn’t writable (\(error.localizedDescription))")
-                : L("无法开始清除数据：写不了盒子文件夹（\(error.localizedDescription)）", "Couldn’t start clearing the data: the box folder isn’t writable (\(error.localizedDescription))"))
+                ? String(localized: "无法开始还原：写不了盒子文件夹（\(error.localizedDescription)）")
+                : String(localized: "无法开始清除数据：写不了盒子文件夹（\(error.localizedDescription)）"))
         }
     }
 
@@ -812,8 +796,7 @@ final class Box: Identifiable {
         do {
             try await lease.checkOut()
         } catch {
-            throw MacBoxError(L("这个应用上次借出的偏好设置还没收回，为了不丢掉这台 Mac 原来的设置，先不做这个操作。重新打开 MacBox，或者打开再退出一次这个应用后再试。原因：\(error.localizedDescription)",
-                                "The preferences this app borrowed last time haven’t been returned yet. To keep this Mac’s original settings safe, MacBox won’t do this until they are. Reopen MacBox, or open and quit the app once, then try again. \(error.localizedDescription)"))
+            throw MacBoxError(String(localized: "这个应用上次借出的偏好设置还没收回，为了不丢掉这台 Mac 原来的设置，先不做这个操作。重新打开 MacBox，或者打开再退出一次这个应用后再试。原因：\(error.localizedDescription)"))
         }
     }
 
@@ -833,7 +816,7 @@ final class Box: Identifiable {
         do {
             try paths.save(config)
         } catch {
-            lastError = L("无法保存设置：\(error.localizedDescription)", "Couldn’t save settings: \(error.localizedDescription)")
+            lastError = String(localized: "无法保存设置：\(error.localizedDescription)")
         }
         if old.name != config.name || old.wantsLauncher != config.wantsLauncher || old.appFolderName != config.appFolderName {
             syncLauncher()
@@ -860,7 +843,7 @@ final class Box: Identifiable {
             do {
                 try await Launcher.shared.install(paths: paths, config: config)
             } catch {
-                lastError = L("无法创建启动器：\(error.localizedDescription)", "Couldn’t create the launcher: \(error.localizedDescription)")
+                lastError = String(localized: "无法创建启动器：\(error.localizedDescription)")
             }
         }
         launcherTask = task

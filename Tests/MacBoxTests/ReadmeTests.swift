@@ -33,9 +33,9 @@ struct ReadmeTests {
     func settingsPathsExist() throws {
         let readme = try source("README.md")
         let page = try source("Sources/MacBox/Views/SettingsPage.swift")
-        // 分区标题有两种写法：Section(L("名称", …)) 和 header: { Text(L("名称", …)) }；
+        // 分区标题有两种写法：Section("名称") 和 header: { Text("名称") }；
         // 分区里的某一行（如「存储」里的“虚拟 Mac”）不算，README 不能把它当成分区来指路
-        let sections = Set(page.matches(of: /(?:Section\(|header:\s*\{\s*Text\()L\("([^"]+)"/).map { String($0.1) })
+        let sections = Set(page.matches(of: /(?:Section\(|header:\s*\{\s*Text\()"([^"]+)"/).map { String($0.1) })
 
         #expect(sections.contains("兼容性"), "没找到设置页的分区标题，匹配规则可能需要更新：\(sections.sorted())")
         #expect(!Self.settingsReferences(in: readme).isEmpty)

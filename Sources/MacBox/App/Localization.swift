@@ -1,15 +1,13 @@
 import Foundation
-import Observation
-import Synchronization
 
-/// 界面文字：中文原文和英文并排写在代码里，`L("添加应用", "Add App")`。
-/// 在视图的 body 里调用会登记对当前语言的依赖，切换语言后界面立即刷新；
-/// 模型里生成的文字（错误信息、状态说明等）保持生成时的语言
-nonisolated func L(_ chinese: String, _ english: String) -> String {
-    Localization.shared.isEnglish ? english : chinese
-}
+// 界面文字用 String Catalog（Resources/Localizable.xcstrings）：代码里写简体中文原文，它就是键，
+// 视图里直接写 Text("添加应用")，别处写 String(localized: "添加应用")；英文译文、单复数都在 catalog 里。
+// ./build.sh 编译时由 swiftc 提取用到的文字、同步进 catalog，再编译进 App 的 en.lproj。
+// 开发语言（Info.plist 的 CFBundleDevelopmentRegion）是英文：偏好语言里中英文都没有时显示英文。
+// 简体中文那边是一张张空表（见 build.sh），查不到就用键本身，不会退回英文
 
-/// 设置里可选的界面语言
+/// 设置里可选的界面语言。选择存在本 App 域的 AppleLanguages 里：系统菜单按它显示，
+/// 系统设置 › 通用 › 语言与地区 › 应用程序 改的也是它，两边始终一致。和 Apple 自己的 App 一样，重新打开 MacBox 后生效
 nonisolated enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     case system
     case chinese = "zh-Hans"
@@ -18,36 +16,23 @@ nonisolated enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .system: L("跟随系统", "System Default")
+        case .system: String(localized: "跟随系统")
         case .chinese: "简体中文"
         case .english: "English"
         }
     }
-}
 
-/// 当前界面语言。手写 Observable（而不是 @Observable 宏），这样后台线程里生成文字时也能安全读取。
-/// 选择保存在本 App 域的 AppleLanguages 里：系统菜单按它显示，系统设置 › 通用 › 语言与地区 › 应用程序 改的也是它，
-/// 两边始终一致
-nonisolated final class Localization: Observable, Sendable {
-    static let shared = Localization()
-
-    private let registrar = ObservationRegistrar()
-    private let stored: Mutex<AppLanguage>
-
-    private init() {
-        let appLanguages = CFPreferencesCopyValue("AppleLanguages" as CFString, kCFPreferencesCurrentApplication,
-                                                  kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? [String] ?? []
-        stored = Mutex(appLanguages.isEmpty ? .system : Self.match(appLanguages))
-    }
-
-    var language: AppLanguage {
+    /// 存着的选择（下次打开 MacBox 时用的语言），没有单独选过时是 .system
+    static var selected: AppLanguage {
         get {
-            registrar.access(self, keyPath: \.language)
-            return stored.withLock { $0 }
+            let languages = CFPreferencesCopyValue("AppleLanguages" as CFString, kCFPreferencesCurrentApplication,
+                                                   kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? [String] ?? []
+            guard !languages.isEmpty else { return .system }
+            // 和系统给本 App 挑选本地化的规则一致：繁体中文、其他语言按系统的规则落到简体中文或英文
+            return Bundle.preferredLocalizations(from: [chinese.rawValue, english.rawValue], forPreferences: languages).first
+                == english.rawValue ? .english : .chinese
         }
         set {
-            registrar.withMutation(of: self, keyPath: \.language) { stored.withLock { $0 = newValue } }
-            // 系统提供的文字（菜单项、文件选择框等）按 AppleLanguages 显示，下次启动生效
             if newValue == .system {
                 UserDefaults.standard.removeObject(forKey: "AppleLanguages")
             } else {
@@ -55,30 +40,36 @@ nonisolated final class Localization: Observable, Sendable {
             }
         }
     }
+}
 
-    /// 测试里用 `Localization.$testLanguage.withValue(.english)` 切换语言：只影响这个任务，不改设置
-    @TaskLocal static var testLanguage: AppLanguage?
+nonisolated extension Locale {
+    /// 界面文字实际用的语言，地区照系统的。列表、日期要和界面文字同一种语言：偏好语言排第一的可能是 MacBox 没有的语言，
+    /// Locale.current 会跟着它。语言代码本身也在 catalog 里翻译，所以总和取到的文字一致（测试里没有译文，就是简体中文）
+    static let interface: Locale = {
+        var components = Locale.Components(locale: .current)
+        components.languageComponents = Locale.Language.Components(
+            identifier: String(localized: "zh-Hans", comment: "界面语言的代码：译文填那种语言自己的代码，英文填 en"))
+        return Locale(components: components)
+    }()
+}
 
-    var isEnglish: Bool {
-        switch Self.testLanguage ?? language {
-        case .chinese: false
-        case .english: true
-        case .system: Self.systemLanguage == .english
-        }
-    }
+nonisolated extension Bundle {
+    /// 只查简体中文的 bundle（App 里的 zh-Hans.lproj，里面是空表）：中文是源语言，查不到就用键本身，所以取出来的总是中文，
+    /// 不随界面语言变化。box.json 里给旧版 MacBox 读的字段用它。测试里没有这个目录，Bundle.main 也没有译文，同样是中文
+    static let simplifiedChinese = Bundle.main.url(forResource: "zh-Hans", withExtension: "lproj").flatMap(Bundle.init(url:)) ?? .main
+}
 
-    /// 读全局域而不是 Locale.preferredLanguages：后者会被本 App 写下的 AppleLanguages 盖住
-    private static var systemLanguage: AppLanguage {
-        let languages = CFPreferencesCopyAppValue("AppleLanguages" as CFString, kCFPreferencesAnyApplication) as? [String]
-            ?? Locale.preferredLanguages
-        return match(languages)
-    }
+/// 名字按界面语言加上引号：「夸克」/“Quark”
+nonisolated func quoted(_ name: String) -> String {
+    String(localized: "「\(name)」", comment: "一个名字加上引号")
+}
 
-    /// 和系统给本 App 挑选本地化的规则一致（系统菜单因此和界面文字同一种语言）：
-    /// 繁体中文不会匹配简体，都匹配不上时用开发语言英文（Info.plist 的 CFBundleDevelopmentRegion）
-    private static func match(_ languages: [String]) -> AppLanguage {
-        let candidates = [AppLanguage.chinese.rawValue, AppLanguage.english.rawValue]
-        return Bundle.preferredLocalizations(from: candidates, forPreferences: languages).first == AppLanguage.chinese.rawValue
-            ? .chinese : .english
-    }
+/// 按界面语言连成一句：甲、乙和丙 / A, B, and C
+nonisolated func listed(_ items: [String]) -> String {
+    items.formatted(.list(type: .and).locale(.interface))
+}
+
+/// 一组名字，每个加上引号再连起来。more 为 true 时说明还有没列出来的
+nonisolated func quotedList(_ names: [String], more: Bool = false) -> String {
+    listed(names.map(quoted) + (more ? [String(localized: "其他几项", comment: "列表末尾：还有没列出来的")] : []))
 }

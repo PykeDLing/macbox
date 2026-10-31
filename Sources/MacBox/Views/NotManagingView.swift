@@ -32,16 +32,16 @@ struct NotManagingView: View {
                     .frame(maxWidth: 460)
             }
             HStack(spacing: 10) {
-                Button(L("退出", "Quit")) { NSApp.terminate(nil) }
+                Button("退出") { NSApp.terminate(nil) }
                 switch store.ownership {
                 case .otherProcess:
                     if let other = runningOther {
-                        Button(L("切换过去", "Switch to It")) { switchTo(other) }
+                        Button("切换到它") { switchTo(other) }
                             .buttonStyle(.borderedProminent)
                             .keyboardShortcut(.defaultAction)
                     }
                 case .lockUnavailable(let file, _):
-                    Button(L("在访达中显示", "Show in Finder")) { Self.reveal(file) }
+                    Button("在访达中显示") { Self.reveal(file) }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                 case .thisProcess:
@@ -57,19 +57,17 @@ struct NotManagingView: View {
 
     private var title: String {
         if case .lockUnavailable = store.ownership {
-            return L("无法确认只有这一个 MacBox 在管理盒子", "MacBox Can’t Make Sure It’s the Only One Managing the Boxes")
+            return String(localized: "无法确认只有这一个 MacBox 在管理盒子")
         }
-        return L("另一个 MacBox 正在管理这些盒子", "Another MacBox Is Managing These Boxes")
+        return String(localized: "另一个 MacBox 正在管理这些盒子")
     }
 
     private var explanation: String {
         if case .lockUnavailable(_, let reason) = store.ownership {
             let reason = BoxStore.withoutFinalPeriod(reason)
-            return L("MacBox 用下面这个文件确认同一时间只有一个 MacBox 在管理盒子，但它打不开（\(reason)）。为了不和可能正在运行的另一个 MacBox 冲突，这次先不管理盒子。删除这个文件，再重新打开 MacBox 就好。",
-                     "MacBox uses the file below to make sure only one MacBox manages the boxes at a time, but the file can’t be opened (\(reason)). To avoid conflicting with another MacBox that may be running, this one won’t manage the boxes. Delete the file, then open MacBox again.")
+            return String(localized: "MacBox 用下面这个文件确认同一时间只有一个 MacBox 在管理盒子，但它打不开（\(reason)）。为了不和可能正在运行的另一个 MacBox 冲突，这次先不管理盒子。删除这个文件，再重新打开 MacBox 就好。")
         }
-        return L("同一时间只能由一个 MacBox 管理盒子：两个一起运行时，会互相结束对方打开的应用、收回对方借出的设置。请使用正在运行的那个。",
-                 "Only one MacBox can manage the boxes at a time. If two ran together, each would quit the apps the other opened and take back the settings the other lent out. Use the one that’s already running.")
+        return String(localized: "同一时间只能由一个 MacBox 管理盒子：两个一起运行时，会互相结束对方打开的应用、收回对方借出的设置。请使用正在运行的那个。")
     }
 
     /// 正在管理的那个 MacBox 在哪里，或者打不开的锁文件在哪里
@@ -110,9 +108,9 @@ struct NotManagingView: View {
     static func describe(path: String, version: String?) -> String {
         let path = (path as NSString).abbreviatingWithTildeInPath
         if let version {
-            return L("正在运行的是：\(path)（版本 \(version)）", "The one running: \(path) (version \(version))")
+            return String(localized: "正在运行的是：\(path)（版本 \(version)）")
         }
-        return L("正在运行的是：\(path)", "The one running: \(path)")
+        return String(localized: "正在运行的是：\(path)")
     }
 
     /// 没有处理的打开请求：拖进来的文件写名字，启动器（macbox:// 的 URL）只说“从聚焦打开的应用”，ID 对人没有意义
@@ -120,18 +118,16 @@ struct NotManagingView: View {
         guard !urls.isEmpty else { return nil }
         let files = urls.filter(\.isFileURL).map(\.lastPathComponent)
         let launchers = urls.count - files.count
-        var chinese = files.isEmpty ? "" : BoxStore.chineseList(files)
-        var english = files.isEmpty ? "" : BoxStore.englishList(files)
-        if launchers > 0 {
-            chinese += (chinese.isEmpty ? "" : "和") + "从聚焦打开的应用"
-            english += (english.isEmpty ? "" : " and ") + (launchers == 1 ? "an app opened from Spotlight" : "apps opened from Spotlight")
-        }
-        let it = urls.count == 1 ? "it" : "them"
+        var items = files.map(quoted)
+        if launchers > 0 { items.append(String(localized: "\(launchers) 个从聚焦打开的应用")) }
+        // 英文按一个还是几个说 it / them，中文多个时说“把它们”
+        let one = urls.count == 1
         let advice = if case .lockUnavailable = ownership {
-            L("请删除上面的文件、重新打开 MacBox 后再打开一次。", "Delete the file above, open MacBox again, then open \(it) again.")
+            one ? String(localized: "请删除上面的文件、重新打开 MacBox 后再打开一次。")
+                : String(localized: "请删除上面的文件、重新打开 MacBox 后再把它们打开一次。")
         } else {
-            L("请到正在运行的 MacBox 里再打开一次。", "Open \(it) again in the MacBox that’s running.")
+            one ? String(localized: "请到正在运行的 MacBox 里再打开一次。") : String(localized: "请到正在运行的 MacBox 里把它们再打开一次。")
         }
-        return L("这次要打开的\(chinese)没有处理，", "Not opened: \(english). ") + advice
+        return String(localized: "这次要打开的\(listed(items))没有处理，") + advice
     }
 }

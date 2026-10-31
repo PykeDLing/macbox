@@ -169,31 +169,32 @@ struct BoxDataTests {
         let issues = try paths.loadConfig().issues
         #expect(issues.map(\.code) == old.map(\.code))
         #expect(issues.map(\.source) == old.map(\.source))
-        Localization.$testLanguage.withValue(.chinese) {
-            #expect(issues.map(\.localizedTitle) == old.map(\.title))
-            // 没通过公证的两条换了说法（spctl 的英文不再原样显示）；自带苹果沙盒的改了说明（本机隔离装不下它，
-            // 以前说的“数据存进盒子”不对）。其余照旧
-            let shown = old.enumerated().map { index, issue in
-                switch index {
-                case 2: "有开发者签名，但没有经过公证。打开时 macOS 会询问你是否信任它，请确认来源可靠。"
-                case 3: "签名没有通过检查。打开时 macOS 会询问你是否信任它，请确认来源可靠。"
-                case 11: "它已经被苹果的沙盒关在自己的容器里，读不到你的文稿和其他 App 的数据。本机隔离装不下它：套上 MacBox 的沙盒后，它一启动就会被系统结束。要完全隔开，请改用虚拟 Mac。"
-                default: issue.detail
-                }
+        #expect(issues.map(\.localizedTitle) == old.map(\.title))
+        // 没通过公证的两条换了说法（spctl 的英文不再原样显示）；自带苹果沙盒的改了说明（本机隔离装不下它，
+        // 以前说的“数据存进盒子”不对）。其余照旧
+        let shown = old.enumerated().map { index, issue in
+            switch index {
+            case 2: "有开发者签名，但没有经过公证。打开时 macOS 会询问你是否信任它，请确认来源可靠。"
+            case 3: "签名没有通过检查。打开时 macOS 会询问你是否信任它，请确认来源可靠。"
+            case 11: "它已经被苹果的沙盒关在自己的容器里，读不到你的文稿和其他 App 的数据。本机隔离装不下它：套上 MacBox 的沙盒后，它一启动就会被系统结束。要完全隔开，请改用虚拟 Mac。"
+            default: issue.detail
             }
-            #expect(issues.map(\.localizedDetail) == shown)
         }
-        Localization.$testLanguage.withValue(.english) {
-            #expect(issues[0].localizedTitle == "Passed Apple notarization check")
-            #expect(issues[0].localizedDetail == "Developer ID Application: Example Ltd (ABCDE12345)")
-            #expect(issues[1].localizedDetail == "Source verified")
-            #expect(issues[2].localizedDetail.hasPrefix("Signed by a developer but not notarized. macOS will ask whether you trust it"))
-            #expect(issues[3].localizedDetail.hasPrefix("The signature didn’t pass the check. macOS will ask whether you trust it"))
-            #expect(issues[5].localizedTitle == "System-wide background service")
-            #expect(issues[5].localizedDetail == "Registers a system service that runs at startup.")
-            #expect(issues.dropLast().allSatisfy { !$0.localizedTitle.contains(where: \.isHan) && !$0.localizedDetail.contains(where: \.isHan) })
-            #expect(issues.last?.localizedTitle == "以后才有的问题" && issues.last?.localizedDetail == "它的说明")
+        #expect(issues.map(\.localizedDetail) == shown)
+        // 英文：认得出代码的按代码生成，认不出的显示原文
+        let english = issues.compactMap { issue in
+            issue.code.map { (title: $0.title(bundle: English.bundle), detail: $0.detail(source: issue.source, bundle: English.bundle)) }
         }
+        #expect(english.count == issues.count - 1)
+        #expect(english[0].title == "Passed Apple notarization check")
+        #expect(english[0].detail == "Developer ID Application: Example Ltd (ABCDE12345)")
+        #expect(english[1].detail == "Source verified")
+        #expect(english[2].detail.hasPrefix("Signed by a developer but not notarized. macOS will ask whether you trust it"))
+        #expect(english[3].detail.hasPrefix("The signature didn’t pass the check. macOS will ask whether you trust it"))
+        #expect(english[5].title == "System-wide background service")
+        #expect(english[5].detail == "Registers a system service that runs at startup.")
+        #expect(english.allSatisfy { !$0.title.contains(where: \.isHan) && !$0.detail.contains(where: \.isHan) })
+        #expect(issues.last?.localizedTitle == "以后才有的问题" && issues.last?.localizedDetail == "它的说明")
 
         // 存回去：补上代码，旧版本要读的中文标题、说明原样留着
         var loaded = try paths.loadConfig()
@@ -207,22 +208,17 @@ struct BoxDataTests {
         #expect(try paths.loadConfig().issues == issues)
     }
 
-    @Test("新写入的兼容性问题存代码，不随界面语言变化；标题、说明显示时才按当前语言生成")
+    @Test("新写入的兼容性问题存代码，旧版本要读的标题、说明存中文；显示时才按界面语言生成")
     func issueCodes() throws {
         let paths = BoxPaths(url: root.appending(path: "\(UUID().uuidString).box"))
         defer { try? FileManager.default.removeItem(at: root) }
         try AppPaths.ensure(paths.url)
         var config = BoxConfig(id: UUID(), name: "T", bundleIdentifier: "x", appFolderName: "T.app")
-        func saved(_ language: AppLanguage) throws -> Data {
-            config.issues = Localization.$testLanguage.withValue(language) {
-                [CompatibilityIssue(.notNotarized, source: "Unnotarized Developer ID"), CompatibilityIssue(.loginItem),
-                 CompatibilityIssue(.notarized)]
-            }
-            try paths.save(config)
-            return try Data(contentsOf: paths.config)
-        }
-        let data = try saved(.english)
-        #expect(data == (try saved(.chinese)))
+        // 存进去的中文取自 Bundle.simplifiedChinese，不随界面语言变化（见 LocalizationTests.simplifiedChineseBundle）
+        config.issues = [CompatibilityIssue(.notNotarized, source: "Unnotarized Developer ID"), CompatibilityIssue(.loginItem),
+                         CompatibilityIssue(.notarized)]
+        try paths.save(config)
+        let data = try Data(contentsOf: paths.config)
         let text = String(decoding: data, as: UTF8.self)
         #expect(text.contains(#""code" : "notNotarized""#) && text.contains(#""source" : "Unnotarized Developer ID""#))
         #expect(!text.contains("Failed Apple") && !text.contains("Launch at login"), "存的中文是给旧版本读的，不随界面语言变化")
@@ -230,14 +226,11 @@ struct BoxDataTests {
         let issues = try paths.loadConfig().issues
         #expect(issues.map(\.severity) == [.limited, .limited, .info])
         #expect(issues.map(\.id) == ["notNotarized", "loginItem", "notarized"])
-        Localization.$testLanguage.withValue(.english) {
-            #expect(issues.map(\.localizedTitle) == ["Failed Apple notarization check", "Launch at login", "Passed Apple notarization check"])
-            #expect(issues[2].localizedDetail == "Source verified")
-        }
-        Localization.$testLanguage.withValue(.chinese) {
-            #expect(issues.map(\.localizedTitle) == ["未通过 Apple 公证检查", "开机自启动", "已通过 Apple 公证检查"])
-            #expect(issues[0].localizedDetail == "有开发者签名，但没有经过公证。打开时 macOS 会询问你是否信任它，请确认来源可靠。")
-        }
+        #expect(issues.map { $0.code?.title(bundle: English.bundle) }
+            == ["Failed Apple notarization check", "Launch at login", "Passed Apple notarization check"])
+        #expect(issues[2].code?.detail(source: issues[2].source, bundle: English.bundle) == "Source verified")
+        #expect(issues.map(\.localizedTitle) == ["未通过 Apple 公证检查", "开机自启动", "已通过 Apple 公证检查"])
+        #expect(issues[0].localizedDetail == "有开发者签名，但没有经过公证。打开时 macOS 会询问你是否信任它，请确认来源可靠。")
     }
 
     @Test("公证检查：spctl 的英文说法换成当前语言，认不出的不原样显示；通过时的开发者证书名原样显示")
@@ -246,18 +239,15 @@ struct BoxDataTests {
         let unknown = CompatibilityIssue(.notNotarized, source: "some future reason")
         let certificate = CompatibilityIssue(.notarized, source: "Developer ID Application: Example Ltd (ABCDE12345)")
         let notarized = CompatibilityIssue(.notarized, source: "Notarized Developer ID")
-        Localization.$testLanguage.withValue(.chinese) {
-            #expect(unsigned.localizedDetail == "没有可用的签名。打开时 macOS 会询问你是否信任它，请确认来源可靠。")
-            #expect(unknown.localizedDetail.hasPrefix("签名没有通过检查。") && !unknown.localizedDetail.contains("future"))
-            #expect(certificate.localizedDetail == "Developer ID Application: Example Ltd (ABCDE12345)")
-            #expect(notarized.localizedDetail == "已公证的开发者签名")
-        }
-        Localization.$testLanguage.withValue(.english) {
-            #expect(unsigned.localizedDetail.hasPrefix("No usable signature. macOS will ask"))
-            #expect(!unknown.localizedDetail.contains("future"))
-            #expect(notarized.localizedDetail == "Notarized developer signature")
-        }
-        #expect(CompatibilityIssue.Code.spctlSource("Unnotarized Developer ID")?.0 == CompatibilityIssue.Code.spctlSource("unnotarized developer id")?.0)
+        #expect(unsigned.localizedDetail == "没有可用的签名。打开时 macOS 会询问你是否信任它，请确认来源可靠。")
+        #expect(unknown.localizedDetail.hasPrefix("签名没有通过检查。") && !unknown.localizedDetail.contains("future"))
+        #expect(certificate.localizedDetail == "Developer ID Application: Example Ltd (ABCDE12345)")
+        #expect(notarized.localizedDetail == "已公证的开发者签名")
+        func english(_ issue: CompatibilityIssue) -> String? { issue.code?.detail(source: issue.source, bundle: English.bundle) }
+        #expect(english(unsigned)?.hasPrefix("No usable signature. macOS will ask") == true)
+        #expect(english(unknown)?.contains("future") == false)
+        #expect(english(notarized) == "Notarized developer signature")
+        #expect(CompatibilityIssue.Code.spctlSource("Unnotarized Developer ID") == CompatibilityIssue.Code.spctlSource("unnotarized developer id"))
     }
 
     @Test("偏好设置前缀：同一应用的两份、前缀包含关系都算重叠；名字相近的不算")

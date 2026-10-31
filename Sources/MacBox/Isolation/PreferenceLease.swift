@@ -72,13 +72,13 @@ nonisolated struct PreferenceLease: Sendable {
             try FileOps.removeIfExists(box.nativePrefsBackup)
             try AppPaths.ensure(box.nativePrefsBackup)
             for domain in native {
-                try step(L("无法备份这台 Mac 上「\(domain)」的设置", "Couldn’t back up this Mac’s settings for “\(domain)”")) {
+                try step(String(localized: "无法备份这台 Mac 上「\(domain)」的设置")) {
                     try savePlist(read(domain), to: box.nativePrefsBackup.appending(path: "\(domain).plist"))
                 }
             }
             // 本机有、盒子里没有的域也要清空：否则 App 会读到本机的登录状态、设备 ID
             for domain in Set(native).union(lent) {
-                try await step(L("无法把盒子里「\(domain)」的设置放进系统", "Couldn’t put the box’s settings for “\(domain)” in place")) {
+                try await step(String(localized: "无法把盒子里「\(domain)」的设置放进系统")) {
                     try await replace(domain, with: loadPlist(box.prefs.appending(path: "\(domain).plist")) ?? [:])
                 }
             }
@@ -104,7 +104,7 @@ nonisolated struct PreferenceLease: Sendable {
             // 按 lstat 判断有没有：什么都没有时（平常收回的情形）不多做任何事
             var info = stat()
             if lstat(journalURL.path, &info) == 0 {
-                try step(L("无法删除读不出来的借出日志", "Couldn’t remove the unreadable lease journal")) {
+                try step(String(localized: "无法删除读不出来的借出日志")) {
                     try FileOps.removeTree(journalURL)
                 }
             }
@@ -117,7 +117,7 @@ nonisolated struct PreferenceLease: Sendable {
 
         if journal.phase == .lent {
             for domain in domains {
-                try step(L("无法把「\(domain)」的设置存回盒子", "Couldn’t save the settings for “\(domain)” back to the box")) {
+                try step(String(localized: "无法把「\(domain)」的设置存回盒子")) {
                     let content = read(domain)
                     let file = box.prefs.appending(path: "\(domain).plist")
                     if content.isEmpty { try FileOps.removeIfExists(file) } else { try savePlist(content, to: file) }
@@ -126,12 +126,12 @@ nonisolated struct PreferenceLease: Sendable {
         }
         if journal.phase != .returning {
             journal.phase = .returning
-            try step(L("无法记录偏好设置的收回进度", "Couldn’t record the progress of returning preferences")) {
+            try step(String(localized: "无法记录偏好设置的收回进度")) {
                 try write(journal)
             }
         }
         for domain in domains {
-            try await step(L("无法恢复这台 Mac 上「\(domain)」原来的设置", "Couldn’t restore this Mac’s original settings for “\(domain)”")) {
+            try await step(String(localized: "无法恢复这台 Mac 上「\(domain)」原来的设置")) {
                 if let original = loadPlist(box.nativePrefsBackup.appending(path: "\(domain).plist")) {
                     try await replace(domain, with: original)
                 } else if !journal.nativeDomains.contains(domain) {
@@ -140,7 +140,7 @@ nonisolated struct PreferenceLease: Sendable {
                 // 本机原有、却还没有备份的域：借出在备份阶段中断，它从未被改动过，保持原样
             }
         }
-        try step(L("偏好设置已经收回，但无法删除借出日志", "Preferences were returned, but the lease journal couldn’t be removed")) {
+        try step(String(localized: "偏好设置已经收回，但无法删除借出日志")) {
             try FileOps.removeIfExists(box.nativePrefsBackup)
             try FileOps.removeIfExists(journalURL)
         }
@@ -161,35 +161,33 @@ nonisolated struct PreferenceLease: Sendable {
     func adopt(_ domain: String, strays: Set<String>, installed: Set<String>, ownIdentifier: String,
                otherBoxes: [[String]]) async throws -> [String] {
         if Self.domain(domain, isCoveredBy: prefixes) { return prefixes } // 已经收进来了
-        func refuse(_ chinese: String, _ english: String) -> MacBoxError {
-            MacBoxError(L("没有把「\(domain)」收进盒子：\(chinese)", "Didn’t move “\(domain)” into the box: \(english)"))
+        func refuse(_ reason: String) -> MacBoxError {
+            MacBoxError(String(localized: "没有把「\(domain)」收进盒子：\(reason)"))
         }
         guard strays.contains(domain), !StrayPreference.isForeign(domain, identifier: ownIdentifier, installed: []) else {
-            throw refuse("它不在那次运行新写下的设置里。", "it isn’t among the settings that run newly wrote.")
+            throw refuse(String(localized: "它不在那次运行新写下的设置里。"))
         }
         if StrayPreference.isVendorWide(domain) {
-            throw refuse("这是整个厂商的名字，收进来会把这个厂商以后所有 App 的设置都算进这个盒子。",
-                         "it’s a whole vendor’s name, so every app from this vendor would have its settings put in this box.")
+            throw refuse(String(localized: "这是整个厂商的名字，收进来会把这个厂商以后所有 App 的设置都算进这个盒子。"))
         }
         if let app = AppInspector.installedApp(overlapping: domain, installed: installed, excluding: ownIdentifier) {
-            throw refuse("这台 Mac 上装着的「\(app)」用的也是这组设置。", "“\(app)”, installed on this Mac, uses these settings too.")
+            throw refuse(String(localized: "这台 Mac 上装着的「\(app)」用的也是这组设置。"))
         }
         if otherBoxes.contains(where: { Self.overlaps([domain], $0) }) {
-            throw refuse("另一个盒子里的应用用的是这组设置。", "an app in another box uses these settings.")
+            throw refuse(String(localized: "另一个盒子里的应用用的是这组设置。"))
         }
         guard !isOutstanding else {
-            throw refuse("这个应用上次借出的偏好设置还没收回。", "the preferences this app borrowed last time haven’t been returned yet.")
+            throw refuse(String(localized: "这个应用上次借出的偏好设置还没收回。"))
         }
         let moving = plistNames(in: systemPrefs).filter {
             Self.isSingleName($0) && Self.domain($0, isCoveredBy: [domain]) && !Self.domain($0, isCoveredBy: prefixes)
         }.sorted()
         if let native = moving.first(where: { !strays.contains($0) }) {
-            throw refuse("「\(native)」在那次运行之前就在这台 Mac 上，是本机的设置。",
-                         "“\(native)” was on this Mac before that run, so it’s this Mac’s own setting.")
+            throw refuse(String(localized: "「\(native)」在那次运行之前就在这台 Mac 上，是本机的设置。"))
         }
         try AppPaths.ensure(box.prefs)
         for name in moving {
-            try await step(L("无法把「\(name)」的设置收进盒子", "Couldn’t move the settings for “\(name)” into the box")) {
+            try await step(String(localized: "无法把「\(name)」的设置收进盒子")) {
                 let content = read(name)
                 if !content.isEmpty { try savePlist(content, to: box.prefs.appending(path: "\(name).plist")) }
                 try await replace(name, with: [:])
@@ -200,11 +198,11 @@ nonisolated struct PreferenceLease: Sendable {
 
     /// 给出错的一步加上说明：「哪一步：原因」
     private func step<T>(_ what: String, _ work: () throws -> T) throws -> T {
-        do { return try work() } catch { throw MacBoxError(L("\(what)：\(error.localizedDescription)", "\(what): \(error.localizedDescription)")) }
+        do { return try work() } catch { throw MacBoxError(String(localized: "\(what)：\(error.localizedDescription)")) }
     }
 
     private func step<T>(_ what: String, _ work: () async throws -> T) async throws -> T {
-        do { return try await work() } catch { throw MacBoxError(L("\(what)：\(error.localizedDescription)", "\(what): \(error.localizedDescription)")) }
+        do { return try await work() } catch { throw MacBoxError(String(localized: "\(what)：\(error.localizedDescription)")) }
     }
 
     // MARK: - 域
@@ -268,7 +266,7 @@ nonisolated struct PreferenceLease: Sendable {
         CFPreferencesSetMultiple(content as CFDictionary, removed as CFArray, ref, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
         guard CFPreferencesSynchronize(ref, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) else {
             // 调用方会加上是哪个域、哪一步
-            throw MacBoxError(L("偏好设置服务（cfprefsd）没有接受修改", "The preferences service (cfprefsd) didn’t accept the change"))
+            throw MacBoxError(String(localized: "偏好设置服务（cfprefsd）没有接受修改"))
         }
         if content.isEmpty {
             // 只删文件不够：cfprefsd 稍后会把缓存里的空域重新写成一个空 plist。让它自己删除整个域

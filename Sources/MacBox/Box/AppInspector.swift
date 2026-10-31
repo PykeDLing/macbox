@@ -17,7 +17,7 @@ nonisolated enum AppInspector {
     /// 仍然返回旧内容，拿旧的可执行文件路径去启动只会让 sandbox-exec 报 execvp 失败
     static func info(of app: URL) throws -> AppInfo {
         guard let info = infoDictionary(of: app) else {
-            throw MacBoxError(L("「\(app.lastPathComponent)」不是有效的 App", "“\(app.lastPathComponent)” is not a valid app"))
+            throw MacBoxError(String(localized: "「\(app.lastPathComponent)」不是有效的 App"))
         }
         // 可执行文件只能是 Contents/MacOS 里的一个文件名，带路径分隔符的不认；
         // 和 Bundle 一样：没写 CFBundleExecutable 时用包名，并要求文件真实存在
@@ -26,8 +26,7 @@ nonisolated enum AppInspector {
             ? nil : app.appending(path: "Contents/MacOS/\(executableName)")
         guard let identifier = info["CFBundleIdentifier"] as? String, !identifier.isEmpty,
               let executable, FileManager.default.fileExists(atPath: executable.path) else {
-            throw MacBoxError(L("「\(app.lastPathComponent)」缺少标识符或可执行文件",
-                                  "“\(app.lastPathComponent)” is missing a bundle identifier or executable"))
+            throw MacBoxError(String(localized: "「\(app.lastPathComponent)」缺少标识符或可执行文件"))
         }
         let localized = localizedInfoStrings(of: app)
         let name = [localized["CFBundleDisplayName"], localized["CFBundleName"], info["CFBundleDisplayName"], info["CFBundleName"]]

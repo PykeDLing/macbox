@@ -1,0 +1,17 @@
+{
+  "sourceLanguage" : "zh-Hans",
+  "strings" : {
+    "可放进 MacBox 的应用" : {
+      "comment" : "访达「显示简介」里的文稿类型名称（Info.plist 的 CFBundleTypeName）",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App Installer for MacBox"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.1"
+}

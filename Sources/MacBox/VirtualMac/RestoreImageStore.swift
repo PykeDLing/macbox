@@ -32,7 +32,7 @@ enum RestoreImageStore {
     /// 获取适用于本机的最新 macOS 镜像，已缓存则直接复用。任务取消时停止下载。
     /// onStatus 的调用全部在返回前完成，不会有迟到的进度覆盖之后的状态
     static func obtainLatest(onStatus: (String, Double?) -> Void) async throws -> URL {
-        onStatus(L("正在查询适用于这台 Mac 的最新 macOS…", "Checking for the latest macOS for this Mac…"), nil)
+        onStatus(String(localized: "正在查询适用于这台 Mac 的最新 macOS…"), nil)
         let latest = try await fetchLatestSupported()
         try Task.checkCancellation()
         let version = latest.operatingSystemVersion.displayString
@@ -47,8 +47,7 @@ enum RestoreImageStore {
         for await update in updates {
             let progress = update.total > 0 ? Double(update.written) / Double(update.total) : nil
             let written = FileOps.formatBytes(update.written), total = FileOps.formatBytes(update.total)
-            onStatus(L("正在下载 macOS \(version)（\(written) / \(total)）",
-                       "Downloading macOS \(version) (\(written) of \(total))…"), progress)
+            onStatus(String(localized: "正在下载 macOS \(version)（\(written) / \(total)）"), progress)
         }
         try await download
         return destination
@@ -122,8 +121,7 @@ nonisolated final class FileDownloader: NSObject, URLSessionDownloadDelegate, Se
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         do {
             if let http = downloadTask.response as? HTTPURLResponse, http.statusCode != 200 {
-                throw MacBoxError(L("下载失败：服务器返回 \(http.statusCode)",
-                                    "Download failed: the server returned \(http.statusCode)"))
+                throw MacBoxError(String(localized: "下载失败：服务器返回 \(String(http.statusCode))"))
             }
             // 先移到 .partial 再改名，避免留下不完整的 .ipsw
             let partial = destination.appendingPathExtension("partial")

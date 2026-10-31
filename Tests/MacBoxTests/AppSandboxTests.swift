@@ -52,13 +52,9 @@ final class AppSandboxTests {
 
         let issue = try #require(await AppInspector.scan(sandboxed).first { $0.code == .appSandbox })
         #expect(issue.severity == .needsVirtualMac)
-        Localization.$testLanguage.withValue(.chinese) {
-            #expect(issue.localizedDetail.contains("本机隔离装不下它"))
-            #expect(!issue.localizedDetail.contains("数据存进盒子"))
-        }
-        Localization.$testLanguage.withValue(.english) {
-            #expect(issue.localizedDetail.contains("Native Isolation can’t hold it"))
-        }
+        #expect(issue.localizedDetail.contains("本机隔离装不下它"))
+        #expect(!issue.localizedDetail.contains("数据存进盒子"))
+        #expect(issue.code?.detail(source: nil, bundle: English.bundle).contains("Native Isolation can’t hold it") == true)
         #expect(!(await AppInspector.scan(declined)).contains { $0.code == .appSandbox })
     }
 
@@ -66,28 +62,22 @@ final class AppSandboxTests {
     func refusesToLaunch() async throws {
         let sandboxed = try await app("Yes", entitlements: ["com.apple.security.app-sandbox": true])
         let declined = try await app("No", entitlements: ["com.apple.security.app-sandbox": false])
-        try Localization.$testLanguage.withValue(.chinese) {
-            let error = #expect(throws: MacBoxError.self) { try IsolatedSession.refuseAppSandbox(sandboxed, name: "看番") }
-            #expect(error?.localizedDescription.contains("「看番」自带苹果沙盒") == true)
-            #expect(error?.localizedDescription.contains("虚拟 Mac") == true)
-            try IsolatedSession.refuseAppSandbox(declined, name: "Docker")
-        }
+        let error = #expect(throws: MacBoxError.self) { try IsolatedSession.refuseAppSandbox(sandboxed, name: "看番") }
+        #expect(error?.localizedDescription.contains("「看番」自带苹果沙盒") == true)
+        #expect(error?.localizedDescription.contains("虚拟 Mac") == true)
+        try IsolatedSession.refuseAppSandbox(declined, name: "Docker")
     }
 
     @Test("询问的说法：自带苹果沙盒的一定运行不了，不说“可能”；其他问题照旧说“可能”")
     func promptWording() {
         let sandboxed = CompatibilityPrompt(boxID: UUID(), appName: "看番", reasons: ["自带苹果沙盒：…"], cannotRunNatively: true)
         let other = CompatibilityPrompt(boxID: UUID(), appName: "加速器", reasons: ["系统服务：…"])
-        Localization.$testLanguage.withValue(.chinese) {
-            #expect(sandboxed.title == "「看番」无法在本机隔离中运行")
-            #expect(!sandboxed.message.contains("可能") && !sandboxed.message.contains("完整功能"))
-            #expect(other.title == "「加速器」在本机隔离中可能无法正常使用")
-            #expect(other.message.contains("完整功能"))
-        }
-        Localization.$testLanguage.withValue(.english) {
-            #expect(sandboxed.title == "“看番” can’t run in Native Isolation")
-            #expect(sandboxed.message.hasSuffix("To run it in MacBox, use Virtual Mac."))
-        }
+        #expect(sandboxed.title == "「看番」无法在本机隔离中运行")
+        #expect(!sandboxed.message.contains("可能") && !sandboxed.message.contains("完整功能"))
+        #expect(other.title == "「加速器」在本机隔离中可能无法正常使用")
+        #expect(other.message.contains("完整功能"))
+        #expect(English.text("「\("看番")」无法在本机隔离中运行") == "“看番” can’t run in Native Isolation")
+        #expect(English.text("要在 MacBox 里运行它，只能改用虚拟 Mac。") == "To run it in MacBox, use Virtual Mac.")
     }
 
     @Test("旧盒子记着的“自带苹果沙盒”：不用的去掉，真用的原地换成现在的级别和说明，其他问题不动")

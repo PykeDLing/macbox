@@ -34,40 +34,38 @@ struct ReportView: View {
                         .padding(24)
                 }
             } else {
-                ContentUnavailableView(L("还没有运行报告", "No Run Reports Yet"), systemImage: "doc.text.magnifyingglass",
-                                       description: Text(L("在本机隔离中打开一次应用，退出后这里就有一份报告。",
-                                                           "Open the app once in Native Isolation, and a report appears here after it quits.")))
+                ContentUnavailableView(String(localized: "还没有运行报告"), systemImage: "doc.text.magnifyingglass",
+                                       description: Text("在本机隔离中打开一次应用，退出后这里就有一份报告。"))
                     .frame(maxHeight: .infinity)
             }
             Divider()
             HStack(spacing: 10) {
                 if reports.count > 1 {
-                    Picker(L("哪一次", "Run"), selection: Binding(get: { report?.id }, set: { selection = $0 })) {
+                    Picker("哪一次", selection: Binding(get: { report?.id }, set: { selection = $0 })) {
                         ForEach(reports) { Text(Self.label(for: $0)).tag(Optional($0.id)) }
                     }
                     .labelsHidden()
                     .fixedSize()
-                    .help(L("以前的运行报告（每个应用留最近 \(RunReport.kept) 份）",
-                            "Earlier run reports (the latest \(RunReport.kept) are kept for each app)"))
+                    .help("以前的运行报告（每个应用留最近 \(RunReport.kept) 份）")
                 }
                 Spacer()
                 if let report {
-                    Menu(L("导出", "Export")) {
-                        Button(L("拷贝文字", "Copy as Text")) {
+                    Menu(String(localized: "导出")) {
+                        Button("拷贝文字") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(report.markdown(), forType: .string)
                         }
-                        Button(L("存储为 Markdown…", "Save as Markdown…")) { saveMarkdown(report) }
-                        Button(L("存储为图片…", "Save as Image…")) { saveImage(report) }
+                        Button("存储为 Markdown…") { saveMarkdown(report) }
+                        Button("存储为图片…") { saveImage(report) }
                     }
                     .fixedSize()
                     ShareLink(item: ReportImage(report: report, appURL: box.appURL),
                               preview: SharePreview(ReportImage.fileName(report), image: Image(nsImage: box.icon))) {
-                        Label(L("分享图片", "Share Image"), systemImage: "square.and.arrow.up")
+                        Label("分享图片", systemImage: "square.and.arrow.up")
                     }
-                    .help(L("把报告做成一张图片分享出去", "Share the report as an image"))
+                    .help("把报告做成一张图片分享出去")
                 }
-                Button(L("完成", "Done")) { dismiss() }
+                Button("完成") { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
             .padding(12)
@@ -76,10 +74,10 @@ struct ReportView: View {
         // 刚结束的一次存好之后重新读一遍
         .task(id: box.report?.endedAt) { saved = await box.savedReports() }
         // 域名放在说明里：标题字大，长域名会在中间断开
-        .confirmationDialog(L("把这项设置收进盒子？", "Move This Setting Into the Box?"),
+        .confirmationDialog("把这项设置收进盒子？",
                             isPresented: Binding(get: { adopting != nil }, set: { if !$0 { adopting = nil } }),
                             presenting: adopting) { pending in
-            Button(L("收进盒子", "Move Into Box")) {
+            Button("收进盒子") {
                 Task {
                     do {
                         try await box.adoptStrayPreference(pending.stray.domain, listedIn: pending.report)
@@ -88,15 +86,14 @@ struct ReportView: View {
                     }
                 }
             }
-            Button(L("取消", "Cancel"), role: .cancel) {}
+            Button("取消", role: .cancel) {}
         } message: { pending in
             let domain = pending.stray.domain
-            Text(L("「\(domain)」会从这台 Mac 的偏好设置移进盒子（名字以它开头的也一起），以后只在应用运行时借出，删除盒子时一起删除。\n\n如果它其实属于别的程序，那个程序就读不到它了。",
-                   "“\(domain)” will move from this Mac’s preferences into the box, along with any whose names start with it. From then on it’s lent out only while the app runs, and it’s deleted with the box.\n\nIf it actually belongs to another program, that program won’t see it anymore."))
+            Text("「\(domain)」会从这台 Mac 的偏好设置移进盒子（名字以它开头的也一起），以后只在应用运行时借出，删除盒子时一起删除。\n\n如果它其实属于别的程序，那个程序就读不到它了。")
         }
-        .alert(L("没能收进盒子", "Couldn’t Move Into the Box"),
+        .alert("没能收进盒子",
                isPresented: Binding(get: { adoptionError != nil }, set: { if !$0 { adoptionError = nil } })) {
-            Button(L("好", "OK")) {}
+            Button("好") {}
         } message: {
             Text(adoptionError ?? "")
         }
@@ -105,7 +102,7 @@ struct ReportView: View {
     /// 选择器里的一项：开始时间 · 运行了多久
     static func label(for report: RunReport) -> String {
         let start = report.startedAt.formatted(date: .abbreviated, time: .shortened)
-        return report.isRunning ? L("\(start)（运行中）", "\(start) (running)") : "\(start) · \(report.durationText)"
+        return report.isRunning ? String(localized: "\(start)（运行中）") : "\(start) · \(report.durationText)"
     }
 
     private func saveMarkdown(_ report: RunReport) {
@@ -127,7 +124,7 @@ struct ReportView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             guard let data = ReportImage.png(report, icon: box.icon) else {
-                throw MacBoxError(L("无法生成图片", "Couldn’t create the image"))
+                throw MacBoxError(String(localized: "无法生成图片"))
             }
             try data.write(to: url, options: .atomic)
         } catch {
@@ -171,21 +168,21 @@ private struct ReportContent: View {
                 .interpolation(.high)
                 .frame(width: 56, height: 56)
             VStack(alignment: .leading, spacing: 4) {
-                Text(L("「\(report.appName)」运行报告", "Run Report: \(report.appName)"))
+                Text("「\(report.appName)」运行报告")
                     .font(.title2.weight(.semibold))
                 Text(report.timeText)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 6) {
-                    Tag(text: report.networkBlocked ? L("不联网", "Offline") : L("允许联网", "Network Allowed"),
+                    Tag(text: report.networkBlocked ? String(localized: "不联网") : String(localized: "可以联网"),
                         systemImage: report.networkBlocked ? "network.slash" : "network")
-                    Tag(text: report.sharesDownloads ? L("共享「下载」", "Downloads Shared") : L("不共享「下载」", "Downloads Not Shared"),
+                    Tag(text: report.sharesDownloads ? String(localized: "共享「下载」") : String(localized: "不共享「下载」"),
                         systemImage: "arrow.down.circle")
                     if let folders = report.writableFolders {
-                        Tag(text: L("可写入 \(folders.count) 个文件夹", folders.count == 1 ? "Writes to 1 Folder" : "Writes to \(folders.count) Folders"),
+                        Tag(text: String(localized: "可写入 \(folders.count) 个文件夹"),
                             systemImage: "folder")
                             .help(folders.joined(separator: "\n"))
                     }
-                    if report.isRunning { Tag(text: L("运行中，记录中", "Running, recording"), systemImage: "record.circle", tint: .green) }
+                    if report.isRunning { Tag(text: String(localized: "运行中，记录中"), systemImage: "record.circle", tint: .green) }
                 }
             }
         }
@@ -195,10 +192,10 @@ private struct ReportContent: View {
 
     @ViewBuilder
     private var filesSection: some View {
-        ReportSection(title: L("写入的文件", "Files Written"), systemImage: "doc.on.doc") {
+        ReportSection(title: String(localized: "写入的文件"), systemImage: "doc.on.doc") {
             if let files = report.files, let totals = report.fileTotals {
                 if files.isEmpty {
-                    Placeholder(L("没有写入文件。", "No files were written."))
+                    Placeholder(String(localized: "没有写入文件。"))
                 } else {
                     Text(report.filesSummary(totals))
                         .font(.callout)
@@ -209,7 +206,7 @@ private struct ReportContent: View {
                     }
                 }
             } else {
-                Placeholder(report.isRunning ? L("应用退出后统计。", "Counted after the app quits.") : L("没能统计。", "Couldn’t be counted."))
+                Placeholder(report.isRunning ? String(localized: "应用退出后统计。") : String(localized: "没能统计。"))
             }
         }
     }
@@ -218,21 +215,20 @@ private struct ReportContent: View {
 
     @ViewBuilder
     private var preferencesSection: some View {
-        ReportSection(title: L("修改的设置", "Settings Changed"), systemImage: "slider.horizontal.3") {
+        ReportSection(title: String(localized: "修改的设置"), systemImage: "slider.horizontal.3") {
             if let preferences = report.preferences {
                 if preferences.isEmpty {
-                    Placeholder(L("没有改动偏好设置。", "No preferences were changed."))
+                    Placeholder(String(localized: "没有改动偏好设置。"))
                 } else {
-                    Text(L("只记设置项的名字，不记内容。运行时借给系统，退出后都收回了盒子里。",
-                           "Only the names of the settings are recorded, not their values. They were lent to the system while the app ran and returned to the box afterwards."))
+                    Text("只记设置项的名字，不记内容。运行时借给系统，退出后都收回了盒子里。")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(preferences) { PreferenceRow(change: $0) }
                 }
             } else {
-                Placeholder(report.isRunning ? L("应用退出后统计。", "Counted after the app quits.")
-                                             : L("偏好设置没能收回，这次没有统计。", "Preferences couldn’t be returned, so they weren’t counted."))
+                Placeholder(report.isRunning ? String(localized: "应用退出后统计。")
+                                             : String(localized: "偏好设置没能收回，这次没有统计。"))
             }
         }
     }
@@ -244,7 +240,7 @@ private struct ReportContent: View {
         ReportSection(title: RunReport.strayTitle, systemImage: "exclamationmark.triangle") {
             if let strays = report.strayPreferences {
                 if strays.isEmpty {
-                    Placeholder(L("没有发现。", "None found."))
+                    Placeholder(String(localized: "没有发现。"))
                 } else {
                     Text(RunReport.strayExplanation)
                         .font(.callout)
@@ -255,8 +251,8 @@ private struct ReportContent: View {
                     }
                 }
             } else {
-                Placeholder(report.isRunning ? L("应用退出后统计。", "Counted after the app quits.")
-                                             : L("旧版 MacBox 的报告没有这一项。", "Reports from older versions of MacBox don’t include this."))
+                Placeholder(report.isRunning ? String(localized: "应用退出后统计。")
+                                             : String(localized: "旧版 MacBox 的报告没有这一项。"))
             }
         }
     }
@@ -265,12 +261,12 @@ private struct ReportContent: View {
 
     @ViewBuilder
     private var serversSection: some View {
-        ReportSection(title: L("连接的服务器", "Servers Contacted"), systemImage: "network") {
+        ReportSection(title: String(localized: "连接的服务器"), systemImage: "network") {
             if report.networkBlocked {
-                Placeholder(L("这次运行不允许联网。", "Network access was blocked for this run."))
+                Placeholder(String(localized: "这次运行不允许联网。"))
             } else if report.servers.isEmpty {
-                Placeholder(report.isRunning ? L("还没有看到网络连接。", "No network connections seen yet.")
-                                             : L("没有看到网络连接。", "No network connections were seen."))
+                Placeholder(report.isRunning ? String(localized: "还没有看到网络连接。")
+                                             : String(localized: "没有看到网络连接。"))
             } else {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(report.servers) { ServerRow(server: $0) }
@@ -283,9 +279,9 @@ private struct ReportContent: View {
 
     @ViewBuilder
     private var programsSection: some View {
-        ReportSection(title: L("启动的程序", "Programs Launched"), systemImage: "terminal") {
+        ReportSection(title: String(localized: "启动的程序"), systemImage: "terminal") {
             if report.programs.isEmpty {
-                Placeholder(L("没有看到启动程序。", "No program launches were seen."))
+                Placeholder(String(localized: "没有看到启动程序。"))
             } else {
                 ForEach(report.programs) { program in
                     ReportRow(title: program.path, detail: program.note,
@@ -299,9 +295,9 @@ private struct ReportContent: View {
 
     @ViewBuilder
     private var blocksSection: some View {
-        ReportSection(title: L("被拦下的行为", "Blocked Attempts"), systemImage: "hand.raised") {
+        ReportSection(title: String(localized: "被拦下的行为"), systemImage: "hand.raised") {
             if report.blocks.isEmpty {
-                Placeholder(L("没有记录到被拦下的行为。", "No blocked attempts were recorded."))
+                Placeholder(String(localized: "没有记录到被拦下的行为。"))
             } else {
                 ForEach(report.blocks) { block in
                     ReportRow(title: block.kind.title, detail: block.targetText, trailing: block.count > 1 ? "×\(block.count)" : nil,
@@ -320,14 +316,14 @@ private struct ReportStats: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Stat(value: report.fileTotals.map { "\($0.count)" } ?? "–", label: L("写入文件", "Files Written"))
-            Stat(value: report.preferenceKeyCount.map { "\($0)" } ?? "–", label: L("改动设置", "Settings Changed"))
+            Stat(value: report.fileTotals.map { "\($0.count)" } ?? "–", label: String(localized: "写入文件"))
+            Stat(value: report.preferenceKeyCount.map { "\($0)" } ?? "–", label: String(localized: "改动设置"))
             if let strays = report.strayPreferences, !strays.isEmpty {
-                Stat(value: "\(strays.count)", label: L("写在盒子外", "Outside the Box"), tint: strayPending ?? true ? .orange : nil)
+                Stat(value: "\(strays.count)", label: String(localized: "写在盒子外"), tint: strayPending ?? true ? .orange : nil)
             }
-            Stat(value: report.networkBlocked ? L("断网", "Off") : "\(report.servers.count)", label: L("连接服务器", "Servers"))
-            Stat(value: "\(report.programs.count)", label: L("启动程序", "Programs"))
-            Stat(value: "\(report.blockCount)", label: L("被拦下", "Blocked"),
+            Stat(value: report.networkBlocked ? String(localized: "断网") : "\(report.servers.count)", label: String(localized: "report.stat.servers", defaultValue: "连接服务器", comment: "报告统计格子的标签，要短"))
+            Stat(value: "\(report.programs.count)", label: String(localized: "report.stat.programs", defaultValue: "启动程序", comment: "报告统计格子的标签，要短"))
+            Stat(value: "\(report.blockCount)", label: String(localized: "被拦下"),
                  tint: report.blocks.contains(where: \.kind.suggestsVirtualMac) ? .orange : nil)
         }
     }
@@ -414,12 +410,12 @@ private struct FileAreaRow: View {
 
     private var detail: String {
         var parts: [String] = []
-        if area.totals.created > 0 { parts.append(L("新建 \(area.totals.created)", "\(area.totals.created) created")) }
-        if area.totals.modified > 0 { parts.append(L("修改 \(area.totals.modified)", "\(area.totals.modified) modified")) }
-        if area.totals.deleted > 0 { parts.append(L("删除 \(area.totals.deleted)", "\(area.totals.deleted) deleted")) }
-        let counts = parts.joined(separator: L("、", ", "))
+        if area.totals.created > 0 { parts.append(String(localized: "新建 \(area.totals.created)")) }
+        if area.totals.modified > 0 { parts.append(String(localized: "修改 \(area.totals.modified)")) }
+        if area.totals.deleted > 0 { parts.append(String(localized: "删除 \(area.totals.deleted)")) }
+        let counts = parts.joined(separator: String(localized: "、"))
         guard !area.examples.isEmpty else { return counts }
-        return counts + L("：", ": ") + area.examples.joined(separator: L("、", ", "))
+        return counts + String(localized: "：") + area.examples.joined(separator: String(localized: "、"))
     }
 }
 
@@ -430,7 +426,7 @@ private struct PreferenceRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 Text(change.domain)
-                if change.isNew { Tag(text: L("新建", "New"), systemImage: "plus") }
+                if change.isNew { Tag(text: String(localized: "新建"), systemImage: "plus") }
             }
             ForEach(lines, id: \.self) { line in
                 Text(line).font(.caption).foregroundStyle(.secondary).lineLimit(3)
@@ -440,11 +436,11 @@ private struct PreferenceRow: View {
     }
 
     private var lines: [String] {
-        let separator = L("、", ", ")
+        let separator = String(localized: "、")
         return [
-            change.added.isEmpty ? nil : L("新增 \(change.added.count) 项：", "\(change.added.count) added: ") + change.added.joined(separator: separator),
-            change.changed.isEmpty ? nil : L("修改 \(change.changed.count) 项：", "\(change.changed.count) changed: ") + change.changed.joined(separator: separator),
-            change.removed.isEmpty ? nil : L("删除 \(change.removed.count) 项：", "\(change.removed.count) removed: ") + change.removed.joined(separator: separator),
+            change.added.isEmpty ? nil : String(localized: "新增 \(change.added.count) 项：") + change.added.joined(separator: separator),
+            change.changed.isEmpty ? nil : String(localized: "修改 \(change.changed.count) 项：") + change.changed.joined(separator: separator),
+            change.removed.isEmpty ? nil : String(localized: "删除 \(change.removed.count) 项：") + change.removed.joined(separator: separator),
         ].compactMap { $0 }
     }
 }
@@ -462,11 +458,11 @@ private struct StrayRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(stray.domain)
-                    if stray.byHost { Tag(text: L("仅限本机", "This Mac Only"), systemImage: "desktopcomputer") }
-                    if status == .adopted { Tag(text: L("已收进盒子", "Moved Into Box"), systemImage: "checkmark", tint: .green) }
+                    if stray.byHost { Tag(text: String(localized: "仅限本机"), systemImage: "desktopcomputer") }
+                    if status == .adopted { Tag(text: String(localized: "已收进盒子"), systemImage: "checkmark", tint: .green) }
                 }
-                Text(stray.keys.isEmpty ? L("没有设置项", "No keys")
-                                        : L("\(stray.keys.count) 项：", stray.keys.count == 1 ? "1 key: " : "\(stray.keys.count) keys: ") + stray.keys.joined(separator: L("、", ", ")))
+                Text(stray.keys.isEmpty ? String(localized: "没有设置项")
+                                        : String(localized: "\(stray.keys.count) 项：") + stray.keys.joined(separator: String(localized: "、")))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(3)
                 if case .listedOnly(let reason) = status {
                     Text(reason).font(.caption).foregroundStyle(.secondary)
@@ -474,11 +470,10 @@ private struct StrayRow: View {
             }
             Spacer(minLength: 8)
             if status == .adoptable {
-                Button(L("收进盒子…", "Move Into Box…"), action: onAdopt)
+                Button("收进盒子…", action: onAdopt)
                     .disabled(!canAdopt)
-                    .help(canAdopt ? L("存进盒子，从这台 Mac 上删除，以后只在应用运行时借给系统",
-                                       "Save it in the box and remove it from this Mac; from then on it’s lent to the system only while the app runs")
-                                   : L("请先退出应用", "Quit the app first"))
+                    .help(canAdopt ? String(localized: "存进盒子，从这台 Mac 上删除，以后只在应用运行时借给系统")
+                                   : String(localized: "请先退出应用"))
             }
         }
         .padding(.vertical, 5)
@@ -524,7 +519,7 @@ struct ReportImage: Transferable {
         FileRepresentation(exportedContentType: .png) { item in
             let data = try await MainActor.run {
                 guard let data = png(item.report, icon: AppIcon.load(item.appURL)) else {
-                    throw MacBoxError(L("无法生成图片", "Couldn’t create the image"))
+                    throw MacBoxError(String(localized: "无法生成图片"))
                 }
                 return data
             }
@@ -539,7 +534,7 @@ struct ReportImage: Transferable {
     /// 「夸克网盘」运行报告 2026-10-15
     static func baseName(_ report: RunReport) -> String {
         let day = report.startedAt.formatted(.iso8601.year().month().day())
-        return L("「\(report.appName)」运行报告 \(day)", "\(report.appName) Run Report \(day)")
+        return String(localized: "「\(report.appName)」运行报告 \(day)")
             .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
     }
 
@@ -564,44 +559,43 @@ private struct ReportCard: View {
             HStack(alignment: .center, spacing: 14) {
                 Image(nsImage: icon).resizable().interpolation(.high).frame(width: 64, height: 64)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(L("运行一次「\(report.appName)」，它想在你的 Mac 上做这些",
-                           "Run “\(report.appName)” once, and here’s what it tried to do on your Mac"))
+                    Text("运行一次「\(report.appName)」，它想在你的 Mac 上做这些")
                         .font(.system(size: 20, weight: .bold))
                         .fixedSize(horizontal: false, vertical: true)
-                    Text([report.version.map { L("版本 \($0)", "Version \($0)") }, report.timeText].compactMap { $0 }.joined(separator: " · "))
+                    Text([report.version.map { String(localized: "版本 \($0)") }, report.timeText].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
             }
             ReportStats(report: report)
             if let files = report.files, !files.isEmpty {
-                CardList(title: L("写入最多的位置", "Where it wrote the most"),
+                CardList(title: String(localized: "写入最多的位置"),
                          rows: files.prefix(5).map { ($0.path, FileOps.formatBytes($0.totals.bytes)) })
             }
             if let preferences = report.preferences, !preferences.isEmpty {
-                CardList(title: L("改动的设置", "Settings changed"),
-                         rows: preferences.prefix(3).map { ($0.domain, L("\($0.added.count + $0.changed.count + $0.removed.count) 项", "\($0.added.count + $0.changed.count + $0.removed.count)")) })
+                CardList(title: String(localized: "改动的设置"),
+                         rows: preferences.prefix(3).map { ($0.domain, String(localized: "\($0.added.count + $0.changed.count + $0.removed.count) 项")) })
             }
             if let strays = report.strayPreferences, !strays.isEmpty {
-                CardList(title: L("可能是它写在盒子外的设置", "Settings it may have written outside the box"),
-                         rows: strays.prefix(3).map { ($0.domain, $0.byHost ? L("仅限本机", "This Mac only") : L("\($0.keys.count) 项", "\($0.keys.count)")) },
+                CardList(title: String(localized: "可能是它写在盒子外的设置"),
+                         rows: strays.prefix(3).map { ($0.domain, $0.byHost ? String(localized: "仅限本机") : String(localized: "\($0.keys.count) 项")) },
                          more: strays.count - 3)
             }
             if !report.networkBlocked, !report.servers.isEmpty {
-                CardList(title: L("连接的服务器", "Servers contacted"),
+                CardList(title: String(localized: "连接的服务器"),
                          rows: report.servers.prefix(6).map { ($0.title, $0.place) }, more: report.servers.count - 6)
             }
             if !report.programs.isEmpty {
-                CardList(title: L("启动的程序", "Programs launched"),
+                CardList(title: String(localized: "启动的程序"),
                          rows: report.programs.prefix(5).map { ($0.path, $0.note ?? "") }, more: report.programs.count - 5)
             }
             if !report.blocks.isEmpty {
-                CardList(title: L("被 MacBox 拦下", "Blocked by MacBox"),
+                CardList(title: String(localized: "被 MacBox 拦下"),
                          rows: report.blocks.prefix(5).map { ($0.kind.title, $0.targetText) }, more: report.blocks.count - 5)
             }
             Divider()
             HStack {
-                Text(L("由 MacBox 隔离运行并记录", "Run in isolation and recorded by MacBox"))
+                Text("由 MacBox 隔离运行并记录")
                 Spacer(minLength: 12)
                 Text("github.com/PykeDLing/macbox")
             }
@@ -630,7 +624,7 @@ private struct ReportCard: View {
                     .font(.system(size: 12))
                 }
                 if more > 0 {
-                    Text(L("还有 \(more) 项", "and \(more) more")).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("还有 \(more) 项").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
         }

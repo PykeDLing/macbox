@@ -33,7 +33,7 @@ nonisolated enum BoxKeychain {
             }
             try await create(box)
             guard await unlock(box) else {
-                throw MacBoxError(L("无法解锁盒子的钥匙串", "Couldn’t unlock the box’s keychain"))
+                throw MacBoxError(String(localized: "无法解锁盒子的钥匙串"))
             }
         }
         if !FileOps.isSymlink(box.loginKeychainLink) {
@@ -107,7 +107,7 @@ nonisolated enum BoxKeychain {
         try? FileOps.removeTree(box.keychainPassword)
         guard FileManager.default.createFile(atPath: box.keychainPassword.path, contents: Data(password.utf8),
                                              attributes: [.posixPermissions: 0o600]) else {
-            throw MacBoxError(L("无法保存钥匙串密码", "Couldn’t save the keychain password"))
+            throw MacBoxError(String(localized: "无法保存钥匙串密码"))
         }
         return password
     }

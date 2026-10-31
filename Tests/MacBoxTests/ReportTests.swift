@@ -199,30 +199,19 @@ struct ReportTests {
             ("network-inbound", "local:*:*"), ("network-outbound", "/private/var/run/mDNSResponder"),
             ("file-write-create", "/Library/LaunchDaemons/x.plist"),
         ]
-        func encoded(_ language: AppLanguage) throws -> Data {
-            let blocks = Localization.$testLanguage.withValue(language) {
-                records.compactMap { parser.categorize(operation: $0.0, target: $0.1) }
-            }
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = .sortedKeys
-            return try encoder.encode(blocks.map { var block = $0; block.lastSeen = .distantPast; return block })
-        }
-        let data = try encoded(.english)
-        #expect(data == (try encoded(.chinese)))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let data = try encoder.encode(records.compactMap { parser.categorize(operation: $0.0, target: $0.1) })
 
         let blocks = try JSONDecoder().decode([BlockEvent].self, from: data)
         #expect(blocks.map(\.target) == ["notification-center", "dns", "background-downloads", "installer-package", "login-items",
                                          "connect:443", "connect:*", "203.0.113.9:80", "listen:8080", "listen:*", "dns",
                                          "/Library/LaunchDaemons/x.plist"])
         #expect(blocks.last?.id == "backgroundService|/Library/LaunchDaemons/x.plist", "路径的 id 记在 acknowledgedBlocks 里，不能变")
-        Localization.$testLanguage.withValue(.english) {
-            #expect(blocks[5].targetText == "Connect to a server on port 443")
-            #expect(blocks[7].targetText == "203.0.113.9:80")
-        }
-        Localization.$testLanguage.withValue(.chinese) {
-            #expect(blocks[5].targetText == "连接服务器的 443 端口")
-            #expect(blocks[9].targetText == "等待别的设备连进来")
-        }
+        #expect(blocks[7].targetText == "203.0.113.9:80")
+        #expect(English.text("连接服务器的 \("443") 端口") == "Connect to a server on port 443")
+        #expect(blocks[5].targetText == "连接服务器的 443 端口")
+        #expect(blocks[9].targetText == "等待别的设备连进来")
     }
 
     @Test("0.4.0 的报告：拦截对象存的是记录时那种语言的文字，读的时候对照回代码；路径、地址原样，id 不变；两种语言都照常显示")
@@ -257,13 +246,8 @@ struct ReportTests {
         #expect(report.blocks.map(\.target) == cases.flatMap { [$0.code, $0.code] })
         #expect(report.blocks.last?.id == "systemInstall|/Library/Application Support/Vendor/x", "路径的 id 记在 acknowledgedBlocks 里，不能变")
         #expect(report.blockCount == cases.count * 4)
-        Localization.$testLanguage.withValue(.english) {
-            #expect(report.blocks.map(\.targetText) == cases.flatMap { [$0.english, $0.english] })
-        }
-        Localization.$testLanguage.withValue(.chinese) {
-            #expect(report.blocks.map(\.targetText) == cases.flatMap { [$0.chinese, $0.chinese] })
-            #expect(report.markdown().contains("| 发送通知 | 通知中心 | 2 |"))
-        }
+        #expect(report.blocks.map(\.targetText) == cases.flatMap { [$0.chinese, $0.chinese] })
+        #expect(report.markdown().contains("| 发送通知 | 通知中心 | 2 |"))
     }
 
     @Test("导出的文字包括每一类，表格里的竖线不破坏表格")
@@ -291,14 +275,10 @@ struct ReportTests {
         // 概要的英文按单复数
         report.fileTotals = FileTotals(created: 1)
         report.strayPreferences = [StrayPreference(domain: "com.example.sdk", byHost: false, keys: ["a"])]
-        Localization.$testLanguage.withValue(.english) {
-            #expect(report.summaryLine == "1 file written · 1 setting changed · 1 preference file outside the box · 1 server contacted · "
-                + "1 program launched · 1 attempt blocked")
-            report.fileTotals = FileTotals(created: 2)
-            report.blocks[0].count = 3
-            #expect(report.summaryLine.hasPrefix("2 files written · "))
-            #expect(report.summaryLine.hasSuffix(" · 3 attempts blocked"))
-        }
+        // 英文按单复数，在 catalog 里（见 LocalizationTests.plurals）
+        #expect(English.text("\(1) 个设置文件写在盒子外") == "1 preference file outside the box")
+        #expect(English.text("连接 \(1) 个服务器") == "1 server contacted")
+        #expect(English.text("启动 \(2) 个程序") == "2 programs launched")
     }
 
     @Test("以后的版本加的拦截类型认不出时算“其他”，整份报告照样读得出")
@@ -470,8 +450,6 @@ struct ReportTests {
                 == ["privacyRead", "/Users/me/.docker/run/docker.sock"])
         #expect(network("network-outbound", "/Users/meme/x.sock") == nil, "不在主目录里")
         #expect(network("network-inbound", "/Users/me/x.sock") == nil)
-        Localization.$testLanguage.withValue(.chinese) {
-            #expect(BlockEvent(kind: .privacyRead, subject: .sshAgent).targetText == "SSH 代理（ssh-agent）里你的钥匙")
-        }
+        #expect(BlockEvent(kind: .privacyRead, subject: .sshAgent).targetText == "SSH 代理（ssh-agent）里你的钥匙")
     }
 }

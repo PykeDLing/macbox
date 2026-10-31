@@ -242,10 +242,10 @@ struct WritableFolderTests {
         let report = RunReport(config: config)
         #expect(report.writableFolders == ["~/game", "/Volumes/Backup/下载"])
         #expect(report.markdown().contains("~/game、/Volumes/Backup/下载") || report.markdown().contains("~/game, /Volumes/Backup/下载"))
-        #expect(report.filesSummary(FileTotals(created: 1)).contains(L("可以写入的文件夹除外", "the folders it can write to")))
+        #expect(report.filesSummary(FileTotals(created: 1)).contains("可以写入的文件夹除外"))
         config.writableFolderPaths = []
         #expect(RunReport(config: config).writableFolders == nil)
-        #expect(!RunReport(config: config).filesSummary(FileTotals(created: 1)).contains(L("可以写入的文件夹", "folders it can write to")))
+        #expect(!RunReport(config: config).filesSummary(FileTotals(created: 1)).contains("可以写入的文件夹"))
 
         let json = #"{"location":"cloud","path":"x","totals":{"created":1,"modified":0,"deleted":0,"bytes":0},"examples":[]}"#
         let area = try JSONDecoder().decode(FileArea.self, from: Data(json.utf8))
