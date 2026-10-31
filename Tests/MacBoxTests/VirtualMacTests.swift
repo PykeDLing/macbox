@@ -686,10 +686,15 @@ final class VirtualMacTests {
 
     @Test("标不上的项目会告诉用户是哪些")
     func quarantineFailureMessage() {
-        let one = VirtualMac.quarantineFailureMessage(["a.command"])
-        let many = VirtualMac.quarantineFailureMessage(["a", "b", "c", "d"])
-        #expect(one.contains("a.command"))
-        #expect(many.contains("4") && many.contains("c") && !many.contains("d"))
+        // 两种语言都查，名字要和说明文字撞不上：以前用单个字母，系统是英文时 “couldn’t” 里的 d 就让测试失败
+        for language in [AppLanguage.chinese, .english] {
+            Localization.$testLanguage.withValue(language) {
+                let one = VirtualMac.quarantineFailureMessage(["a.command"])
+                let many = VirtualMac.quarantineFailureMessage(["Alpha.app", "Bravo.app", "Charlie.app", "Delta.app"])
+                #expect(one.contains("a.command"), "\(language)")
+                #expect(many.contains("4") && many.contains("Charlie.app") && !many.contains("Delta.app"), "\(language)")
+            }
+        }
     }
 
     @Test("虚拟 Mac 运行期间别的进程写进「传出」的新文件随即被标记，0555 的也一样，并保持原来的权限")
