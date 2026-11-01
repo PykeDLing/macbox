@@ -904,48 +904,48 @@
     },
     "「%@」启动后很快就被信号 %@ 结束了。" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "「%1$@」启动后很快就被信号 %2$@ 结束了。"
-          }
-        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "“%@” was ended by signal %@ right after opening. "
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "「%1$@」启动后很快就被信号 %2$@ 结束了。"
           }
         }
       }
     },
     "「%@」启动后很快就被信号 %@（%@）结束了。" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "「%1$@」启动后很快就被信号 %2$@（%3$@）结束了。"
-          }
-        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "“%@” was ended by signal %@ (%@) right after opening. "
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "「%1$@」启动后很快就被信号 %2$@（%3$@）结束了。"
           }
         }
       }
     },
     "「%@」启动后很快就退出了（退出码 %@）。" : {
       "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "「%1$@」启动后很快就退出了（退出码 %2$@）。"
-          }
-        },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "“%@” quit right after opening (exit code %@). "
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "「%1$@」启动后很快就退出了（退出码 %2$@）。"
           }
         }
       }
@@ -3108,6 +3108,16 @@
         }
       }
     },
+    "密码" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Password"
+          }
+        }
+      }
+    },
     "导出" : {
       "localizations" : {
         "en" : {
@@ -3454,6 +3464,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Start Setup"
+          }
+        }
+      }
+    },
+    "开机自动登录。在虚拟 Mac 里安装软件、修改系统设置时要输入这个密码，需要手动输入：在本机拷贝的内容粘贴不到虚拟 Mac 里。在虚拟 Mac 里改了密码的话，这里不会跟着变。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Logs in automatically at startup. Installing software or changing system settings in the Virtual Mac asks for this password. Type it by hand: what you copy on this Mac can’t be pasted into the Virtual Mac. If you change the password in the Virtual Mac, it won’t change here."
           }
         }
       }
@@ -4499,6 +4519,16 @@
         }
       }
     },
+    "显示" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show"
+          }
+        }
+      }
+    },
     "显示窗口" : {
       "localizations" : {
         "en" : {
@@ -5377,6 +5407,16 @@
         }
       }
     },
+    "用户名" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "User Name"
+          }
+        }
+      }
+    },
     "用聚焦搜索文件" : {
       "localizations" : {
         "en" : {
@@ -5918,12 +5958,12 @@
         }
       }
     },
-    "虚拟 Mac 还没有设置。第一次需要下载约 18 GB 的 macOS 并安装，之后所有需要它的应用共用一台。" : {
+    "虚拟 Mac 还没有设置。第一次需要下载约 25 GB 的 macOS 并安装，之后所有需要它的应用共用一台。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Virtual Mac isn’t set up yet. The first setup downloads and installs about 18 GB of macOS; after that, every app that needs it shares the same one."
+            "value" : "Virtual Mac isn’t set up yet. The first setup downloads and installs about 25 GB of macOS; after that, every app that needs it shares the same one."
           }
         }
       }
@@ -6064,6 +6104,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Setup failed: %@"
+          }
+        }
+      }
+    },
+    "设置完成。第一次开机时会自动建好账户%@并登录，不用走设置向导，密码在下方「账户」里。虚拟 Mac 的系统是英文、时区是美国太平洋时间，需要的话在它的 System Settings › General 里的 Language & Region、Date & Time 修改。都设置好后，建议关机并创建还原点。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Setup complete. On first startup, the account %@ is created and logged in automatically, with no Setup Assistant; its password is under Account below. The Virtual Mac starts in English on US Pacific time; to change that, use Language & Region and Date & Time in its System Settings › General. When everything is set up, shut down and create a restore point."
           }
         }
       }
@@ -6384,6 +6434,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Reads network interfaces, including MAC addresses"
+          }
+        }
+      }
+    },
+    "账户" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Account"
           }
         }
       }
@@ -7131,6 +7191,16 @@
         }
       }
     },
+    "隐藏" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide"
+          }
+        }
+      }
+    },
     "隐藏文件夹里多是配置和凭证，写进去的配置会被你自己的终端和工具执行，不能选。" : {
       "localizations" : {
         "en" : {
@@ -7151,12 +7221,12 @@
         }
       }
     },
-    "需要从 Apple 下载约 18 GB 的 macOS 并安装，完成后占用约 30 GB（安装镜像可在完成后删除）。整个过程约 20–40 分钟。" : {
+    "需要从 Apple 下载约 25 GB 的 macOS 并安装，完成后占用约 30 GB（安装镜像可在完成后删除）。整个过程约 20–40 分钟。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "About 18 GB of macOS will be downloaded from Apple and installed, using about 30 GB when finished (the restore image can be deleted afterward). The whole process takes about 20–40 minutes."
+            "value" : "About 25 GB of macOS will be downloaded from Apple and installed, using about 30 GB when finished (the restore image can be deleted afterward). The whole process takes about 20–40 minutes."
           }
         }
       }

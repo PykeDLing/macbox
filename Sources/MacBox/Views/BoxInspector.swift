@@ -242,7 +242,7 @@ struct BoxInspector: View {
                     .disabled(box.isRunning || box.isBusy)
             } else {
                 if !virtualMac.config.installed {
-                    Label("虚拟 Mac 还没有设置。第一次需要下载约 18 GB 的 macOS 并安装，之后所有需要它的应用共用一台。",
+                    Label("虚拟 Mac 还没有设置。第一次需要下载约 25 GB 的 macOS 并安装，之后所有需要它的应用共用一台。",
                           systemImage: "info.circle")
                         .font(.caption)
                     Button("前往设置虚拟 Mac…") { store.show(.virtualMac) }

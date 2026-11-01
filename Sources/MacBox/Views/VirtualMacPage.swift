@@ -16,6 +16,7 @@ struct VirtualMacPage: View {
     @State private var confirmUpdateRestorePoint = false
     @State private var confirmDiscardSleep = false
     @State private var confirmTrashUnreadable = false
+    @State private var showsPassword = false
 
     var body: some View {
         Form {
@@ -37,6 +38,7 @@ struct VirtualMacPage: View {
             case .unreadable(let message): unreadableSection(message)
             default:
                 exchangeSection
+                accountSection
                 resourcesSection
                 restoreSection
             }
@@ -108,7 +110,7 @@ struct VirtualMacPage: View {
     private var setupSection: some View {
         @Bindable var vm = vm
         Section("设置虚拟 Mac") {
-            Text("需要从 Apple 下载约 18 GB 的 macOS 并安装，完成后占用约 30 GB（安装镜像可在完成后删除）。整个过程约 20–40 分钟。")
+            Text("需要从 Apple 下载约 25 GB 的 macOS 并安装，完成后占用约 30 GB（安装镜像可在完成后删除）。整个过程约 20–40 分钟。")
                 .font(.callout)
             InstallSourcePicker(source: $source)
             ResourceSteppers(cpuCount: $vm.config.cpuCount, memoryGB: $vm.config.memoryGB)
@@ -228,6 +230,29 @@ struct VirtualMacPage: View {
         } footer: {
             // 放行不会在「传出」里保留：系统放行只是改隔离标记的标志位，和客体伪造分不出来，见 OutgoingQuarantine.isValidMark
             Text("在虚拟 Mac 里，这两个文件夹位于 访达 › 位置 › My Shared Files。「传出」里的文件来自虚拟 Mac，会像下载的文件一样加上隔离标记，打开时由 macOS 检查。在「传出」里放行过的应用之后还会再被检查，要长期使用请先把它移出来。")
+        }
+    }
+
+    /// 设置时自动建的账户（macOS 27 起，见 GuestAccount）。之前设置的虚拟 Mac 没有，账户是用户自己在设置向导里建的
+    @ViewBuilder
+    private var accountSection: some View {
+        if let account = vm.config.guestAccount {
+            Section {
+                LabeledContent("用户名") { Text(account.username).textSelection(.enabled) }
+                LabeledContent("密码") {
+                    HStack {
+                        Text(showsPassword ? account.password : String(repeating: "•", count: account.password.count))
+                            .monospaced()
+                            .textSelection(.enabled)
+                        Button(showsPassword ? String(localized: "隐藏") : String(localized: "显示")) { showsPassword.toggle() }
+                    }
+                }
+            } header: {
+                Text("账户")
+            } footer: {
+                // 主机的剪贴板过不去（只有 Linux 客体的 Spice 代理能共享），不提供拷贝按钮，免得以为能粘贴
+                Text("开机自动登录。在虚拟 Mac 里安装软件、修改系统设置时要输入这个密码，需要手动输入：在本机拷贝的内容粘贴不到虚拟 Mac 里。在虚拟 Mac 里改了密码的话，这里不会跟着变。")
+            }
         }
     }
 

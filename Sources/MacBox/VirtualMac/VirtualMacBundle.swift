@@ -13,6 +13,8 @@ nonisolated struct VirtualMacConfig: Codable, Hashable, Sendable {
     var osVersion: String?
     var installed = false
     var createdAt = Date()
+    /// 设置时生成、开机时交给虚拟机的账户（见 GuestAccount）。旧版本设置的、宿主或客体低于 macOS 27 的没有
+    var guestAccount: GuestAccount?
 
     /// 决定虚拟硬件的字段。睡眠状态只能用保存时同样的硬件唤醒（否则 VZErrorRestore），所以睡眠中不许改
     struct Hardware: Equatable, Sendable {
@@ -36,6 +38,33 @@ nonisolated struct VirtualMacConfig: Codable, Hashable, Sendable {
             audioEnabled = newValue.audioEnabled
             macAddress = newValue.macAddress
         }
+    }
+}
+
+/// 虚拟 Mac 里的账户。macOS 27 起，虚拟机开机时可以带上账户信息（VZMacGuestProvisioningOptions）：
+/// 装好后第一次开机时系统据此建好账户、自动登录，不出现设置向导；之后的开机忽略它，改不了已经建好的账户。
+/// 所以每次正常开机都带上：第一次开机被打断（强制关机、崩溃），下次开机照样能建好。
+/// 开机自动登录用不着密码，在虚拟 Mac 里安装软件、改系统设置时会问，所以存在 config.json 里，在「虚拟 Mac」页显示
+nonisolated struct GuestAccount: Codable, Hashable, Sendable {
+    var fullName: String
+    var username: String
+    var password: String
+
+    /// 全名用你在本机的全名。用户名固定，不跟着本机的：据测试版的反馈，和本机的用户名相同时建不成账户
+    static func generate(hostFullName: String = NSFullUserName(), hostUserName: String = NSUserName()) -> GuestAccount {
+        let name = hostFullName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return GuestAccount(fullName: name.isEmpty ? "MacBox" : name,
+                            username: hostUserName == "macbox" ? "macboxvm" : "macbox",
+                            password: randomPassword())
+    }
+
+    /// 要在虚拟 Mac 里手打（主机的剪贴板过不去），所以只用小写字母和数字，三组四个，约 56 位熵。
+    /// 去掉容易看错的（0 o 1 l i），以及法语、德语键盘上位置不同的字母（a q w z y m）：虚拟 Mac 的键盘布局不一定和你的一样
+    static func randomPassword() -> String {
+        let alphabet = Array("bcdefghjknprstuvx23456789")
+        var generator = SystemRandomNumberGenerator()
+        return (0..<3).map { _ in String((0..<4).map { _ in alphabet.randomElement(using: &generator)! }) }
+            .joined(separator: "-")
     }
 }
 

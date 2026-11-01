@@ -234,9 +234,82 @@ final class VirtualMacTests {
         try AppPaths.ensure(cache)
         #expect(VirtualMac.isCachedImage(cache.appending(path: "macOS-26.0-25A1.ipsw"), cache: cache))
         #expect(!VirtualMac.isCachedImage(root.appending(path: "Downloads/macOS.ipsw"), cache: cache))
-        let withCache = VirtualMac.setupCompleteNotice(imageIsCached: true)
-        let withoutCache = VirtualMac.setupCompleteNotice(imageIsCached: false)
-        #expect(withCache.hasPrefix(withoutCache) && withCache.count > withoutCache.count)
+        for account in [nil, GuestAccount.generate(hostFullName: "Pyke", hostUserName: "pyke")] {
+            let withCache = VirtualMac.setupCompleteNotice(imageIsCached: true, account: account)
+            let withoutCache = VirtualMac.setupCompleteNotice(imageIsCached: false, account: account)
+            #expect(withCache.hasPrefix(withoutCache) && withCache.count > withoutCache.count)
+        }
+        // 自动建了账户就不再叫用户去走设置向导，并告诉他账户名
+        let provisioned = VirtualMac.setupCompleteNotice(imageIsCached: false, account: GuestAccount.generate(hostUserName: "pyke"))
+        #expect(provisioned.contains("「macbox」") && !provisioned.contains("设置向导（"))
+        #expect(VirtualMac.setupCompleteNotice(imageIsCached: false, account: nil).contains("走完 macOS 设置向导"))
+        #expect(English.text("设置完成。第一次开机时会自动建好账户\("“macbox”")并登录，不用走设置向导，密码在下方「账户」里。虚拟 Mac 的系统是英文、时区是美国太平洋时间，需要的话在它的 System Settings › General 里的 Language & Region、Date & Time 修改。都设置好后，建议关机并创建还原点。")
+            .hasPrefix("Setup complete. On first startup, the account “macbox” is created"))
+    }
+
+    // MARK: - 账户
+
+    @Test("自动建的账户：全名取本机的，用户名不和本机的相同，密码随机、只用好认好打的字符")
+    func generatedGuestAccount() {
+        let account = GuestAccount.generate(hostFullName: "  Pyke Wu \n", hostUserName: "pyke")
+        #expect(account.fullName == "Pyke Wu" && account.username == "macbox")
+        #expect(GuestAccount.generate(hostFullName: " ", hostUserName: "pyke").fullName == "MacBox")
+        #expect(GuestAccount.generate(hostUserName: "macbox").username == "macboxvm")
+
+        let passwords = (0..<200).map { _ in GuestAccount.randomPassword() }
+        for password in passwords {
+            #expect(password.wholeMatch(of: /[bcdefghjknprstuvx2-9]{4}-[bcdefghjknprstuvx2-9]{4}-[bcdefghjknprstuvx2-9]{4}/) != nil, "\(password)")
+        }
+        #expect(Set(passwords).count == passwords.count)
+        // 字母表里的每个字符都用得到（不是只从一小段里取）
+        #expect(Set(passwords.joined().filter { $0 != "-" }).count == 25)
+    }
+
+    @Test("账户信息过得了苹果的校验；镜像低于 macOS 27 时不建账户，照旧走设置向导")
+    func guestAccountValidation() throws {
+        #expect(VirtualMac.guestAccount(forGuestMajorVersion: 26) == nil)
+        guard #available(macOS 27, *) else {
+            #expect(VirtualMac.guestAccount(forGuestMajorVersion: 27) == nil)
+            return
+        }
+        let account = try #require(VirtualMac.guestAccount(forGuestMajorVersion: 27))
+        let options = try VirtualMac.startOptions(for: account)
+        let provisioning = try #require(options.guestProvisioningOptions)
+        #expect(provisioning.username == account.username && provisioning.password == account.password)
+        #expect(provisioning.fullName == account.fullName && provisioning.logsInAutomatically && !provisioning.enablesRemoteLogin)
+        #expect(!options.startUpFromMacOSRecovery)
+
+        // 校验不通过的会被拒绝，不会带着它开机
+        for bad in [GuestAccount(fullName: "", username: "macbox", password: "abcd"),
+                    GuestAccount(fullName: "Pyke", username: "root", password: "abcd"),
+                    GuestAccount(fullName: "Pyke", username: "Mac Box", password: "abcd"),
+                    GuestAccount(fullName: "Pyke", username: "macbox", password: "abc")] {
+            #expect(throws: (any Error).self, "\(bad)") { try VirtualMac.startOptions(for: bad) }
+        }
+    }
+
+    @Test("账户随设置完成写进 config.json，读得回来；旧的 config.json 没有账户")
+    func guestAccountPersists() async throws {
+        let bundle = try makeBundle()
+        let vm = VirtualMac(bundle: bundle)
+        let account = GuestAccount.generate(hostFullName: "Pyke", hostUserName: "pyke")
+        try await vm.buildMachine {
+            try self.write("installed", to: bundle.diskURL)
+            try vm.completeSetup(osVersion: "macOS 27.2 (26B123)", guestAccount: account)
+        }
+        #expect(vm.config.guestAccount == account)
+        #expect(try savedConfig(bundle)?.guestAccount == account)
+        #expect(VirtualMac(bundle: bundle).config.guestAccount == account)
+        // 改资源时整份配置重写，账户留着
+        vm.config.cpuCount += 1
+        #expect(try savedConfig(bundle)?.guestAccount == account)
+
+        // 没有账户时不写这个字段，旧版本读得了；旧版本写的读出来是 nil
+        var old = VirtualMacConfig()
+        old.installed = true
+        try bundle.save(old)
+        #expect(read(bundle.configURL)?.contains("guestAccount") == false)
+        #expect(VirtualMac(bundle: bundle).config.guestAccount == nil)
     }
 
     @Test("镜像单选列表：同一个文件只出现一次；当前选中的文件即使不在列表里也会补上")

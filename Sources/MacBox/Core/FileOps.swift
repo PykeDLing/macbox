@@ -64,9 +64,9 @@ nonisolated enum FileOps {
         guard descriptor >= 0 else { throw MacBoxError(String(cString: strerror(errno))) }
         defer { close(descriptor) }
         var info = stat()
-        var opened = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        var opened = [UInt8](repeating: 0, count: Int(MAXPATHLEN))
         guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG, fcntl(descriptor, F_GETPATH, &opened) == 0,
-              String(cString: opened).hasPrefix(realPath(root) + "/") else {
+              String(decoding: opened.prefix { $0 != 0 }, as: UTF8.self).hasPrefix(realPath(root) + "/") else {
             throw MacBoxError(String(localized: "「\(source.lastPathComponent)」不是 App 里的普通文件"))
         }
         if fclonefileat(descriptor, AT_FDCWD, fileSystemPath(destination), 0) != 0 {

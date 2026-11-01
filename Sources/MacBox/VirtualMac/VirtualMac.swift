@@ -184,6 +184,7 @@ final class VirtualMac: NSObject {
             config.memoryGB = max(config.memoryGB, Int((requirements.minimumSupportedMemorySize + (1 << 30) - 1) >> 30))
 
             let version = image.operatingSystemVersion.displayString
+            let account = Self.guestAccount(forGuestMajorVersion: image.operatingSystemVersion.majorVersion)
             try await buildMachine {
                 installPhase = String(localized: "正在创建虚拟硬件…")
                 try bundle.createPlatformFiles(hardwareModel: requirements.hardwareModel)
@@ -197,9 +198,9 @@ final class VirtualMac: NSObject {
                 // 检查取消和开始安装之间不能有 await：安装开始前就取消它的进度，框架会抛出异常
                 try await install(installer)
                 // 放在 buildMachine 里：最后这次写盘失败也算设置失败，装好的虚拟硬件随之删掉。之后不能再有会抛错的步骤
-                try completeSetup(osVersion: "macOS \(version) (\(image.buildVersion))")
+                try completeSetup(osVersion: "macOS \(version) (\(image.buildVersion))", guestAccount: account)
             }
-            notice = Self.setupCompleteNotice(imageIsCached: source == .latest || Self.isCachedImage(ipsw))
+            notice = Self.setupCompleteNotice(imageIsCached: source == .latest || Self.isCachedImage(ipsw), account: account)
         } catch {
             status = .notSetUp
             // 取消时各阶段报的错不一样（下载是 NSURLErrorCancelled，安装是 VZErrorOperationCancelled，
@@ -227,9 +228,10 @@ final class VirtualMac: NSObject {
     /// 设置的最后一步：先把 installed = true 的配置写盘，写成了才在内存里改成「已关机」。
     /// 反过来的话写盘失败（装完 30 GB 后磁盘满了很常见）只会在界面上报个错，这次看着已经装好，
     /// 重开 MacBox 却读成「未设置」，用户再点「开始设置」就会把可能已经用过的虚拟硬盘覆盖掉
-    func completeSetup(osVersion: String) throws {
+    func completeSetup(osVersion: String, guestAccount: GuestAccount? = nil) throws {
         var done = config
         done.osVersion = osVersion
+        done.guestAccount = guestAccount
         done.installed = true
         try bundle.save(done)
         persistsConfig = false
@@ -281,10 +283,36 @@ final class VirtualMac: NSObject {
         ipsw.deletingLastPathComponent().resolvingSymlinksInPath().path == cache.resolvingSymlinksInPath().path
     }
 
-    static func setupCompleteNotice(imageIsCached: Bool) -> String {
-        let done = String(localized: "设置完成。首次启动请走完 macOS 设置向导（可以不登录 Apple 账户），然后关机并创建还原点。")
+    static func setupCompleteNotice(imageIsCached: Bool, account: GuestAccount?) -> String {
+        let done = if let account {
+            String(localized: "设置完成。第一次开机时会自动建好账户\(quoted(account.username))并登录，不用走设置向导，密码在下方「账户」里。虚拟 Mac 的系统是英文、时区是美国太平洋时间，需要的话在它的 System Settings › General 里的 Language & Region、Date & Time 修改。都设置好后，建议关机并创建还原点。")
+        } else {
+            String(localized: "设置完成。首次启动请走完 macOS 设置向导（可以不登录 Apple 账户），然后关机并创建还原点。")
+        }
         guard imageIsCached else { return done }
         return done + String(localized: "安装镜像缓存已不再需要，可以在下方「占用空间」里删除。")
+    }
+
+    // MARK: - 账户
+
+    /// 设置时给虚拟 Mac 准备的账户（见 GuestAccount）。宿主和镜像都要 macOS 27 起；苹果的校验不通过时不建，照旧走设置向导
+    static func guestAccount(forGuestMajorVersion major: Int) -> GuestAccount? {
+        guard #available(macOS 27, *), major >= 27 else { return nil }
+        let account = GuestAccount.generate()
+        return (try? startOptions(for: account)) != nil ? account : nil
+    }
+
+    /// 带上账户信息的开机选项，开机后自动登录。只在苹果的校验不通过时抛错（全名、用户名为空或不合规，密码少于 4 个字符）
+    @available(macOS 27, *)
+    static func startOptions(for account: GuestAccount) throws -> VZMacOSVirtualMachineStartOptions {
+        let provisioning = VZMacGuestProvisioningOptions()
+        provisioning.fullName = account.fullName
+        provisioning.username = account.username
+        provisioning.password = account.password
+        provisioning.logsInAutomatically = true
+        let options = VZMacOSVirtualMachineStartOptions()
+        try options.setGuestProvisioning(provisioning)
+        return options
     }
 
     // MARK: - 运行控制
@@ -337,7 +365,12 @@ final class VirtualMac: NSObject {
             if isAsleep, try await wakeFromSavedState() { return }
             let vm = try makeVirtualMachine()
             virtualMachine = vm
-            try await vm.start()
+            // 有账户就每次都带上（只有装好后第一次开机会用到，见 GuestAccount）。设置时校验过，这里不会不通过
+            if #available(macOS 27, *), let account = config.guestAccount, let options = try? Self.startOptions(for: account) {
+                try await vm.start(options: options)
+            } else {
+                try await vm.start()
+            }
             // 刚启动就停了的话 didStop 已经处理过，不能再改回「运行中」
             if vm === virtualMachine { status = .running }
         } catch {
