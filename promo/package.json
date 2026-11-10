@@ -1,0 +1,26 @@
+{
+  "name": "macbox-promo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MacBox 宣传片（Remotion）",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Promo-zh out/macbox-promo-zh.mp4",
+    "render:en": "remotion render src/index.ts Promo-en out/macbox-promo-en.mp4",
+    "poster": "remotion still src/index.ts Promo-zh ../website/public/media/macbox-promo-zh-poster.jpg --frame=372 --image-format=jpeg --jpeg-quality=80",
+    "poster:en": "remotion still src/index.ts Promo-en ../website/public/media/macbox-promo-en-poster.jpg --frame=372 --image-format=jpeg --jpeg-quality=80",
+    "site": "npm run render && npm run render:en && cp out/macbox-promo-zh.mp4 out/macbox-promo-en.mp4 ../website/public/media/ && npm run poster && npm run poster:en",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.542",
+    "@remotion/transitions": "4.0.542",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "4.0.542"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "typescript": "^5.9.0"
+  }
+}
