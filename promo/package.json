@@ -4,6 +4,10 @@
   "private": true,
   "description": "MacBox 宣传片（Remotion）",
   "scripts": {
+    "bgm": "node scripts/bgm.mjs",
+    "prestudio": "npm run bgm",
+    "prerender": "npm run bgm",
+    "prerender:en": "npm run bgm",
     "studio": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts Promo-zh out/macbox-promo-zh.mp4",
     "render:en": "remotion render src/index.ts Promo-en out/macbox-promo-en.mp4",

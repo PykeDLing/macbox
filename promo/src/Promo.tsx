@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { AbsoluteFill, useCurrentFrame } from 'remotion';
+import { AbsoluteFill, Audio, staticFile, useCurrentFrame } from 'remotion';
 import { linearTiming, TransitionSeries } from '@remotion/transitions';
 import { fade } from '@remotion/transitions/fade';
 import {
@@ -107,6 +107,8 @@ export const Promo = ({ lang }: { lang: Lang }) => {
   return (
     <LangContext.Provider value={lang}>
       <AbsoluteFill style={{ fontFamily: FONT, color: C.ink, WebkitFontSmoothing: 'antialiased' }}>
+        {/* 配乐由 scripts/bgm.mjs 算出来，小节线对着镜头的切换；淡入淡出已经做在文件里 */}
+        <Audio src={staticFile('bgm.wav')} />
         <Backdrop />
         <TransitionSeries>
           {SCENE_ORDER.flatMap((name, i) => {
