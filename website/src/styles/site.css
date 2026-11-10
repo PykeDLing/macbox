@@ -180,6 +180,153 @@ html:lang(en) h1 {
   margin-top: 14px;
 }
 
+/* 标题里的“盒子”套一个虚线框：全站“在盒子里”的记号，和宣传片里一样 */
+.boxed {
+  display: inline-block;
+  padding: 0 0.12em;
+  margin: 0 0.06em;
+  border-radius: 0.2em;
+  outline: 0.045em dashed var(--in-line);
+  outline-offset: -0.02em;
+  background: var(--in-soft);
+}
+
+/* 宣传片：首屏下面一整块，下方一排章节 */
+.film {
+  max-width: var(--max);
+  margin: 64px auto 0;
+  padding: 0 var(--gutter);
+  scroll-margin-top: calc(var(--nav-h) + 20px);
+}
+.film-frame {
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--stage);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+}
+.film-frame video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--stage);
+}
+.chapters {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+.chapters button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px 5px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.chapters button span {
+  padding: 2px 5px;
+  border-radius: 6px;
+  background: var(--fill);
+  color: var(--ink-3);
+  font:
+    11.5px 'SF Mono',
+    ui-monospace,
+    Menlo,
+    monospace;
+}
+.chapters button:hover {
+  color: var(--ink);
+}
+.chapters button[aria-current] {
+  background: var(--accent-fill);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+.chapters button[aria-current] span {
+  background: rgba(255, 255, 255, 0.2);
+  color: inherit;
+}
+/* 章节要脚本才能跳转 */
+html:not(.js) .chapters,
+html:not(.js) .film-note {
+  display: none;
+}
+.film-note {
+  margin: 14px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.film-note button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px 5px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.film-note button:hover {
+  color: var(--ink);
+}
+.film-note button[aria-pressed='true'] {
+  background: var(--accent-fill);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+.film-note button svg {
+  font-size: 15px;
+}
+@media (max-width: 760px) {
+  .film {
+    margin-top: 48px;
+  }
+  .film-frame {
+    border-radius: 16px;
+  }
+  .chapters {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    margin-inline: calc(var(--gutter) * -1);
+    padding-inline: var(--gutter);
+    scrollbar-width: none;
+  }
+  .chapters li {
+    flex: none;
+  }
+}
+
 /* 通用版块 */
 section {
   padding: var(--sec-pad) 0 0;
@@ -218,38 +365,154 @@ h2 {
   margin-right: auto;
 }
 
-/* 问题 */
-.mess {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 18px;
+/* 可以操作的演示窗口：标题下面紧跟着窗口 */
+#try .stage {
   margin-top: 44px;
 }
-.mess > div {
-  background: var(--surface);
-  border-radius: var(--radius);
+
+.more {
+  margin: 18px 0 0;
+  font-weight: 500;
+}
+
+/* 为什么：直接装在 Mac 上和装进盒子，两栏对比 */
+.compare {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 18px;
+  align-items: stretch;
+  margin-top: 44px;
+}
+.pane {
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   padding: 26px;
+  border-radius: var(--radius);
+  background: var(--surface);
   box-shadow: var(--shadow);
 }
-.mess h3 {
-  margin: 14px 0 6px;
+.pane figcaption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
   font-size: 19px;
+  font-weight: 600;
 }
-.mess p {
+.mark {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.pane-out .mark {
+  background: var(--out);
+}
+.pane-in .mark {
+  background: var(--in);
+}
+.tree {
+  list-style: none;
   margin: 0;
-  color: var(--ink-2);
-  font-size: 15px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
 }
-.mi {
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
+.tree li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+.tree code,
+.tree li > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree code {
+  padding: 0;
+  background: none;
+  font-size: 13px;
+}
+.tree em {
+  flex: none;
+  font-style: normal;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+/* 散落在外面的几条左右错开，看着就乱 */
+.pane-out .tree li {
+  background: var(--out-soft);
+  border: 1px solid var(--out-line);
+}
+.pane-out .tree li:nth-child(odd) {
+  margin-right: 8%;
+}
+.pane-out .tree li:nth-child(even) {
+  margin-left: 8%;
+}
+.pane-out .tree em {
+  color: var(--out);
+}
+.thebox {
+  flex: 1;
+  padding: 18px;
+  border-radius: 18px;
+  border: 2px dashed var(--in-line);
+  background: var(--in-soft);
+}
+.thebox-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.thebox-head b {
+  display: block;
+  line-height: 1.3;
+}
+.thebox-head small {
+  color: var(--in);
+  font-size: 13px;
+  font-weight: 600;
+}
+.thebox .tree li {
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.pane-foot {
+  margin: 16px 0 0;
+  color: var(--ink-2);
+  font-size: 14.5px;
+}
+.arrow {
+  align-self: center;
   display: grid;
   place-items: center;
-  background: var(--code-bg);
-  color: var(--ink-2);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--ink-3);
 }
-.mi svg {
+.arrow svg {
+  width: 20px;
+  height: 20px;
+  transform: rotate(45deg);
+}
+.app-ic {
+  width: 44px;
+  height: 44px;
+}
+.app-ic svg {
   width: 24px;
   height: 24px;
 }
@@ -270,121 +533,384 @@ h2 {
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
   }
 }
-@media (max-width: 760px) {
-  .mess {
+@media (max-width: 860px) {
+  .compare {
     grid-template-columns: 1fr;
+  }
+  .arrow {
+    justify-self: center;
+  }
+  .arrow svg {
+    transform: rotate(135deg);
   }
 }
 
-/* 三步 */
-.steps {
+/* 特性：便当格，每格一句话加一个小示意 */
+.bento {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 18px;
   margin-top: 44px;
-  counter-reset: s;
 }
-.step {
-  background: var(--surface);
-  border-radius: var(--radius);
-  padding: 28px;
-  box-shadow: var(--shadow);
-  position: relative;
-}
-.step::before {
-  counter-increment: s;
-  content: counter(s);
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: var(--ink);
-  color: var(--bg);
-  font-weight: 700;
-  font-size: 16px;
-}
-.step h3 {
-  margin: 16px 0 8px;
-  font-size: 21px;
-}
-.step p {
-  margin: 0;
-  color: var(--ink-2);
-  font-size: 15.5px;
-}
-.chips {
+.tile {
+  grid-column: span 2;
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 14px;
+  flex-direction: column;
+  gap: 22px;
+  padding: 26px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
-.chips span {
+.tile.span-3 {
+  grid-column: span 3;
+}
+.tile.span-4 {
+  grid-column: span 4;
+  flex-direction: row;
+  align-items: center;
+  gap: 30px;
+}
+.tile.span-4 .tile-text {
+  flex: 1 1 46%;
+  min-width: 0;
+}
+.tile.span-4 .art {
+  flex: 1 1 54%;
+  min-width: 0;
+}
+.num {
+  color: var(--link);
   font:
-    12.5px 'SF Mono',
+    600 13px 'SF Mono',
     ui-monospace,
     Menlo,
     monospace;
-  background: var(--code-bg);
-  border-radius: 6px;
-  padding: 3px 8px;
-  color: var(--ink-2);
+  letter-spacing: 0.08em;
 }
-@media (max-width: 860px) {
-  .steps {
-    grid-template-columns: 1fr;
-  }
+.tile h3 {
+  margin: 10px 0 8px;
+  font-size: 21px;
+  line-height: 1.25;
 }
-
-/* 特性网格 */
-.grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 18px;
-  margin-top: 44px;
-}
-.feat {
-  background: var(--surface);
-  border-radius: var(--radius);
-  padding: 24px;
-  box-shadow: var(--shadow);
-}
-.feat.wide {
-  grid-column: span 2;
-}
-.feat .fi {
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
-  display: grid;
-  place-items: center;
-  color: #fff;
-  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12);
-}
-.feat .fi svg {
-  width: 22px;
-  height: 22px;
-}
-.feat h3 {
-  margin: 14px 0 6px;
-  font-size: 18px;
-}
-.feat p {
+.tile p {
   margin: 0;
   color: var(--ink-2);
   font-size: 15px;
 }
-@media (max-width: 960px) {
-  .grid {
-    grid-template-columns: repeat(2, 1fr);
+.art {
+  margin-top: auto;
+}
+.art-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.art-types span {
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: var(--code-bg);
+  color: var(--ink-2);
+  font:
+    14px 'SF Mono',
+    ui-monospace,
+    Menlo,
+    monospace;
+}
+.art-dock {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px 14px;
+  border-radius: 20px;
+  background: var(--fill);
+  border: 1px solid var(--line);
+}
+.art-dock img {
+  width: 44px;
+  height: 44px;
+}
+/* 正在运行的那个：下面一个小点，隔一会儿跳一下 */
+.art-dock .running {
+  position: relative;
+  animation: dock-bounce 3.2s ease-in-out infinite;
+}
+.art-dock .running::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -9px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+@keyframes dock-bounce {
+  0%,
+  72%,
+  100% {
+    transform: none;
+  }
+  79% {
+    transform: translateY(-12px);
+  }
+  86% {
+    transform: none;
+  }
+  92% {
+    transform: translateY(-5px);
   }
 }
-@media (max-width: 560px) {
-  .grid {
+.art-report {
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+/* 两列两行：英文的标签长，四个排一行放不下 */
+.rstats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.rstats div {
+  min-width: 0;
+  padding: 7px 12px 8px;
+  border-radius: 10px;
+  background: var(--fill);
+}
+.rstats b {
+  display: block;
+  font-size: 22px;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+.rstats small {
+  display: block;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.art-report ul {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.art-report li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 2px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+.art-report li svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--out);
+}
+.art-report li code {
+  margin-left: auto;
+  padding: 0;
+  background: none;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.art-net {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--fill);
+  border: 1px solid var(--line);
+  font-weight: 600;
+}
+/* 开关用演示窗口里的那个，放大一点 */
+.art-net .switch {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  transform: scale(1.5);
+  transform-origin: 100% 50%;
+}
+.art-net .switch[aria-checked='true'] {
+  background: var(--green);
+}
+.art-net small {
+  grid-column: 1 / -1;
+  color: var(--ink-3);
+  font-size: 13px;
+  font-weight: 400;
+}
+.art-private {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+}
+.art-private li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: var(--fill);
+  border: 1px solid var(--in-line);
+  font-size: 14px;
+}
+.art-private span {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--in);
+  font-size: 13px;
+  font-weight: 600;
+}
+.art-private svg {
+  width: 13px;
+  height: 13px;
+}
+/* 还原点：一条时间线，最后一个点是现在 */
+.art-restore {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 6px;
+  background: linear-gradient(var(--fill-2), var(--fill-2)) center / calc(100% - 28px) 2px no-repeat;
+}
+.art-restore i {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--ink-3);
+}
+.art-restore i.now {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* 几个数字：深色的一条 */
+.numbers {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  margin: 18px 0 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--stage);
+  border: 1px solid var(--line);
+  color: #f5f5f7;
+}
+.numbers div {
+  min-width: 0;
+  padding: 28px 26px 26px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+.numbers div:first-child {
+  border-left: 0;
+}
+.numbers dt {
+  font-size: clamp(32px, 4.2vw, 52px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.numbers dd {
+  margin: 10px 0 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.numbers small {
+  display: block;
+  color: #a1a1a6;
+  font-size: 13.5px;
+  font-weight: 400;
+}
+@media (max-width: 960px) {
+  .bento {
     grid-template-columns: 1fr;
   }
-  .feat.wide {
+  .tile,
+  .tile.span-3,
+  .tile.span-4 {
     grid-column: auto;
+  }
+  .tile.span-4 {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 22px;
+  }
+  .numbers {
+    grid-template-columns: 1fr 1fr;
+  }
+  .numbers div:nth-child(odd) {
+    border-left: 0;
+  }
+  .numbers div:nth-child(n + 3) {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+}
+/* 工作原理：左边一段话，右边叠在一起的几层 */
+.split {
+  display: grid;
+  grid-template-columns: 5fr 6fr;
+  gap: 48px;
+  align-items: start;
+}
+.layers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.layers li {
+  position: relative;
+  padding: 20px 22px 20px 78px;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.layers .fi {
+  position: absolute;
+  left: 22px;
+  top: 20px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  color: #fff;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+.layers .fi svg {
+  width: 22px;
+  height: 22px;
+}
+.layers h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+.layers p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 15px;
+}
+@media (max-width: 860px) {
+  .split {
+    grid-template-columns: 1fr;
+    gap: 28px;
   }
 }
 
@@ -448,46 +974,66 @@ h2 {
   }
 }
 
-/* 诚实的限制 */
+/* 诚实的限制：一条一条点开看 */
 .honest {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 48px;
   align-items: start;
 }
-.honest ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.limits {
+  border-top: 1px solid var(--line);
 }
-.honest li {
-  padding: 14px 0 14px 30px;
+.limits details {
   border-bottom: 1px solid var(--line);
-  position: relative;
-  color: var(--ink-2);
-  font-size: 15.5px;
 }
-.honest li:last-child {
-  border-bottom: 0;
+.limits summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 2px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 16.5px;
+  font-weight: 600;
 }
-.honest li::before {
+.limits summary::-webkit-details-marker {
+  display: none;
+}
+.limits summary::before {
   content: '';
-  position: absolute;
-  left: 4px;
-  top: 22px;
+  flex: none;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: var(--yellow);
 }
-.honest li strong {
-  color: var(--ink);
-  font-weight: 600;
+.limits summary::after {
+  content: '+';
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1;
+}
+.limits details[open] summary::after {
+  content: '−';
+}
+.limits details p {
+  margin: 0;
+  padding: 0 2px 18px 26px;
+  color: var(--ink-2);
+  font-size: 15.5px;
 }
 @media (max-width: 860px) {
   .honest {
     grid-template-columns: 1fr;
     gap: 24px;
+  }
+}
+@media print {
+  .limits details p {
+    display: block;
   }
 }
 
@@ -738,9 +1284,8 @@ footer a:hover {
   .stage {
     margin-top: 48px;
   }
-  .mess > div,
-  .step,
-  .feat,
+  .pane,
+  .tile,
   .mode {
     padding: 22px;
   }
@@ -780,6 +1325,7 @@ footer a:hover {
     transition: none;
   }
   .dot,
+  .art-dock .running,
   .card.new,
   .blocked.new,
   .ic.hop,

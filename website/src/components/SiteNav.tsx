@@ -4,8 +4,9 @@ import { homePath, translate, type Locale } from '../lib/i18n';
 import { href, repository } from '../lib/site';
 
 const sections = [
-  ['how', '怎么用', 'How It Works'],
+  ['film', '宣传片', 'Film'],
   ['features', '特性', 'Features'],
+  ['how', '原理', 'How It Works'],
   ['modes', '运行环境', 'Runtimes'],
   ['download', '下载', 'Download'],
 ] as const;

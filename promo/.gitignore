@@ -1,0 +1,4 @@
+node_modules/
+out/
+# 配乐每次渲染前由 scripts/bgm.mjs 重新生成
+public/bgm.wav

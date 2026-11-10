@@ -271,6 +271,72 @@ struct BoxDataTests {
         #expect(long.utf8.count <= 200 && long.allSatisfy { $0 == "网" })
     }
 
+    @Test("启动器替应用声明链接：照抄应用自己的，别的 App 已经在处理的、不像 scheme 的、重复的不声明")
+    func launcherClaimsSchemes() throws {
+        let info: [String: Any] = ["CFBundleURLTypes": [
+            ["CFBundleURLName": "dev.macboxtest.downloader", "CFBundleURLSchemes": ["Magnet", "thunder", "http", "file", "bad scheme", "magnet"]],
+            ["CFBundleURLSchemes": ["https"]],
+            ["CFBundleURLSchemes": "not-a-list"],
+        ]]
+        let claims = Launcher.claims(of: info) { ["http", "https"].contains($0) }
+        #expect(claims.summary == Launcher.Claims(schemes: ["magnet", "thunder"], extensions: []))
+        let types = try #require(claims.keys["CFBundleURLTypes"] as? [[String: Any]])
+        #expect(types.count == 1, "一个 scheme 都不剩的那条不写")
+        #expect(types[0]["CFBundleURLSchemes"] as? [String] == ["magnet", "thunder"])
+        #expect(types[0]["CFBundleURLName"] as? String == "dev.macboxtest.downloader")
+        #expect(claims.keys["CFBundleDocumentTypes"] == nil && claims.keys["UTImportedTypeDeclarations"] == nil)
+        // 什么都没声明的应用：一个键都不加
+        #expect(Launcher.claims(of: [:]) { _ in false }.keys.isEmpty)
+        // 全都有别的 App 在处理
+        #expect(Launcher.claims(of: info) { _ in true }.summary.isEmpty)
+    }
+
+    @Test("启动器替应用声明文件类型：级别一律降为 Alternate，“任何文件”不声明，应用自己的类型抄成导入的类型、不带图标")
+    func launcherClaimsDocuments() throws {
+        let info: [String: Any] = [
+            "CFBundleDocumentTypes": [
+                ["CFBundleTypeName": "Torrent", "CFBundleTypeRole": "Editor", "LSHandlerRank": "Owner",
+                 "CFBundleTypeIconFile": "torrent.icns", "LSItemContentTypes": ["dev.macboxtest.torrent"]],
+                ["CFBundleTypeName": "Anything", "LSItemContentTypes": ["public.data"]],
+                ["CFBundleTypeName": "Mixed", "LSHandlerRank": "None", "LSItemContentTypes": ["public.item", "com.adobe.pdf"]],
+                ["CFBundleTypeName": "Old style", "CFBundleTypeExtensions": ["DL", "*", ""], "LSTypeIsPackage": true],
+                ["CFBundleTypeName": "Every extension", "CFBundleTypeExtensions": ["*"]],
+            ],
+            "UTExportedTypeDeclarations": [
+                ["UTTypeIdentifier": "dev.macboxtest.torrent", "UTTypeConformsTo": ["public.data"], "UTTypeIconFile": "torrent.icns",
+                 "UTTypeTagSpecification": ["public.filename-extension": ["torrent"]]],
+            ],
+            "UTImportedTypeDeclarations": [
+                ["UTTypeIdentifier": "dev.macboxtest.other", "UTTypeTagSpecification": ["public.filename-extension": "oth"]],
+                ["UTTypeDescription": "没有标识符"],
+            ],
+        ]
+        let claims = Launcher.claims(of: info) { _ in false }
+        let types = try #require(claims.keys["CFBundleDocumentTypes"] as? [[String: Any]])
+        #expect(types.map { $0["CFBundleTypeName"] as? String } == ["Torrent", "Mixed", "Old style"])
+        #expect(types.map { $0["LSHandlerRank"] as? String } == ["Alternate", "None", "Alternate"], "不抢默认打开方式；本来就不参与的照旧")
+        #expect(types[0]["CFBundleTypeRole"] as? String == "Editor" && types[0]["CFBundleTypeIconFile"] == nil)
+        #expect(types[1]["LSItemContentTypes"] as? [String] == ["com.adobe.pdf"])
+        #expect(types[2]["CFBundleTypeExtensions"] as? [String] == ["dl"] && types[2]["LSTypeIsPackage"] as? Bool == true)
+        let declared = try #require(claims.keys["UTImportedTypeDeclarations"] as? [[String: Any]])
+        #expect(declared.map { $0["UTTypeIdentifier"] as? String } == ["dev.macboxtest.torrent", "dev.macboxtest.other"])
+        #expect(declared[0]["UTTypeIconFile"] == nil && declared[0]["UTTypeConformsTo"] as? [String] == ["public.data"])
+        #expect(claims.summary == Launcher.Claims(schemes: [], extensions: ["torrent", "pdf", "dl"]))
+        #expect(!Launcher.isScheme("file") && !Launcher.isScheme("1x") && Launcher.isScheme("x-app+v1.2"))
+    }
+
+    @Test("「接收链接和文件」不写进旧版的 box.json：接收时没有这个字段，旧文件读出来是接收")
+    func linkSettingStorage() throws {
+        var config = BoxConfig(id: UUID(), name: "T", bundleIdentifier: "x", appFolderName: "T.app")
+        #expect(config.acceptsLinks && config.declinesLinks == nil)
+        config.acceptsLinks = false
+        #expect(config.declinesLinks == true)
+        #expect(try JSONDecoder().decode(BoxConfig.self, from: JSONEncoder().encode(config)).acceptsLinks == false)
+        config.acceptsLinks = true
+        #expect(config.declinesLinks == nil)
+        #expect(!String(decoding: try JSONEncoder().encode(config), as: UTF8.self).contains("declinesLinks"))
+    }
+
     @Test("拦截记录的进程名：内核截断到 32 字节，截断处可能在汉字中间；短名字不做前缀匹配")
     func loggedProcessName() {
         let long = "MacBoxTest Very Long Executable Name Helper (Renderer)"

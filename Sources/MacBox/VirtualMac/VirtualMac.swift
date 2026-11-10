@@ -620,8 +620,9 @@ final class VirtualMac: NSObject {
     // MARK: - 文件交换
 
     /// 把文件放进「传入」，在虚拟 Mac 里打开 My Shared Files › 传入 即可安装。
-    /// 复制在后台线程进行（跨卷时可能要很久）；多次调用依次执行，同名项目不会互相踩
-    func sendToGuest(_ urls: [URL]) async {
+    /// 复制在后台线程进行（跨卷时可能要很久）；多次调用依次执行，同名项目不会互相踩。
+    /// unlocking：放的是盒子里锁着的 App（见 AppLock），放进去的那份要解锁
+    func sendToGuest(_ urls: [URL], unlocking: Bool = false) async {
         guard !urls.isEmpty else { return }
         let previous = sendTask
         let incoming = bundle.incomingURL
@@ -635,7 +636,7 @@ final class VirtualMac: NSObject {
                 lastError = String(localized: "放入虚拟 Mac 失败：\(error.localizedDescription)")
                 return
             }
-            let result = await Background.run { Self.copyIntoIncoming(urls, incoming: incoming) }
+            let result = await Background.run { Self.copyIntoIncoming(urls, incoming: incoming, unlocking: unlocking) }
             if let notice = Self.sendNotice(result) { self.notice = notice }
             if let message = result.firstError {
                 lastError = String(localized: "\(quotedList(result.failedNames))放入虚拟 Mac 失败：\(message)")
@@ -659,8 +660,11 @@ final class VirtualMac: NSObject {
     nonisolated static let partialSuffix = ".macbox-partial"
 
     /// 把文件复制进 incoming。同名项目内容没变（结构、大小、修改时间一致）就跳过，变了就整体替换：
-    /// 先复制成隐藏的临时项，完整之后再和旧的原子交换。失败时不留半个文件，客体也看不到复制到一半的 .app
-    nonisolated static func copyIntoIncoming(_ urls: [URL], incoming: URL) -> SendResult {
+    /// 先复制成隐藏的临时项，完整之后再和旧的原子交换。失败时不留半个文件，客体也看不到复制到一半的 .app。
+    ///
+    /// unlocking：来源是盒子里平时锁着的 App（没有执行权限，见 AppLock），给放进去的这一份加回执行权限，
+    /// 否则在虚拟 Mac 里打不开；来源本身不动。以前放进去、内容没变的那份也补上（解锁只逐级往下走，不跟随链接）
+    nonisolated static func copyIntoIncoming(_ urls: [URL], incoming: URL, unlocking: Bool = false) -> SendResult {
         let fm = FileManager.default
         var result = SendResult()
         // 调用是串行的，开始时还在的临时项都是上次被打断（退出、崩溃）留下的。删不掉也不要紧：临时项每次都用新名字
@@ -668,12 +672,19 @@ final class VirtualMac: NSObject {
         where item.lastPathComponent.hasSuffix(partialSuffix) {
             try? removeTree(item)
         }
+        // 只有文件夹（App 包）有可解锁的；安装包是文件
+        func unlock(_ item: URL) throws {
+            var info = stat()
+            guard unlocking, lstat(item.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return }
+            try AppLock.unlock(item)
+        }
         for url in urls {
             let name = url.lastPathComponent
             let destination = incoming.appending(path: name)
             do {
                 let exists = fm.fileExists(atPath: destination.path) || FileOps.isSymlink(destination)
                 if exists, sameContents(url, destination) {
+                    try unlock(destination)
                     result.unchanged.append(name)
                     continue
                 }
@@ -681,6 +692,7 @@ final class VirtualMac: NSObject {
                 let temp = incoming.appending(path: ".\(UUID().uuidString)\(partialSuffix)")
                 do {
                     try FileOps.clone(url, to: temp, followingSymlink: true) // 你选的文件；拖进来的替身要的是它指向的东西
+                    try unlock(temp)
                     if exists {
                         try swapItems(temp, destination)
                         try? removeTree(temp) // 交换之后这里是旧的那份

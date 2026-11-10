@@ -211,8 +211,12 @@ final class BoxStore {
         let wanted = boxes.filter(\.config.wantsLauncher)
         Task {
             await Launcher.shared.removeOrphans(keeping: keep)
-            for box in wanted where await Launcher.shared.needsInstall(for: box.id) {
-                box.syncLauncher()
+            for box in wanted {
+                if await Launcher.shared.needsInstall(for: box.id) {
+                    box.syncLauncher()
+                } else {
+                    await box.loadLinkClaims()
+                }
             }
         }
     }
@@ -338,13 +342,15 @@ final class BoxStore {
         }
         // 6. 在 create-keychain 和移出搜索列表之间崩溃、旧版的创建竞争，都会把盒子钥匙串留在你的搜索列表里
         await BoxKeychain.removeStaleSearchListEntries(under: root)
-        // 7. App 平时上锁（见 AppLock）：旧版 MacBox 装的 App 从没锁过，运行中崩溃时也没来得及锁上
+        // 7. App 平时上锁（见 AppLock）：旧版 MacBox 装的 App 从没锁过，运行中崩溃时也没来得及锁上。
+        // 留底的原件是 App 包时一样锁上（以前的版本从不锁它）
         for box in boxes {
-            let paths = box.paths, app = box.appURL
+            let paths = box.paths, app = box.appURL, config = box.config
             do {
                 try await Background.run {
                     try IsolatedSession.checkLayout(paths, app: app) // App 文件夹被换成链接时不顺着它去改别处
                     try AppLock.lock(app)
+                    try AppLock.lockSource(paths, config: config)
                 }
             } catch {
                 NSLog("MacBox: 无法锁上「\(box.config.name)」：\(error.localizedDescription)")
@@ -424,9 +430,10 @@ final class BoxStore {
 
             importStatus = String(localized: "正在准备独立的钥匙串…")
             try await BoxKeychain.prepare(paths)
-            try await Background.run {
-                // 锁上之后才算装好（见 AppLock）：MacBox 没在运行时，程序坞、聚焦都启动不了它
+            try await Background.run { [made] in
+                // 锁上之后才算装好（见 AppLock）：MacBox 没在运行时，程序坞、聚焦都启动不了它。留底的原件一样
                 try AppLock.lock(extracted.app)
+                try AppLock.lockSource(paths, config: made)
                 try FileManager.default.moveItem(at: paths.url, to: final.url)
             }
             config = made
@@ -439,9 +446,12 @@ final class BoxStore {
         box.store = self
         boxes.append(box)
         await box.syncLauncher().value
-        // 检查、读取 App 时系统可能把它登记进了 LaunchServices（见 recoverInterruptedSessions）
-        let app = box.appURL
-        Task.detached { await AppRegistration.unregister(app) }
+        // 检查、读取 App 时系统可能把它登记进了 LaunchServices（见 recoverInterruptedSessions）。留底的原件也是从它读的
+        let app = box.appURL, source = final.source(config)
+        Task.detached {
+            await AppRegistration.unregister(app)
+            if let source { await AppRegistration.unregister(source) }
+        }
         return box
     }
 
@@ -524,7 +534,8 @@ final class BoxStore {
             show(.virtualMac)
             return
         }
-        await vm.sendToGuest([box.paths.source(box.config) ?? box.appURL])
+        // 盒子里的两份平时都锁着（见 AppLock），放进去的那份要能运行
+        await vm.sendToGuest([box.paths.source(box.config) ?? box.appURL], unlocking: true)
         showVirtualMacWindow()
         if vm.status == .stopped { await vm.start() }
     }
@@ -608,15 +619,22 @@ final class BoxStore {
     // MARK: - 外部事件
 
     /// macbox://open/<id>（聚焦里的启动器）。打不开时要说明：从聚焦打开时 MacBox 的窗口多半关着，
-    /// 什么也不说的话用户只会觉得“点了没反应”
+    /// 什么也不说的话用户只会觉得“点了没反应”。
+    /// macbox://undelivered/<id>：启动器有链接、文件没能交给应用（见 Box.noteUndelivered）
     func handle(_ url: URL) {
         start()
         guard managesBoxes else { return } // 没读盒子，不能说“应用已经不在了”
-        guard url.scheme == "macbox", url.host() == "open", let id = UUID(uuidString: url.lastPathComponent) else { return }
+        guard url.scheme == "macbox", let action = url.host(), ["open", "undelivered"].contains(action),
+              let id = UUID(uuidString: url.lastPathComponent) else { return }
         if let box = box(id: id) {
-            Task { await box.open() }
+            if action == "open" {
+                Task { await box.open() }
+            } else {
+                box.noteUndelivered()
+            }
             return
         }
+        guard action == "open" else { return }
         let message = if let broken = brokenBoxes.first(where: { $0.id == id }) {
             // 读取失败的说明有的带句号、有的不带（系统的错误信息自己带），统一去掉再加
             String(localized: "这个启动器对应的应用无法读取：\(Self.withoutFinalPeriod(broken.message))。可以在「全部应用」里查看或删除它。")

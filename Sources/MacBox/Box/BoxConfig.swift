@@ -185,6 +185,8 @@ nonisolated struct BoxConfig: Codable, Equatable, Sendable {
     var blockNetwork: Bool?
     /// 应用可以写入的盒子外的文件夹：选的时候解析出的真实路径，按添加的先后（见 WritableFolders）。没有时为 nil
     var writableFolders: [String]?
+    /// 不接收链接和文件：启动器不替应用声明它能打开的链接和文件类型（见 Launcher.claims）。没有这个字段（旧文件）、nil 都是接收
+    var declinesLinks: Bool?
 }
 
 extension BoxConfig {
@@ -196,6 +198,12 @@ extension BoxConfig {
     nonisolated var allowsNetwork: Bool {
         get { blockNetwork != true }
         set { blockNetwork = newValue ? nil : true }
+    }
+
+    /// 详情面板里「接收链接和文件」开关的值。接收时不写这个字段，box.json 和旧版一样
+    nonisolated var acceptsLinks: Bool {
+        get { declinesLinks != true }
+        set { declinesLinks = newValue ? nil : true }
     }
 
     /// 详情面板里「可以写入的文件夹」。没有时不写这个字段，box.json 和旧版一样
