@@ -10,6 +10,8 @@ import globe from '@phosphor-icons/core/bold/globe-simple-bold.svg?raw';
 import handBold from '@phosphor-icons/core/bold/hand-bold.svg?raw';
 import playCircle from '@phosphor-icons/core/bold/play-circle-bold.svg?raw';
 import search from '@phosphor-icons/core/bold/magnifying-glass-bold.svg?raw';
+import soundOff from '@phosphor-icons/core/bold/speaker-slash-bold.svg?raw';
+import soundOn from '@phosphor-icons/core/bold/speaker-high-bold.svg?raw';
 import sliders from '@phosphor-icons/core/bold/sliders-horizontal-bold.svg?raw';
 import squares from '@phosphor-icons/core/bold/squares-four-bold.svg?raw';
 import terminal from '@phosphor-icons/core/bold/terminal-window-bold.svg?raw';
@@ -60,6 +62,8 @@ export const icons = {
   playCircle,
   search,
   squares,
+  soundOn,
+  soundOff,
   github: githubFill,
   // 状态和操作
   play: playFill,

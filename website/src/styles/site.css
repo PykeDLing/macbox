@@ -269,9 +269,43 @@ html:not(.js) .film-note {
 }
 .film-note {
   margin: 14px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
   text-align: center;
   color: var(--ink-3);
   font-size: 13px;
+}
+.film-note button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px 5px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.film-note button:hover {
+  color: var(--ink);
+}
+.film-note button[aria-pressed='true'] {
+  background: var(--accent-fill);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+.film-note button svg {
+  font-size: 15px;
 }
 @media (max-width: 760px) {
   .film {
