@@ -53,6 +53,19 @@ describe.skipIf(!built)('prerendered pages', () => {
     }
   });
 
+  it('shows each language its own film, and ships both', () => {
+    for (const [path, locale] of [
+      ['index.html', 'zh'],
+      ['en/index.html', 'en'],
+    ] as const) {
+      const html = page(path);
+      assert.include(html, `src="${base}media/macbox-promo-${locale}.mp4"`);
+      assert.include(html, `poster="${base}media/macbox-promo-${locale}-poster.jpg"`);
+      assert.isTrue(existsSync(new URL(`media/macbox-promo-${locale}.mp4`, dist)));
+      assert.isTrue(existsSync(new URL(`media/macbox-promo-${locale}-poster.jpg`, dist)));
+    }
+  });
+
   it('ships a 404 page that search engines skip', () => {
     assert.match(page('404.html'), /<meta name="robots" content="noindex"/);
   });

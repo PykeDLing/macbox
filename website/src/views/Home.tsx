@@ -1,15 +1,18 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { DemoWindow } from '../demo/DemoWindow';
+import { Film, playFilmFromStart } from '../components/Film';
 import { Icon } from '../components/Icon';
 import { icons } from '../components/icons';
 import { SiteNav } from '../components/SiteNav';
 import { Terminal } from '../components/Terminal';
-import { homePath, translate, type Locale } from '../lib/i18n';
+import { filmSeconds } from '../lib/film';
+import { homePath, translate, type Locale, type Pair } from '../lib/i18n';
 import { rememberLanguage } from '../lib/language';
 import { describeDmg, useLatestRelease } from '../lib/release';
 import {
   href,
+  howItWorks,
   isolationDetails,
   issuesPage,
   latestReleasePage,
@@ -23,37 +26,114 @@ const Pe = ({ children }: { children: string }) => <span className="pe">{childre
 /** 中文导语每句话各占一行（宽屏时），窄了再在标点处折行 */
 const Ln = ({ children }: { children: ReactNode }) => <span className="ln">{children}</span>;
 
-const problems: readonly (readonly [string, string, string, string, string])[] = [
-  [
-    icons.launchAtLogin,
-    '开机自启',
-    'Launch at login',
-    '没打开它，它也在跑。登录项、助手程序，一个接一个。',
-    'Running even when you never opened it. Login items and helpers pile up.',
-  ],
-  [
-    icons.backgroundServices,
-    '后台服务',
-    'Background services',
-    '悄悄注册的常驻进程，卸载 App 时往往不会一起删掉。',
-    'Quietly registered daemons that usually survive deleting the app.',
-  ],
-  [
-    icons.scatteredFiles,
-    '散落各处的文件',
-    'Files everywhere',
-    '缓存、设置、钥匙串条目，分散在资源库的各个角落。',
-    'Caches, preferences and keychain items scattered all over your Library.',
-  ],
+/** 片子和页面里那个“不放心的软件”，和演示窗口里的第一个应用同名 */
+const sampleApp: Pair = ['某某网盘', 'Cloud Drive'];
+
+// “为什么需要它”：直接装在 Mac 上时散落各处的东西（code 为 true 的一栏用等宽字）
+const leftovers: readonly { where: Pair; code: boolean; what: Pair }[] = [
+  {
+    where: ['~/Library/LaunchAgents/', '~/Library/LaunchAgents/'],
+    code: true,
+    what: ['开机自启', 'Launch at login'],
+  },
+  {
+    where: ['~/Library/Application Support/', '~/Library/Application Support/'],
+    code: true,
+    what: ['数据', 'Data'],
+  },
+  { where: ['~/Library/Caches/', '~/Library/Caches/'], code: true, what: ['缓存', 'Caches'] },
+  {
+    where: ['~/Library/Preferences/', '~/Library/Preferences/'],
+    code: true,
+    what: ['设置', 'Settings'],
+  },
+  { where: ['~/Library/Cookies/', '~/Library/Cookies/'], code: true, what: ['Cookie', 'Cookies'] },
+  {
+    where: ['「登录」钥匙串', 'Login keychain'],
+    code: false,
+    what: ['凭证、设备 ID', 'Credentials, device IDs'],
+  },
+  {
+    where: ['后台服务', 'Background services'],
+    code: false,
+    what: ['常驻进程', 'Always running'],
+  },
+];
+// 同样的东西装进盒子以后落在哪
+const inTheBox: readonly { where: Pair; code: boolean; what: Pair }[] = [
+  { where: ['App/', 'App/'], code: true, what: ['应用本身', 'The app itself'] },
+  { where: ['Home/', 'Home/'], code: true, what: ['数据、缓存、Cookie', 'Data, caches, cookies'] },
+  { where: ['Prefs/', 'Prefs/'], code: true, what: ['设置', 'Settings'] },
+  {
+    where: ['盒子自己的钥匙串', 'The box’s own keychain'],
+    code: false,
+    what: ['凭证、设备 ID', 'Credentials, device IDs'],
+  },
 ];
 
-const features: readonly {
-  icon: string;
-  tint: string;
-  wide?: boolean;
-  title: readonly [string, string];
-  text: readonly [string, string];
-}[] = [
+// 特性里“碰不到你的私人数据”一格右边的清单
+const outOfReach: readonly { what: Pair; status: Pair }[] = [
+  { what: ['邮件、信息', 'Mail, Messages'], status: ['读不到', 'Can’t read'] },
+  {
+    what: ['Safari、Cookie、iCloud 云盘', 'Safari, cookies, iCloud Drive'],
+    status: ['读不到', 'Can’t read'],
+  },
+  { what: ['其他 App 的数据', 'Other apps’ data'], status: ['读不到', 'Can’t read'] },
+  { what: ['SSH · GPG · AWS 密钥', 'SSH · GPG · AWS keys'], status: ['读不到', 'Can’t read'] },
+  { what: ['「登录」钥匙串', 'Login keychain'], status: ['不进去', 'Untouched'] },
+  {
+    what: ['开机自启、后台服务', 'Login items, background services'],
+    status: ['不能注册', 'Can’t register'],
+  },
+];
+
+// 运行报告一格里的示意数字，和宣传片里的一样
+const reportStats: readonly [number, Pair][] = [
+  [128, ['写入文件', 'Files written']],
+  [12, ['改动设置', 'Settings changed']],
+  [9, ['连接服务器', 'Servers contacted']],
+  [3, ['启动程序', 'Programs launched']],
+];
+const reportBlocked: readonly [Pair, string][] = [
+  [['注册开机自启动', 'Register a login item'], 'LaunchAgents'],
+  [['读取 SSH 密钥', 'Read SSH keys'], '~/.ssh'],
+  [['连接 ssh-agent', 'Connect to ssh-agent'], 'SSH_AUTH_SOCK'],
+];
+
+const numbers: readonly { value: string; label: Pair; note: Pair }[] = [
+  {
+    value: '≈1.5%',
+    label: ['沙盒的性能开销', 'sandbox overhead'],
+    note: ['原生运行，不是虚拟机', 'Runs natively, not in a virtual machine'],
+  },
+  {
+    value: '50 ms',
+    label: ['检查一次新进程', 'between process checks'],
+    note: ['在沙盒外启动的，立即结束', 'Anything started outside the sandbox is stopped'],
+  },
+  {
+    value: '0',
+    label: ['开机自启和后台服务', 'login items or background services'],
+    note: ['盒子里的应用注册不了', 'Apps in a box can’t register them'],
+  },
+  {
+    value: 'MIT',
+    label: ['每一行代码都公开', 'every line is public'],
+    note: ['可以自己从源码构建', 'Build it from source yourself'],
+  },
+];
+
+// “工作原理”：本机隔离叠在一起的几层
+const layers: readonly { icon: string; tint: string; title: Pair; text: Pair }[] = [
+  {
+    icon: icons.hand,
+    tint: 'g5',
+    title: ['沙盒挡住乱写、乱读', 'A sandbox against stray writes and reads'],
+    text: [
+      '写入默认全部禁止，只放行盒子里 App 的主目录、App 本身、临时目录、「下载」和你给它加的文件夹；私人数据读不到。子进程自动继承。',
+      'Writes are denied except to the app’s home folder in the box, the app itself, temp folders, Downloads and folders you add; private data can’t be read. Child processes inherit it all.',
+    ],
+  },
   {
     icon: icons.house,
     tint: 'g1',
@@ -75,7 +155,6 @@ const features: readonly {
   {
     icon: icons.swap,
     tint: 'g4',
-    wide: true,
     title: ['偏好设置借出再收回', 'Preferences, lent and returned'],
     text: [
       '系统代写的设置沙盒挡不住，所以 MacBox 在启动前把盒子的设置整体借给系统，退出后完整收回，再把你本机原来的设置原样换回。全程先写日志，就算 MacBox 中途崩溃，下次启动也会恢复。',
@@ -83,80 +162,79 @@ const features: readonly {
     ],
   },
   {
-    icon: icons.hand,
-    tint: 'g5',
-    wide: true,
-    title: ['沙盒挡住乱写', 'A sandbox against stray writes'],
-    text: [
-      '写入默认全部禁止，只放行盒子里 App 的主目录、App 本身和临时目录；「下载」默认共享，可以在详情面板里按应用关闭，也可以在那里给它加别的可以写入的文件夹，例如外接硬盘上的。盒子里 MacBox 自己的记录（偏好设置的借出日志和本机设置备份、钥匙串密码、还原点），App 读不到也改不了。不能注册开机自启和后台服务、发通知、遥控其他 App。子进程自动继承。',
-      'Writes are denied except to the app’s home folder in the box, the app itself and temp folders. Downloads is shared by default; in the details panel you can turn that off for each app, or add other folders it can write to, such as one on an external drive. MacBox’s own records in the box — the preferences journal and the backup of your settings, the keychain password, restore points — can’t be read or changed by the app. No login items, background services, notifications or controlling other apps. Child processes inherit it all.',
-    ],
-  },
-  {
-    icon: icons.eyeSlash,
-    tint: 'g1',
-    wide: true,
-    title: ['也挡住乱读', 'And against stray reads'],
-    // 字符串里的 \u2060 让路径不在连字符处折行
-    text: [
-      '读不到邮件、信息、Safari、Cookie、iCloud 云盘，其他 App 的 Application Support、容器、缓存和 WebKit 网站数据，SSH、GPG、AWS、Kubernetes 的密钥，以及 ~/.config、~/.netrc、~/.git-\u2060credentials、~/.docker 等处命令行工具的凭证；也连不上 ssh-agent、Docker 这类替你保管钥匙和身份的程序。别处照常读得到，例如文稿、桌面。',
-      'No reading Mail, Messages, Safari, cookies or iCloud Drive; other apps’ Application Support, containers, caches or WebKit website data; SSH, GPG, AWS or Kubernetes keys; or command-line credentials in ~/.config, ~/.netrc, ~/.git-\u2060credentials, ~/.docker and the like; and no connecting to programs that hold your keys and identities, such as ssh-agent or Docker. Everything else, such as Documents and Desktop, can still be read.',
-    ],
-  },
-  {
-    icon: icons.offline,
-    tint: 'g3',
-    title: ['联网开关', 'Network switch'],
-    text: [
-      '在详情面板里关掉「允许联网」，应用就连不上任何服务器，本机上的代理也连不上；查不了域名，它显示的网页也打不开。',
-      'Turn off “Allow Network Access” in the details panel, and the app can’t reach any server — not even a proxy on your Mac. It can’t look up names or load the web pages it shows, either.',
-    ],
-  },
-  {
     icon: icons.shield,
     tint: 'g2',
-    title: ['运行时守卫', 'Runtime guard'],
+    title: ['运行时守卫，App 平时上锁', 'A runtime guard, and apps locked outside MacBox'],
     text: [
-      'MacBox 打开期间，每 50 毫秒检查一次新进程。盒子里的程序一旦在沙盒外被启动，立即结束。',
-      'While MacBox is open, it checks new processes every 50 ms. Anything from a box that starts outside the sandbox is stopped at once.',
+      'MacBox 打开期间，每 50 毫秒检查一次新进程，盒子里的程序一旦在沙盒外被启动，立即结束。不在 MacBox 里运行时，盒子里 App 的程序没有执行权限：即使 MacBox 没开，从程序坞、登录时自动重新打开都启动不了它。',
+      'While MacBox is open, it checks new processes every 50 ms and stops anything from a box that starts outside the sandbox. When an app isn’t running in MacBox, its executables have no execute permission: even with MacBox closed, it can’t be started from the Dock or by reopening at login.',
+    ],
+  },
+];
+
+// “坦白说”：每条一个标题加一段说明，点开看
+const limits: readonly { title: Pair; text: Pair }[] = [
+  {
+    title: ['会被挡住的功能', 'Features that won’t work'],
+    text: [
+      '开机自启、通知、访达扩展、需要驱动的功能。',
+      'Launch at login, notifications, Finder extensions and anything that needs a driver.',
     ],
   },
   {
-    icon: icons.lock,
-    tint: 'g4',
-    wide: true,
-    title: ['App 平时上锁', 'Locked outside MacBox'],
+    title: ['MacBox 没开时没有守卫', 'No guard while MacBox is closed'],
     text: [
-      '不在 MacBox 里运行时，盒子里 App 的程序没有执行权限：即使 MacBox 没开，从程序坞、登录时自动重新打开、点链接或双击文档都启动不了它。MacBox 还会撤销系统对它（连同包里的辅助程序）的登记。',
-      'When an app isn’t running in MacBox, its executables have no execute permission. Even with MacBox closed, it can’t be started from the Dock, by reopening at login, from a link or by double-clicking a document. MacBox also removes the system’s registration of the app and the helpers inside it.',
+      '这时只靠「App 平时上锁」挡住直接打开。MacBox 在应用运行时异常退出的话，这个应用要等下次打开 MacBox 才重新上锁。',
+      'Then only “Locked outside MacBox” keeps box apps from being opened directly. If MacBox quits unexpectedly while an app is running, that app stays unlocked until you next open MacBox.',
     ],
   },
   {
-    icon: icons.report,
-    tint: 'g5',
-    wide: true,
-    title: ['运行报告', 'Run reports'],
+    title: ['两份不能同时运行', 'Two copies can’t run at once'],
     text: [
-      '每次在本机隔离中运行，MacBox 都记下它写了哪些文件、改了哪些设置（只记名字）、连了哪些服务器、启动了哪些程序、哪些行为被拦下。报告可以拷贝成文字、存储为 Markdown 或图片，也可以直接分享图片；路径写成应用眼里的样子，不带你的用户名。',
-      'Each time an app runs in Native Isolation, MacBox records which files it wrote, which settings it changed (names only), which servers it contacted, which programs it launched and what was blocked. Copy the report as text, save it as Markdown or an image, or share the image. Paths are shown the way the app sees them, without your user name.',
+      '同一个应用的两份（两个盒子，或者盒子和直接装在 Mac 上的那份）共用一组偏好设置。MacBox 会拒绝同时打开，并告诉你先退出哪一个；但盒子运行期间再去打开本机那份，它拦不住，请避免。',
+      'Two copies of the same app (in two boxes, or in a box and installed directly on your Mac) share one set of preferences. MacBox won’t open both, and tells you which one to quit first — but it can’t stop you from opening the copy on your Mac while the box is running, so please don’t.',
     ],
   },
   {
-    icon: icons.restore,
-    tint: 'g1',
-    title: ['还原点', 'Restore points'],
+    title: ['有些偏好设置不进盒子', 'Some preferences stay outside the box'],
     text: [
-      'APFS 克隆，几乎不占空间，连同钥匙串一起保存。一键回到之前的状态，或设为每次退出自动还原；不需要了可以删除。',
-      'APFS clones that take almost no space, keychain included. Roll back in one click, restore automatically every time you quit, or delete one you no longer need.',
+      'MacBox 按 bundle ID 认定哪些偏好设置属于这个 App。认定范围以外的（厂商的更新程序、第三方 SDK、App Group 共享设置等）和“仅限本机”的 ByHost 设置，会直接写进你真实的 ~/Library/Preferences，删除盒子后仍然留着。',
+      'MacBox decides which preferences belong to an app by its bundle ID. Anything outside that (a vendor’s updater, third-party SDKs, App Group shared settings and so on) and this-Mac-only ByHost settings are written straight to your real ~/Library/Preferences and stay after you delete the box.',
     ],
   },
   {
-    icon: icons.checked,
-    tint: 'g2',
-    title: ['添加前先检查', 'Checked before it runs'],
+    title: ['运行报告是尽力而为', 'Run reports are best effort'],
     text: [
-      '检查驱动、系统扩展、特权辅助程序、苹果沙盒和 Apple 公证，提前告诉你本机隔离装不装得下。',
-      'Looks for drivers, system extensions, privileged helpers, the App Sandbox and notarization, and tells you up front whether it fits.',
+      '启动的程序、被拦下的行为、在共享的「下载」和可以写入的文件夹里写的文件来自系统日志，系统会限流，没有记录不代表没有发生。连接是定时看一眼得到的，很短的连接会漏掉；服务器名字来自反向解析，常常是云服务商的机器名；经由代理的连接只显示为连到本机上的代理。',
+      'Launched programs, blocked attempts and files written to the shared Downloads folder or the folders it can write to come from the system log, which is rate-limited, so no entry doesn’t mean nothing happened. Connections are sampled periodically, so very short ones can be missed; server names come from reverse DNS and are often cloud providers’ machine names; connections through a proxy only show up as connections to the proxy on your Mac.',
+    ],
+  },
+  {
+    title: ['不联网挡不住由系统代办的事', 'Offline doesn’t cover what the system does for an app'],
+    text: [
+      '例如让你的默认浏览器打开一个网址（网址里可以带数据）、iCloud 同步、推送通知。',
+      'For example, opening a link in your default browser (the link can carry data), iCloud sync or push notifications.',
+    ],
+  },
+  {
+    title: ['系统临时目录可写', 'System temp folders stay writable'],
+    text: [
+      '很多系统框架依赖它们，App 可以在这里留下文件，运行报告也不统计这里。',
+      'Many frameworks rely on them, so apps can leave files there, and run reports don’t count them.',
+    ],
+  },
+  {
+    title: ['MacBox 本身需要你信任', 'MacBox itself needs your trust'],
+    text: [
+      '它要替盒子准备环境、收回设置，不在沙盒里运行。所以它完全开源，你可以自己构建。',
+      'It prepares each box and returns its settings, so it can’t be sandboxed. That’s why it’s fully open source — build it yourself if you like.',
+    ],
+  },
+  {
+    title: ['其他已知限制', 'Other known limits'],
+    text: [
+      'App 包内的 XPC 服务会被守卫结束，依赖它们的功能不可用；使用 Data Protection 钥匙串的 App，条目不会进盒子钥匙串；其他 App 的偏好设置仍可能被读到。',
+      'XPC services bundled inside an app are stopped by the guard, so features that rely on them won’t work; apps that use the Data Protection keychain don’t get their items in the box keychain; other apps’ preferences can still be read.',
     ],
   },
 ];
@@ -230,8 +308,40 @@ function useLanguageSwitch(locale: Locale, root: React.RefObject<HTMLElement | n
   return { prepare, switchTo };
 }
 
+/** 泛指的应用图标：和演示窗口里的图标一个画法 */
+const AppGlyph = ({ svg, tint, running }: { svg: string; tint: string; running?: boolean }) => (
+  <span className={running ? `ic app-ic ${tint} running` : `ic app-ic ${tint}`}>
+    <Icon svg={svg} />
+  </span>
+);
+
+/** 特性里“联网开关”一格：一个可以拨的开关，只是示意 */
+function NetworkSwitch({ locale }: { locale: Locale }) {
+  const t = translate(locale);
+  const [online, setOnline] = useState(true);
+  return (
+    <div className="art art-net">
+      <span>{t('允许联网', 'Allow Network Access')}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={online}
+        aria-label={t('允许联网（示意）', 'Allow Network Access (demo)')}
+        className="switch"
+        onClick={() => setOnline((value) => !value)}
+      />
+      <small>
+        {online
+          ? t('应用可以连接服务器', 'The app can reach servers')
+          : t('连不上任何服务器，本机上的代理也不行', 'No servers — not even a proxy on your Mac')}
+      </small>
+    </div>
+  );
+}
+
 export default function Home({ locale }: { locale: Locale }) {
   const t = translate(locale);
+  const p = (pair: Pair) => t(pair[0], pair[1]);
   const root = useRef<HTMLDivElement>(null);
   const release = useLatestRelease();
   const language = useLanguageSwitch(locale, root);
@@ -253,7 +363,7 @@ export default function Home({ locale }: { locale: Locale }) {
       </a>
       <SiteNav locale={locale} onLanguage={language.prepare} />
 
-      <header className="hero">
+      <header className="hero" id="top">
         <div className="wrap">
           <img
             className="hero-icon"
@@ -275,9 +385,11 @@ export default function Home({ locale }: { locale: Locale }) {
               <>
                 不放心的软件<Pe>，</Pe>
                 <br />
-                装进盒子里用<Pe>。</Pe>
+                装进<span className="boxed">盒子</span>里用<Pe>。</Pe>
               </>,
-              'Run the apps you don’t trust in a box.',
+              <>
+                Run the apps you don’t trust in a <span className="boxed">box</span>.
+              </>,
             )}
           </h1>
           <p className="lede">
@@ -299,8 +411,9 @@ export default function Home({ locale }: { locale: Locale }) {
           </p>
           <div className="cta">
             {download(t('下载 MacBox', 'Download MacBox'))}
-            <a className="btn btn-ghost" href={repository}>
-              {t('在 GitHub 上查看 ›', 'View on GitHub ›')}
+            <a className="btn btn-ghost" href="#film" onClick={playFilmFromStart}>
+              <Icon svg={icons.play} />
+              {t(`看 ${filmSeconds} 秒介绍`, `Watch the ${filmSeconds}-second film`)}
             </a>
           </div>
           <p className="meta">
@@ -312,22 +425,29 @@ export default function Home({ locale }: { locale: Locale }) {
           </p>
         </div>
 
-        <div className="stage reveal">
-          <DemoWindow locale={locale} onLanguage={language.switchTo} />
-          <p className="try">
-            {t(
-              <>
-                这个窗口可以操作：选中一个应用，打开、退出、查看运行报告、关掉联网、切换运行环境或者删除试试
-                <Pe>。</Pe>
-              </>,
-              'This window is live. Pick an app and try opening and quitting it, viewing its run report, turning off its network access, switching runtimes or deleting it.',
-            )}
-          </p>
-        </div>
+        <Film locale={locale} />
       </header>
 
       <main id="main">
-        <section>
+        <section id="try">
+          <div className="wrap">
+            <div className="center reveal">
+              <p className="kicker">{t('亲手试试', 'Try it')}</p>
+              <h2>{t('这个窗口可以操作。', 'This window is live.')}</h2>
+              <p className="intro">
+                {t(
+                  '选中一个应用，打开、退出、查看运行报告、关掉联网、切换运行环境，或者删除试试。',
+                  'Pick an app and try opening and quitting it, viewing its run report, turning off its network access, switching runtimes or deleting it.',
+                )}
+              </p>
+            </div>
+          </div>
+          <div className="stage reveal">
+            <DemoWindow locale={locale} onLanguage={language.switchTo} />
+          </div>
+        </section>
+
+        <section id="why">
           <div className="wrap">
             <div className="center reveal">
               <p className="kicker">{t('为什么需要它', 'Why MacBox')}</p>
@@ -355,17 +475,64 @@ export default function Home({ locale }: { locale: Locale }) {
                 )}
               </p>
             </div>
-            <div className="mess reveal">
-              {problems.map(([icon, zhTitle, enTitle, zh, en]) => (
-                <div key={enTitle}>
-                  <span className="mi">
-                    <Icon svg={icon} />
-                  </span>
-                  <h3>{t(zhTitle, enTitle)}</h3>
-                  <p>{t(zh, en)}</p>
+
+            <div className="compare">
+              <figure className="pane pane-out reveal">
+                <figcaption>
+                  <i className="mark" />
+                  {t('直接装在 Mac 上', 'Installed straight on your Mac')}
+                </figcaption>
+                <ul className="tree">
+                  {leftovers.map((item) => (
+                    <li key={item.where[1]}>
+                      {item.code ? <code>{p(item.where)}</code> : <span>{p(item.where)}</span>}
+                      <em>{p(item.what)}</em>
+                    </li>
+                  ))}
+                </ul>
+                <p className="pane-foot">
+                  {t(
+                    '卸载之后，这些东西也常常还在。',
+                    'Much of it is still there after you uninstall.',
+                  )}
+                </p>
+              </figure>
+
+              <div className="arrow" aria-hidden="true">
+                <Icon svg={icons.arrowUpRight} />
+              </div>
+
+              <figure className="pane pane-in reveal">
+                <figcaption>
+                  <i className="mark" />
+                  {t('装进 MacBox 的盒子', 'In a MacBox box')}
+                </figcaption>
+                <div className="thebox">
+                  <div className="thebox-head">
+                    <AppGlyph svg={icons.cloud} tint="g1" />
+                    <div>
+                      <b>{p(sampleApp)}</b>
+                      <small>{t('在盒子里运行', 'Running in its box')}</small>
+                    </div>
+                  </div>
+                  <ul className="tree">
+                    {inTheBox.map((item) => (
+                      <li key={item.where[1]}>
+                        {item.code ? <code>{p(item.where)}</code> : <span>{p(item.where)}</span>}
+                        <em>{p(item.what)}</em>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-              ))}
+                <p className="pane-foot">
+                  {t(
+                    '删除盒子，里面的一起移到废纸篓。',
+                    'Delete the box, and everything in it goes to the Trash.',
+                  )}
+                </p>
+              </figure>
             </div>
+
             <div className="verdict reveal">
               {t(
                 <>
@@ -377,52 +544,6 @@ export default function Home({ locale }: { locale: Locale }) {
           </div>
         </section>
 
-        <section id="how">
-          <div className="wrap">
-            <div className="reveal">
-              <p className="kicker">{t('怎么用', 'How it works')}</p>
-              <h2>
-                {t('拖进来，打开，用完删掉。', 'Drop it in. Open it. Delete it when you’re done.')}
-              </h2>
-            </div>
-            <div className="steps">
-              <div className="step reveal">
-                <h3>{t('拖进来', 'Drop it in')}</h3>
-                <p>
-                  {t(
-                    '把下载的安装包拖进 MacBox。MacBox 会取出里面的 App，pkg 的安装脚本不会执行。只有几 MB、打开后再联网下载的在线安装器也能处理。',
-                    'Drag a downloaded installer into MacBox and it pulls out the app. Installer scripts in a .pkg never run. Even tiny online installers that download the real app work.',
-                  )}
-                </p>
-                <div className="chips">
-                  <span>.dmg</span>
-                  <span>.app</span>
-                  <span>.pkg</span>
-                  <span>.zip</span>
-                </div>
-              </div>
-              <div className="step reveal">
-                <h3>{t('照常打开', 'Use it normally')}</h3>
-                <p>
-                  {t(
-                    '在 MacBox 里双击，或者从聚焦打开。它有自己的窗口和程序坞图标，用起来和普通 App 没有区别，性能也几乎没有损失。MacBox 里的「退出」和 ⌘Q 一样只是请它退出，不会到时间就强制结束、丢掉没存的内容。',
-                    'Double-click it in MacBox, or open it from Spotlight. It gets its own windows and Dock icon, and runs at essentially native speed. Quit in MacBox works like ⌘Q: it asks the app to quit rather than force-quitting it after a timeout, so unsaved work isn’t lost.',
-                  )}
-                </p>
-              </div>
-              <div className="step reveal">
-                <h3>{t('删掉就干净', 'Delete it, clean')}</h3>
-                <p>
-                  {t(
-                    '删除盒子，应用连同它的全部数据一起移到废纸篓，后悔了也能找回。「下载」默认共享，它存进那里的文件会保留，存进你给它的可以写入的文件夹里的也一样；系统临时目录里的文件和少数收不进盒子的偏好设置也会留下。',
-                    'Delete the box and the app goes to the Trash together with all of its data — and you can still put it back. Downloads is shared by default, so files it saved there stay, as do files in any folders you let it write to, system temp files and a few preferences that can’t be kept in the box.',
-                  )}
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <section id="features">
           <div className="wrap">
             <div className="reveal">
@@ -430,28 +551,227 @@ export default function Home({ locale }: { locale: Locale }) {
               <h2>
                 {t(
                   <>
-                    看不见的隔离，
+                    照常使用，
                     <br />
-                    一层一层做到位。
+                    只是它出不了盒子。
                   </>,
-                  'Isolation you don’t notice, built layer by layer.',
+                  'Business as usual. It just can’t leave the box.',
                 )}
               </h2>
             </div>
-            <div className="grid">
-              {features.map((feature) => (
-                <div
-                  key={feature.title[1]}
-                  className={feature.wide ? 'feat wide reveal' : 'feat reveal'}
-                >
-                  <div className={`fi ${feature.tint}`}>
-                    <Icon svg={feature.icon} />
+
+            <div className="bento">
+              <article className="tile span-3 reveal">
+                <div className="tile-text">
+                  <span className="num">01</span>
+                  <h3>{t('拖进来，就装好了', 'Drop it in. It’s installed.')}</h3>
+                  <p>
+                    {t(
+                      '把下载的安装包拖进 MacBox。MacBox 会取出里面的 App，pkg 的安装脚本不会执行。只有几 MB、打开后再联网下载的在线安装器也能处理。',
+                      'Drag a downloaded installer into MacBox and it pulls out the app. Installer scripts in a .pkg never run. Even tiny online installers that download the real app work.',
+                    )}
+                  </p>
+                </div>
+                <div className="art art-types" aria-hidden="true">
+                  <span>.dmg</span>
+                  <span>.app</span>
+                  <span>.pkg</span>
+                  <span>.zip</span>
+                </div>
+              </article>
+
+              <article className="tile span-3 reveal">
+                <div className="tile-text">
+                  <span className="num">02</span>
+                  <h3>{t('和普通 App 没有两样', 'Just like any other app')}</h3>
+                  <p>
+                    {t(
+                      '在 MacBox 里双击，或者从聚焦打开。它有自己的窗口和程序坞图标，性能也几乎没有损失。在浏览器里点链接、在访达里双击它的文件，也会交给盒子里的它。',
+                      'Double-click it in MacBox, or open it from Spotlight. It gets its own windows and Dock icon, and runs at essentially native speed. Links you click in a browser and its files you double-click in Finder are handed to the boxed app, too.',
+                    )}
+                  </p>
+                </div>
+                <div className="art art-dock" aria-hidden="true">
+                  <AppGlyph svg={icons.downloadApp} tint="g3" />
+                  <AppGlyph svg={icons.meeting} tint="g2" />
+                  <AppGlyph svg={icons.cloud} tint="g1" running />
+                  <AppGlyph svg={icons.music} tint="g5" />
+                  <img src={href('/favicon.png')} width={44} height={44} alt="" loading="lazy" />
+                </div>
+              </article>
+
+              <article className="tile span-4 reveal">
+                <div className="tile-text">
+                  <span className="num">03</span>
+                  <h3>{t('看得见它做了什么', 'See what it actually did')}</h3>
+                  <p>
+                    {t(
+                      '每次在本机隔离中运行，MacBox 都记下它写了哪些文件、改了哪些设置（只记名字）、连了哪些服务器、启动了哪些程序、哪些行为被拦下。报告可以拷贝成文字、存储为 Markdown 或图片。',
+                      'Each time an app runs in Native Isolation, MacBox records which files it wrote, which settings it changed (names only), which servers it contacted, which programs it launched and what was blocked. Copy the report as text, or save it as Markdown or an image.',
+                    )}
+                  </p>
+                </div>
+                <div className="art art-report" aria-hidden="true">
+                  <div className="rstats">
+                    {reportStats.map(([value, label]) => (
+                      <div key={label[1]}>
+                        <b>{value}</b>
+                        <small>{p(label)}</small>
+                      </div>
+                    ))}
                   </div>
-                  <h3>{t(...feature.title)}</h3>
-                  <p>{t(...feature.text)}</p>
+                  <ul>
+                    {reportBlocked.map(([label, where]) => (
+                      <li key={where}>
+                        <Icon svg={icons.blocked} />
+                        {p(label)}
+                        <code>{where}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </article>
+
+              <article className="tile span-2 reveal">
+                <div className="tile-text">
+                  <span className="num">04</span>
+                  <h3>{t('联网开关', 'Network switch')}</h3>
+                  <p>
+                    {t(
+                      '在详情面板里关掉「允许联网」，应用就连不上任何服务器，也查不了域名。',
+                      'Turn off “Allow Network Access” in the details panel, and the app can’t reach any server or look up names.',
+                    )}
+                  </p>
+                </div>
+                <NetworkSwitch locale={locale} />
+              </article>
+
+              <article className="tile span-4 reveal">
+                <div className="tile-text">
+                  <span className="num">05</span>
+                  <h3>{t('碰不到你的私人数据', 'Your private data stays out of reach')}</h3>
+                  <p>
+                    {t(
+                      '读不到邮件、信息、Safari、其他 App 的数据，以及 SSH、GPG、AWS、Kubernetes 的密钥和命令行工具的凭证；不能注册开机自启和后台服务、发通知、遥控其他 App。别处照常读得到，例如文稿、桌面。',
+                      'No reading Mail, Messages, Safari or other apps’ data, nor SSH, GPG, AWS or Kubernetes keys and command-line credentials. No login items, background services, notifications or controlling other apps. Everything else, such as Documents and Desktop, can still be read.',
+                    )}
+                  </p>
+                </div>
+                <ul className="art art-private" aria-hidden="true">
+                  {outOfReach.map((item) => (
+                    <li key={item.what[1]}>
+                      {p(item.what)}
+                      <span>
+                        <Icon svg={icons.lock} />
+                        {p(item.status)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+
+              <article className="tile span-2 reveal">
+                <div className="tile-text">
+                  <span className="num">06</span>
+                  <h3>{t('还原点', 'Restore points')}</h3>
+                  <p>
+                    {t(
+                      'APFS 克隆，几乎不占空间，连同钥匙串一起保存。一键回到之前的状态，或设为每次退出自动还原。',
+                      'APFS clones that take almost no space, keychain included. Roll back in one click, or restore automatically every time you quit.',
+                    )}
+                  </p>
+                </div>
+                <div className="art art-restore" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                  <i className="now" />
+                </div>
+              </article>
+
+              <article className="tile span-3 reveal">
+                <div className="tile-text">
+                  <span className="num">07</span>
+                  <h3>{t('删掉盒子，一起带走', 'Delete the box, and it all goes along')}</h3>
+                  <p>
+                    {t(
+                      '删除盒子，应用连同它的全部数据一起移到废纸篓，后悔了也能找回。「下载」默认共享，它存进那里的文件会保留，存进你给它的可以写入的文件夹里的也一样；系统临时目录里的文件和少数收不进盒子的偏好设置也会留下。',
+                      'Delete the box and the app goes to the Trash together with all of its data — and you can still put it back. Downloads is shared by default, so files it saved there stay, as do files in any folders you let it write to, system temp files and a few preferences that can’t be kept in the box.',
+                    )}
+                  </p>
+                </div>
+              </article>
+
+              <article className="tile span-3 reveal">
+                <div className="tile-text">
+                  <span className="num">08</span>
+                  <h3>
+                    {t(
+                      '添加前先检查，装不下的交给虚拟 Mac',
+                      'Checked first, with a Virtual Mac behind it',
+                    )}
+                  </h3>
+                  <p>
+                    {t(
+                      '添加时检查驱动、系统扩展、特权辅助程序、苹果沙盒和 Apple 公证，提前告诉你本机隔离装不装得下；装不下的，放进内置的 macOS 虚拟机里运行。',
+                      'At import, MacBox looks for drivers, system extensions, privileged helpers, the App Sandbox and notarization, and tells you up front whether Native Isolation fits. What doesn’t fit runs in the built-in macOS virtual machine.',
+                    )}
+                  </p>
+                </div>
+              </article>
+            </div>
+
+            <dl className="numbers reveal">
+              {numbers.map((item) => (
+                <div key={item.value}>
+                  <dt>{item.value}</dt>
+                  <dd>
+                    {p(item.label)}
+                    <small>{p(item.note)}</small>
+                  </dd>
                 </div>
               ))}
+            </dl>
+          </div>
+        </section>
+
+        <section id="how">
+          <div className="wrap split">
+            <div className="reveal">
+              <p className="kicker">{t('工作原理', 'How it works')}</p>
+              <h2>
+                {t(
+                  <>
+                    不是虚拟机，
+                    <br />
+                    是几层系统机制叠在一起。
+                  </>,
+                  'Not a virtual machine. Layers of macOS itself.',
+                )}
+              </h2>
+              <p className="intro">
+                {t(
+                  '本机隔离用的都是 macOS 自带的机制。每一层具体放行和挡住了什么、崩溃后怎么收拾，文档里都写着。',
+                  'Native Isolation is built from mechanisms macOS already has. What each layer allows and blocks, and how a crash is cleaned up, is all written down.',
+                )}
+              </p>
+              <p className="more">
+                <a href={howItWorks}>
+                  {t('阅读完整的工作原理 ›', 'Read how it works in full (in Chinese) ›')}
+                </a>
+              </p>
             </div>
+            <ol className="layers">
+              {layers.map((layer) => (
+                <li key={layer.title[1]} className="reveal">
+                  <span className={`fi ${layer.tint}`}>
+                    <Icon svg={layer.icon} />
+                  </span>
+                  <h3>{p(layer.title)}</h3>
+                  <p>{p(layer.text)}</p>
+                </li>
+              ))}
+            </ol>
           </div>
         </section>
 
@@ -529,7 +849,7 @@ export default function Home({ locale }: { locale: Locale }) {
           </div>
         </section>
 
-        <section>
+        <section id="limits">
           <div className="wrap honest">
             <div className="reveal">
               <p className="kicker">{t('坦白说', 'To be clear')}</p>
@@ -542,80 +862,20 @@ export default function Home({ locale }: { locale: Locale }) {
                   'Native Isolation shares the kernel and your user account with your Mac. For software from a source you truly don’t trust, use the Virtual Mac.',
                 )}
               </p>
+              <p className="more">
+                <a href={isolationDetails}>
+                  {t('完整的限制列表 ›', 'The full list of limits (in Chinese) ›')}
+                </a>
+              </p>
             </div>
-            <ul className="reveal">
-              <li>
-                <strong>{t('会被挡住的功能', 'Features that won’t work')}</strong>
-                {t(
-                  '：开机自启、通知、访达扩展、需要驱动的功能。',
-                  ': launch at login, notifications, Finder extensions and anything that needs a driver.',
-                )}
-              </li>
-              <li>
-                <strong>{t('MacBox 没开时没有守卫', 'No guard while MacBox is closed')}</strong>
-                {t(
-                  '：这时只靠「App 平时上锁」挡住直接打开。MacBox 在应用运行时异常退出的话，这个应用要等下次打开 MacBox 才重新上锁。',
-                  ': then only “Locked outside MacBox” keeps box apps from being opened directly. If MacBox quits unexpectedly while an app is running, that app stays unlocked until you next open MacBox.',
-                )}
-              </li>
-              <li>
-                <strong>{t('两份不能同时运行', 'Two copies can’t run at once')}</strong>
-                {t(
-                  '：同一个应用的两份（两个盒子，或者盒子和直接装在 Mac 上的那份）共用一组偏好设置。MacBox 会拒绝同时打开，并告诉你先退出哪一个；但盒子运行期间再去打开本机那份，它拦不住，请避免。',
-                  ': two copies of the same app (in two boxes, or in a box and installed directly on your Mac) share one set of preferences. MacBox won’t open both, and tells you which one to quit first — but it can’t stop you from opening the copy on your Mac while the box is running, so please don’t.',
-                )}
-              </li>
-              <li>
-                <strong>
-                  {t('有些偏好设置不进盒子', 'Some preferences stay outside the box')}
-                </strong>
-                {t(
-                  '：MacBox 按 bundle ID 认定哪些偏好设置属于这个 App。认定范围以外的（厂商的更新程序、第三方 SDK、App Group 共享设置等）和“仅限本机”的 ByHost 设置，会直接写进你真实的 ~/Library/Preferences，删除盒子后仍然留着。',
-                  ': MacBox decides which preferences belong to an app by its bundle ID. Anything outside that (a vendor’s updater, third-party SDKs, App Group shared settings and so on) and this-Mac-only ByHost settings are written straight to your real ~/Library/Preferences and stay after you delete the box.',
-                )}
-              </li>
-              <li>
-                <strong>{t('运行报告是尽力而为', 'Run reports are best effort')}</strong>
-                {t(
-                  '：启动的程序、被拦下的行为、在共享的「下载」和可以写入的文件夹里写的文件来自系统日志，系统会限流，没有记录不代表没有发生。连接是定时看一眼得到的，很短的连接会漏掉；服务器名字来自反向解析，常常是云服务商的机器名；经由代理的连接只显示为连到本机上的代理。',
-                  ': launched programs, blocked attempts and files written to the shared Downloads folder or the folders it can write to come from the system log, which is rate-limited, so no entry doesn’t mean nothing happened. Connections are sampled periodically, so very short ones can be missed; server names come from reverse DNS and are often cloud providers’ machine names; connections through a proxy only show up as connections to the proxy on your Mac.',
-                )}
-              </li>
-              <li>
-                <strong>
-                  {t(
-                    '不联网挡不住由系统代办的事',
-                    'Offline doesn’t cover what the system does for an app',
-                  )}
-                </strong>
-                {t(
-                  '：例如让你的默认浏览器打开一个网址（网址里可以带数据）、iCloud 同步、推送通知。',
-                  ': for example, opening a link in your default browser (the link can carry data), iCloud sync or push notifications.',
-                )}
-              </li>
-              <li>
-                <strong>{t('系统临时目录可写', 'System temp folders stay writable')}</strong>
-                {t(
-                  '：很多系统框架依赖它们，App 可以在这里留下文件，运行报告也不统计这里。',
-                  ': many frameworks rely on them, so apps can leave files there, and run reports don’t count them.',
-                )}
-              </li>
-              <li>
-                <strong>{t('MacBox 本身需要你信任', 'MacBox itself needs your trust')}</strong>
-                {t(
-                  '：它要替盒子准备环境、收回设置，不在沙盒里运行。所以它完全开源，你可以自己构建。',
-                  ': it prepares each box and returns its settings, so it can’t be sandboxed. That’s why it’s fully open source — build it yourself if you like.',
-                )}
-              </li>
-              <li>
-                <strong>{t('其他已知限制', 'Other known limits')}</strong>
-                {t(
-                  '：App 包内的 XPC 服务会被守卫结束，依赖它们的功能不可用；使用 Data Protection 钥匙串的 App，条目不会进盒子钥匙串；其他 App 的偏好设置仍可能被读到。',
-                  ': XPC services bundled inside an app are stopped by the guard, so features that rely on them won’t work; apps that use the Data Protection keychain don’t get their items in the box keychain; other apps’ preferences can still be read. ',
-                )}
-                <a href={isolationDetails}>{t('完整说明', 'Full details (in Chinese)')}</a>
-              </li>
-            </ul>
+            <div className="limits reveal">
+              {limits.map((limit, i) => (
+                <details key={limit.title[1]} open={i === 0}>
+                  <summary>{p(limit.title)}</summary>
+                  <p>{p(limit.text)}</p>
+                </details>
+              ))}
+            </div>
           </div>
         </section>
 

@@ -4,8 +4,9 @@ export const latestReleasePage = `${releasesPage}/latest`;
 export const latestReleaseApi = 'https://api.github.com/repos/PykeDLing/macbox/releases/latest';
 export const issuesPage = `${repository}/issues`;
 export const licensePage = `${repository}/blob/main/LICENSE`;
+export const howItWorks = `${repository}/blob/main/docs/how-it-works.md`;
 // docs/how-it-works.md 里的“限制”一节（README 只列主要的几条）
-export const isolationDetails = `${repository}/blob/main/docs/how-it-works.md#${encodeURIComponent('限制')}`;
+export const isolationDetails = `${howItWorks}#${encodeURIComponent('限制')}`;
 export const appVersion = `v${import.meta.env.APP_VERSION}`;
 
 /** 站内资源地址，带上部署路径前缀 */

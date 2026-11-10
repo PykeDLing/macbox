@@ -23,6 +23,8 @@ pnpm format
 ```
 
 页面上默认显示的版本号取自 `../Resources/Info.plist`，打开后再从 GitHub 取最新发布覆盖。
+
+首屏下面的宣传片是 [`../promo/`](../promo/README.md) 用 Remotion 渲染的，中英文各一个文件，放在 `public/media/`；在 `promo/` 里运行 `npm run site` 会重新渲染并覆盖它们。章节的时间点在 `src/lib/film.ts`，`pnpm test` 会按 `promo/src/theme.ts` 里的镜头长度核对。
 本地模拟 GitHub Pages 的项目路径：`BASE_PATH=/macbox pnpm build`，之后 `BASE_PATH=/macbox pnpm test` 会检查所有资源都带着这个前缀。
 
 ## 部署
