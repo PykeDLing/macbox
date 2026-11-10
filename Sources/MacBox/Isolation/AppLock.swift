@@ -30,6 +30,21 @@ nonisolated enum AppLock {
         }
     }
 
+    /// 拖进来的原件（盒子的 Source 文件夹里留底的那份）是 App 包时也上锁。它和 App 文件夹里的那份一样是完整的 App：
+    /// 被系统登记之后（界面测试里遇到过，谁登记的没查出来），双击它声明的文件类型会直接启动它，不在沙盒里，
+    /// 它的声明还排在启动器前面。留底只用来放进虚拟 Mac，那时解锁的是放进去的副本（见 VirtualMac.copyIntoIncoming）。
+    ///
+    /// 原件是安装包（dmg、pkg、zip）时没有可锁的。Source 文件夹或原件被换成指向别处的链接时一个文件也不改：
+    /// 现在的沙盒规则不许 App 改 Source，旧版留下的盒子不好说（同 IsolatedSession.checkLayout）
+    static func lockSource(_ paths: BoxPaths, config: BoxConfig) throws {
+        guard let source = paths.source(config) else { return }
+        var info = stat()
+        guard lstat(source.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { return }
+        let folder = FileOps.realPath(paths.url) + "/" + paths.sourceDirectory.lastPathComponent + "/"
+        guard FileOps.realPath(source).hasPrefix(folder) else { return }
+        try lock(source)
+    }
+
     /// 已上锁：主程序没有执行权限。读不出主程序时按没上锁处理（调用方不应因此认为它安全）
     static func isLocked(_ app: URL) -> Bool {
         guard let executable = mainExecutable(of: app) else { return false }

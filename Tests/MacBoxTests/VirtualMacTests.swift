@@ -525,6 +525,35 @@ final class VirtualMacTests {
         #expect(allItems(incoming) == ["Install.dmg"])
     }
 
+    @Test("放入盒子里锁着的 App：放进去的那份能运行，盒子里的还锁着；以前放进去的没解锁的补上；安装包不受影响")
+    func sendLockedApp() async throws {
+        let bundle = try makeBundle()
+        let vm = VirtualMac(bundle: bundle)
+        let app = root.appending(path: "box/Source/Tool.app")
+        try makeFakeApp(at: app, identifier: "dev.macboxtest.vm-locked", script: "#!/bin/sh\nexit 0\n")
+        try AppLock.lock(app)
+        let copied = bundle.incomingURL.appending(path: "Tool.app")
+
+        await vm.sendToGuest([app], unlocking: true)
+        #expect(vm.lastError == nil)
+        #expect(!AppLock.isLocked(copied) && AppLock.isLocked(app))
+
+        try AppLock.lock(copied) // 旧盒子没有留底，以前放进去的是锁着的那份
+        await vm.sendToGuest([app], unlocking: true)
+        #expect(vm.notice == VirtualMac.sendNotice(.init(unchanged: ["Tool.app"])))
+        #expect(!AppLock.isLocked(copied))
+
+        let image = root.appending(path: "box/Source/Install.dmg")
+        try write("dmg", to: image)
+        await vm.sendToGuest([image], unlocking: true)
+        #expect(vm.lastError == nil && read(bundle.incomingURL.appending(path: "Install.dmg")) == "dmg")
+
+        // 你自己放进去的文件原样复制
+        try write("#!/bin/sh\nexit 1 # 长度变了\n", to: app.appending(path: "Contents/MacOS/main"))
+        await vm.sendToGuest([app])
+        #expect(AppLock.isLocked(copied))
+    }
+
     @Test("放入文件夹（.app）：没变跳过；里面的文件变了整体替换")
     func sendDirectory() async throws {
         let bundle = try makeBundle()

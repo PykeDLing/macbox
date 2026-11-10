@@ -13,6 +13,8 @@ let package = Package(
     platforms: [.macOS(.v26)],
     targets: [
         .executableTarget(name: "MacBox", path: "Sources/MacBox", swiftSettings: settings),
+        // 启动器里的小程序：build.sh 单独编译后放进 MacBox.app 的资源里（见 Launcher.bundledProgram）
+        .executableTarget(name: "MacBoxLauncher", path: "Sources/MacBoxLauncher"),
         .testTarget(name: "MacBoxTests", dependencies: ["MacBox"], path: "Tests/MacBoxTests", swiftSettings: settings),
     ]
 )

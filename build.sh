@@ -1,5 +1,5 @@
 #!/bin/bash
-# 构建 MacBox.app：swiftc 编译 → 同步、编译界面文字（String Catalog）→ 组装 .app → 带虚拟化 entitlement 的 ad-hoc 签名
+# 构建 MacBox.app：swiftc 编译（App 和启动器里的小程序）→ 同步、编译界面文字（String Catalog）→ 组装 .app → 带虚拟化 entitlement 的 ad-hoc 签名
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -29,6 +29,14 @@ xcrun swiftc $OPT -swift-version 6 -parse-as-library \
   -emit-localized-strings -emit-localized-strings-path "$STRINGS_DIR" \
   -o "$BUILD_DIR/MacBox" $SOURCES
 
+# 启动器里的小程序（Sources/MacBoxLauncher）：单独编译，放进 App 的资源里，安装启动器时克隆过去（见 Launcher）。
+# 只带链接器给的签名、不另外签：它要放进每个盒子各自的启动器包里，那些包的 Info.plist 各不相同
+xcrun swiftc $OPT -swift-version 6 \
+  -sdk "$SDKROOT" \
+  -target arm64-apple-macos26.0 \
+  -module-name MacBoxLauncher \
+  -o "$BUILD_DIR/MacBoxLauncher" Sources/MacBoxLauncher/main.swift
+
 # 界面文字：新用到的加进 Localizable.xcstrings、不再用的标成 stale（会改动这个文件，和 Xcode 一样），在 Xcode 里打开它补英文译文。
 # 表名就是文件名，所以只同步 Localizable；InfoPlist.xcstrings 是 Info.plist 里的文字，手动维护
 xcrun xcstringstool sync Resources/Localizable.xcstrings --stringsdata "$STRINGS_DIR"/*.stringsdata
@@ -36,6 +44,7 @@ xcrun xcstringstool sync Resources/Localizable.xcstrings --stringsdata "$STRINGS
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 mv "$BUILD_DIR/MacBox" "$APP/Contents/MacOS/MacBox"
+mv "$BUILD_DIR/MacBoxLauncher" "$APP/Contents/Resources/MacBoxLauncher"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 # 编译成 en.lproj 里的 .strings、.stringsdict
 for catalog in Resources/*.xcstrings; do

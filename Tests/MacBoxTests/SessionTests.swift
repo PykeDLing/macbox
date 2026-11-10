@@ -351,6 +351,44 @@ struct AppLockTests {
 
     func isExecutable(_ url: URL) -> Bool { access(url.path, X_OK) == 0 }
 
+    @Test("留底的原件：是 App 包就锁上；是安装包没有可锁的；Source 被换成指向别处的链接时不顺着它去改")
+    func lockSource() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        func box(_ name: String, source: String) throws -> (BoxPaths, BoxConfig) {
+            let paths = BoxPaths(url: root.appending(path: "\(name).box", directoryHint: .isDirectory))
+            var config = BoxConfig(id: UUID(), name: name, bundleIdentifier: "dev.macboxtest.source", appFolderName: "\(name).app")
+            config.sourceName = source
+            return (paths, config)
+        }
+        // App 包
+        let (bundled, bundledConfig) = try box("Bundled", source: "Original.app")
+        let kept = try #require(bundled.source(bundledConfig))
+        try makeFakeApp(at: kept, identifier: "dev.macboxtest.source", script: "#!/bin/sh\nexit 0\n")
+        try AppLock.lockSource(bundled, config: bundledConfig)
+        #expect(AppLock.isLocked(kept))
+        // 安装包：一个文件
+        let (packaged, packagedConfig) = try box("Packaged", source: "Install.dmg")
+        let image = try #require(packaged.source(packagedConfig))
+        try AppPaths.ensure(packaged.sourceDirectory)
+        try Data("dmg".utf8).write(to: image)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: image.path)
+        try AppLock.lockSource(packaged, config: packagedConfig)
+        #expect(isExecutable(image))
+        // Source 文件夹是指向别处的链接：别处那个你自己的 App 不能被锁上
+        let victim = root.appending(path: "Yours/Original.app")
+        try makeFakeApp(at: victim, identifier: "dev.macboxtest.victim", script: "#!/bin/sh\nexit 0\n")
+        let (linked, linkedConfig) = try box("Linked", source: "Original.app")
+        try AppPaths.ensure(linked.url)
+        try FileManager.default.createSymbolicLink(at: URL(fileURLWithPath: linked.sourceDirectory.path),
+                                                   withDestinationURL: victim.deletingLastPathComponent())
+        try AppLock.lockSource(linked, config: linkedConfig)
+        #expect(!AppLock.isLocked(victim))
+        // 没有留底（旧盒子）
+        var none = linkedConfig
+        none.sourceName = nil
+        try AppLock.lockSource(linked, config: none)
+    }
+
     @Test("上锁去掉所有包（含嵌套的 App、扩展）的 MacOS 里的执行权限；解锁只给程序加回")
     func lockAndUnlock() async throws {
         let app = root.appending(path: "X.app")

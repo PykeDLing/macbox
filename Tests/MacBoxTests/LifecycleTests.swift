@@ -203,7 +203,20 @@ struct LifecycleTests {
         #expect(AppLock.isLocked(app))
     }
 
-    @Test("添加的 App 是锁着的；导入用的临时盒子不留下", .timeLimit(.minutes(2)))
+    @Test("启动时锁上留底的原件：以前的版本从不锁它", .timeLimit(.minutes(1)))
+    func startupLocksSource() async throws {
+        let fixture = LifecycleFixture()
+        defer { await fixture.cleanup() }
+        let paths = try await fixture.makeBox("Kept", script: "exit 0\n") { $0.sourceName = "Original.app" }
+        let config = try paths.loadConfig()
+        let kept = try #require(paths.source(config))
+        try makeFakeApp(at: kept, identifier: config.bundleIdentifier, script: "#!/bin/sh\nexit 0\n")
+        #expect(!AppLock.isLocked(kept))
+        _ = await fixture.start()
+        #expect(AppLock.isLocked(kept))
+    }
+
+    @Test("添加的 App 和留底的原件是锁着的，拖进来的那份不动；导入用的临时盒子不留下", .timeLimit(.minutes(2)))
     func importLocksApp() async throws {
         let searchListBefore = try await Shell.run("/usr/bin/security", ["list-keychains", "-d", "user"]).output
         let fixture = LifecycleFixture()
@@ -220,6 +233,9 @@ struct LifecycleTests {
         let box = try #require(store.boxes.first { $0.config.bundleIdentifier == identifier })
         fixture.track(box.paths.url)
         #expect(AppLock.isLocked(box.appURL), "添加之后 App 要锁上")
+        let kept = try #require(box.paths.source(box.config))
+        #expect(AppLock.isLocked(kept), "留底的原件也是完整的 App，一样要锁上")
+        #expect(!AppLock.isLocked(source), "你拖进来的那份不是盒子里的，不能动")
         #expect(PreferenceLease.domain(identifier, isCoveredBy: box.config.preferencePrefixes))
         #expect(!FileOps.contents(of: AppPaths.boxes).contains { $0.pathExtension == BoxPaths.importingSuffix })
         #expect(try await Shell.run("/usr/bin/security", ["list-keychains", "-d", "user"]).output == searchListBefore)
@@ -462,7 +478,7 @@ struct LifecycleTests {
         #expect(AppLock.isLocked(sandboxed.appURL))
     }
 
-    @Test("Spotlight 启动器：不用 open -g，写着版本；旧写法的、旧版留下的子文件夹里和隐藏的启动器，启动时重写、清掉",
+    @Test("Spotlight 启动器（没有小程序可用时照旧写脚本）：不用 open -g，写着版本；旧写法的、旧版留下的子文件夹里和隐藏的启动器，启动时重写、清掉",
           .timeLimit(.minutes(1)))
     func launchersAreRewritten() async throws {
         let fixture = LifecycleFixture()
@@ -480,8 +496,10 @@ struct LifecycleTests {
         let script = launchScript(of: launcher)
         #expect(try String(contentsOf: script, encoding: .utf8) == Launcher.script(for: config.id))
         #expect(!Launcher.script(for: config.id).contains("-g"), "-g 让 MacBox 留在后台，App 到不了前台")
-        #expect(Launcher.version(of: launcher) == Launcher.version)
+        // 测试进程不是 MacBox.app，里面没有带着小程序：写的是脚本，版本记脚本的那一版
+        #expect(Launcher.bundledProgram == nil && Launcher.version(of: launcher) == Launcher.scriptVersion)
         #expect(!(await Launcher.shared.needsInstall(for: config.id)))
+        #expect(await Launcher.shared.claims(for: config.id)?.isEmpty == true, "脚本收不到链接和文件，不声明")
 
         // 旧写法：没有版本、脚本带 -g
         let infoURL = launcher.appending(path: "Contents/Info.plist")
@@ -505,11 +523,99 @@ struct LifecycleTests {
         }, "旧版留下的启动器没有清掉")
         #expect(await eventually(.seconds(10)) {
             let mine = FileOps.contents(of: AppPaths.launchers).filter { Launcher.boxID(of: $0) == config.id.uuidString }
-            return mine.count == 1 && Launcher.version(of: mine[0]) == Launcher.version
+            return mine.count == 1 && Launcher.version(of: mine[0]) == Launcher.scriptVersion
                 && (try? String(contentsOf: launchScript(of: mine[0]), encoding: .utf8)) == Launcher.script(for: config.id)
         }, "旧写法的启动器没有重写")
         // 文件写好时登记（lsregister -f）可能还没做完：等这个盒子的启动器同步全部做完，结束时撤销登记才不会被它抢在后面
         await store.box(id: config.id)?.syncLauncher().value
+    }
+
+    @Test("启动器里放小程序：记着盒子里 App 的路径和建它的 MacBox，替应用声明链接和文件类型；不接收、在虚拟 Mac 里运行时不声明",
+          .timeLimit(.minutes(1)))
+    func launcherProgramAndClaims() async throws {
+        let fixture = LifecycleFixture()
+        let scratch = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-launcher-\(UUID().uuidString)")
+        defer {
+            await fixture.cleanup()
+            for launcher in FileOps.contents(of: AppPaths.launchers) {
+                _ = try? await Shell.run(Shell.lsregister, ["-u", launcher.path])
+            }
+            try? FileOps.removeTree(AppPaths.launchers)
+            try? FileOps.removeTree(scratch)
+        }
+        // 代表 MacBox.app 里带着的小程序：安装时只是克隆过去，是什么程序都一样
+        let program = scratch.appending(path: "MacBoxLauncher")
+        try await TestStub.install(at: program)
+
+        let paths = try await fixture.makeBox("Linked", script: "exit 0\n") { $0.showInLaunchpad = true }
+        var config = try paths.loadConfig()
+        let infoURL = paths.app(config).appending(path: "Contents/Info.plist")
+        var appInfo = try #require(NSDictionary(contentsOf: infoURL) as? [String: Any])
+        appInfo["CFBundleURLTypes"] = [["CFBundleURLSchemes": ["macboxtest-link", "macboxtest-taken", "macboxtest-stray"]]]
+        appInfo["CFBundleDocumentTypes"] = [["CFBundleTypeName": "Doc", "LSHandlerRank": "Owner", "CFBundleTypeExtensions": ["macboxtestdoc"]]]
+        try PropertyListSerialization.data(fromPropertyList: appInfo, format: .xml, options: 0).write(to: infoURL)
+
+        // 不去问、不去改系统的登记：-taken 有别的应用在处理，-stray 现在交给盒子外的那份原件
+        let takenOver = TakenOver()
+        let appIdentifier = config.bundleIdentifier
+        func installed() async throws -> (launcher: URL, info: [String: Any], claims: Launcher.Claims) {
+            let claims = try await Launcher.shared.install(paths: paths, config: config, program: program, handler: { scheme, identifier in
+                guard identifier == appIdentifier else { return .another }
+                return scheme.hasSuffix("-taken") ? .another : scheme.hasSuffix("-stray") ? .strayCopy : .nobody
+            }, takeOver: { scheme, launcher in takenOver.note(scheme, launcher) })
+            let launcher = try #require(FileOps.contents(of: AppPaths.launchers).first { Launcher.boxID(of: $0) == config.id.uuidString })
+            let info = try #require(NSDictionary(contentsOf: launcher.appending(path: "Contents/Info.plist")) as? [String: Any])
+            return (launcher, info, claims)
+        }
+
+        let linked = try await installed()
+        let executable = launchScript(of: linked.launcher)
+        #expect(try Data(contentsOf: executable) == Data(contentsOf: program), "启动器里应该是小程序，不是脚本")
+        #expect(FileManager.default.isExecutableFile(atPath: executable.path))
+        #expect(Launcher.version(of: linked.launcher) == Launcher.version)
+        #expect(linked.info["MacBoxAppPath"] as? String == FileOps.realPath(paths.app(config)))
+        // 测试用的是 MACBOX_DATA_ROOT，但这个进程不是一个 App：不记
+        #expect(linked.info["MacBoxHost"] == nil)
+        #expect(linked.claims == Launcher.Claims(schemes: ["macboxtest-link", "macboxtest-stray"], extensions: ["macboxtestdoc"]))
+        #expect(await Launcher.shared.claims(for: config.id) == linked.claims)
+        let urlTypes = try #require(linked.info["CFBundleURLTypes"] as? [[String: Any]])
+        #expect(urlTypes.first?["CFBundleURLSchemes"] as? [String] == ["macboxtest-link", "macboxtest-stray"], "别的 App 已经在处理的不声明")
+        #expect(takenOver.all.mapValues { FileOps.realPath(URL(fileURLWithPath: $0)) } == ["macboxtest-stray": FileOps.realPath(linked.launcher)],
+                "只接管原来交给盒子外那份原件的链接")
+        let documentTypes = try #require(linked.info["CFBundleDocumentTypes"] as? [[String: Any]])
+        #expect(documentTypes.first?["LSHandlerRank"] as? String == "Alternate")
+
+        // 关掉「接收链接和文件」、改用虚拟 Mac：启动器还在，照样能打开盒子，只是不声明
+        for change in [{ (config: inout BoxConfig) in config.acceptsLinks = false }, { $0.acceptsLinks = true; $0.runtime = .virtualMac }] {
+            change(&config)
+            let plain = try await installed()
+            #expect(plain.claims.isEmpty && plain.info["CFBundleURLTypes"] == nil && plain.info["CFBundleDocumentTypes"] == nil)
+            #expect(plain.info["MacBoxAppPath"] != nil && Launcher.version(of: plain.launcher) == Launcher.version)
+        }
+        #expect(takenOver.all.count == 1, "不声明的时候也不接管")
+    }
+
+    @Test("启动器有链接、文件没能交给应用：在这个应用上说明，并打开主窗口")
+    func undeliveredLinkIsExplained() async throws {
+        let fixture = LifecycleFixture()
+        defer { await fixture.cleanup() }
+        let paths = try await fixture.makeBox("Late", script: "exit 0\n")
+        let id = try paths.loadConfig().id
+        let store = await fixture.start()
+        let box = try #require(store.box(id: id))
+        store.destination = .settings
+        store.handle(try #require(URL(string: "macbox://undelivered/\(id.uuidString)")))
+        #expect(box.notice?.contains("Late") == true && box.activity == .idle, "只说明，不去打开应用")
+        #expect(store.windowRequest?.window == .library)
+        // 盒子已经不在了：没什么可说的，也不弹“应用已经不在”
+        store.handle(try #require(URL(string: "macbox://undelivered/\(UUID().uuidString)")))
+        #expect(store.alerts.isEmpty)
+        // 打不开的原因已经摆在那里：不再补一条，也不再把窗口拉到前面
+        box.notice = nil
+        box.lastError = "无法打开应用"
+        store.windowRequest = nil
+        store.handle(try #require(URL(string: "macbox://undelivered/\(id.uuidString)")))
+        #expect(box.notice == nil && store.windowRequest == nil)
     }
 
     @Test("启动器沿用图标时不跟随链接：App 把图标换成指向盒子外的链接，盒子外的东西不会被复制到启动器里",
@@ -846,6 +952,14 @@ extension LifecycleTests {
 }
 
 /// 启动器的脚本文件
+/// 启动器接管了哪些链接（测试里代替改系统的登记）
+private nonisolated final class TakenOver: @unchecked Sendable {
+    private let lock = NSLock()
+    private var schemes: [String: String] = [:]
+    func note(_ scheme: String, _ launcher: URL) { lock.withLock { schemes[scheme] = launcher.path } }
+    var all: [String: String] { lock.withLock { schemes } }
+}
+
 private func launchScript(of launcher: URL) -> URL { launcher.appending(path: "Contents/MacOS/launch") }
 
 /// 界面文字的英文版本统一用弯撇号（’），和其余几百处一致

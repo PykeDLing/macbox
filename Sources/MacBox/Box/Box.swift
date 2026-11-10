@@ -23,6 +23,8 @@ final class Box: Identifiable {
     /// 收尾时才抄进来；界面用 currentReport
     private(set) var report: RunReport?
     private(set) var restorePointDate: Date?
+    /// 启动器替这个应用向系统声明了哪些链接和文件类型（见 Launcher.claims）。nil：没有启动器，或者还没读到
+    private(set) var linkClaims: Launcher.Claims?
     var lastError: String?
     var notice: String?
     /// 请求退出几秒后应用还在运行（在等你存储、你点了取消、没有响应）：界面上在「退出」旁边提供「强制退出」
@@ -818,7 +820,9 @@ final class Box: Identifiable {
         } catch {
             lastError = String(localized: "无法保存设置：\(error.localizedDescription)")
         }
-        if old.name != config.name || old.wantsLauncher != config.wantsLauncher || old.appFolderName != config.appFolderName {
+        // 运行环境、接不接收链接和文件决定启动器声明什么（见 Launcher.install）
+        if old.name != config.name || old.wantsLauncher != config.wantsLauncher || old.appFolderName != config.appFolderName
+            || old.acceptsLinks != config.acceptsLinks || old.runtime != config.runtime {
             syncLauncher()
         }
     }
@@ -838,16 +842,32 @@ final class Box: Identifiable {
             let config = self.config
             if retired || !config.wantsLauncher {
                 await Launcher.shared.remove(boxID: id)
+                linkClaims = nil
                 return
             }
             do {
-                try await Launcher.shared.install(paths: paths, config: config)
+                linkClaims = try await Launcher.shared.install(paths: paths, config: config)
             } catch {
                 lastError = String(localized: "无法创建启动器：\(error.localizedDescription)")
             }
         }
         launcherTask = task
         return task
+    }
+
+    /// 读出现有的启动器声明了什么（启动时启动器不用重写的盒子）
+    func loadLinkClaims() async {
+        let claims = await Launcher.shared.claims(for: id)
+        if !retired { linkClaims = claims }
+    }
+
+    /// 启动器等了很久，应用还是没在隔离中准备好，链接、文件没能交给它（见 Sources/MacBoxLauncher）。
+    /// 应用打不开时当场就有说明（lastError），还摆在那里的话不再补这一条：
+    /// 它要晚半分钟才到，只会在已经说清楚的错误下面多出一行，再把窗口拉到前面一次（界面测试里看到的）
+    func noteUndelivered() {
+        guard lastError == nil else { return }
+        notice = String(localized: "有链接或文件没能交给「\(config.name)」：它没有及时启动好。等它打开后再试一次。")
+        store?.reveal(self) // 点链接时主窗口多半关着
     }
 
     /// 盒子被删除：之后不再写盘，并删除它的启动器

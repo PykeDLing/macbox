@@ -2718,6 +2718,42 @@
         }
       }
     },
+    "在别处打开 %@ 文件时，会在盒子里打开这个应用，把文件交给它。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opening %@ files elsewhere opens this app in its box and hands the file to it."
+          }
+        }
+      }
+    },
+    "在别处点 %@ 链接、打开 %@ 文件时，会在盒子里打开这个应用，把它们交给它。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clicking %1$@ links or opening %2$@ files elsewhere opens this app in its box and hands them to it."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "在别处点 %1$@ 链接、打开 %2$@ 文件时，会在盒子里打开这个应用，把它们交给它。"
+          }
+        }
+      }
+    },
+    "在别处点 %@ 链接时，会在盒子里打开这个应用，把链接交给它。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clicking %@ links elsewhere opens this app in its box and hands the link to it."
+          }
+        }
+      }
+    },
     "在本机隔离中打开一次应用，退出后这里就有一份报告。" : {
       "localizations" : {
         "en" : {
@@ -3244,6 +3280,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Paused"
+          }
+        }
+      }
+    },
+    "已经有别的应用在处理的，不会改到这里来。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : " Anything another app already handles stays with that app."
           }
         }
       }
@@ -3801,6 +3847,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mount a disk image"
+          }
+        }
+      }
+    },
+    "接收链接和文件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Receive Links and Files"
           }
         }
       }
@@ -4647,6 +4703,16 @@
         }
       }
     },
+    "有链接或文件没能交给「%@」：它没有及时启动好。等它打开后再试一次。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A link or file couldn’t be handed to “%@”: it didn’t finish opening in time. Try again once it’s open."
+          }
+        }
+      }
+    },
     "未设置" : {
       "localizations" : {
         "en" : {
@@ -5377,6 +5443,16 @@
         }
       }
     },
+    "点链接、双击文件都不会打开盒子里的这个应用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clicking a link or double-clicking a file won’t open this app in its box."
+          }
+        }
+      }
+    },
     "版本" : {
       "localizations" : {
         "en" : {
@@ -5403,6 +5479,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Separate Keychain"
+          }
+        }
+      }
+    },
+    "现在没有会交给它的链接或文件：应用没有声明它能打开什么，或者这台 Mac 上已经有别的应用在处理。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No links or files are handed to it right now: the app doesn’t declare any it can open, or another app on this Mac already handles them."
           }
         }
       }
@@ -7157,6 +7243,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : " Takes effect after you reopen “%@”."
+          }
+        }
+      }
+    },
+    "链接和文件经由聚焦里的启动器交给应用，要先打开「在聚焦中显示」。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Links and files reach the app through its Spotlight launcher. Turn on “Show in Spotlight” first."
           }
         }
       }

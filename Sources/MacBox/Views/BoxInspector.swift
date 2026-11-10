@@ -471,7 +471,44 @@ struct BoxInspector: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            // 链接、文件进不了虚拟 Mac，在线安装器也不是要用的应用：只在本机隔离里运行的应用有
+            if box.config.runtime == .isolated, !box.config.isInstaller {
+                Toggle("接收链接和文件", isOn: $box.config.acceptsLinks)
+                    .disabled(!box.config.showInLaunchpad)
+                Text(linksCaption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+    }
+
+    /// 「接收链接和文件」下面的说明：实际声明了哪些，按启动器里记的来（见 Launcher.claims）
+    private var linksCaption: String {
+        guard box.config.showInLaunchpad else {
+            return String(localized: "链接和文件经由聚焦里的启动器交给应用，要先打开「在聚焦中显示」。")
+        }
+        guard box.config.acceptsLinks else {
+            return String(localized: "点链接、双击文件都不会打开盒子里的这个应用。")
+        }
+        guard let claims = box.linkClaims, !claims.isEmpty else {
+            return String(localized: "现在没有会交给它的链接或文件：应用没有声明它能打开什么，或者这台 Mac 上已经有别的应用在处理。")
+        }
+        // 太多时只列前几个
+        func list(_ items: [String]) -> String {
+            let shown = 4
+            return listed(Array(items.prefix(shown))
+                + (items.count > shown ? [String(localized: "其他几项", comment: "列表末尾：还有没列出来的")] : []))
+        }
+        let links = list(claims.schemes.map { "\($0):" })
+        let files = list(claims.extensions.map { ".\($0)" })
+        let what = if claims.extensions.isEmpty {
+            String(localized: "在别处点 \(links) 链接时，会在盒子里打开这个应用，把链接交给它。")
+        } else if claims.schemes.isEmpty {
+            String(localized: "在别处打开 \(files) 文件时，会在盒子里打开这个应用，把文件交给它。")
+        } else {
+            String(localized: "在别处点 \(links) 链接、打开 \(files) 文件时，会在盒子里打开这个应用，把它们交给它。")
+        }
+        return what + String(localized: "已经有别的应用在处理的，不会改到这里来。")
     }
 
     // MARK: - 文件
