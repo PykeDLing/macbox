@@ -58,6 +58,12 @@ nonisolated enum SandboxProfile {
         \(boxWritable.map { "  (subpath \(quote($0)))" }.joined(separator: "\n")))
         (deny file-write*
         \(boxSkeleton.map { "  (literal \(quote($0)))" }.joined(separator: "\n")))
+        ; 骨架本身不能删除、改名、改权限，但问“这个文件夹可不可写”要答“可以”：access(W_OK)、isWritableFileAtPath、
+        ; Qt 的 isWritable 问的是 file-write-data，全挡的话主目录和临时目录都成了“不可写”，有的 App 启动时检查这个，
+        ; 查不过就不往下走（剪映：“temp 目录无写入权限”）。文件夹没有内容可写，放行它不让 App 多做到任何事：
+        ; 在里面新建、删除按里面那一项的路径判断，删除、改名文件夹本身是 file-write-unlink，照样挡着
+        (allow file-write-data
+        \(boxSkeleton.map { "  (literal \(quote($0)))" }.joined(separator: "\n")))
 
         ; 只挡内容读取（file-read-data），不挡元数据：App 启动时要逐级解析自身路径
         (deny file-read-data

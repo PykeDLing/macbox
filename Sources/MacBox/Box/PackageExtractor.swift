@@ -18,6 +18,51 @@ nonisolated enum PackageExtractor {
 
     static let supportedExtensions: Set<String> = ["dmg", "app", "pkg", "mpkg", "zip"]
 
+    /// 安装包的格式：决定怎么取出里面的 App
+    enum Format: Sendable {
+        case app, diskImage, installerPackage, zip
+    }
+
+    /// 安装包是哪种格式。普通文件先看内容，认不出再看扩展名：在线安装器下载的文件名不可信
+    /// （剪映的安装器把一个 dmg 存成 app_package_….zip，自己再用 hdiutil 挂载），按扩展名当成 zip 去解就失败了。
+    /// 文件夹只能看扩展名（.app，旧式的 .pkg）
+    static func format(of package: URL) -> Format? {
+        let ext = package.pathExtension.lowercased()
+        if ext == "app" { return .app }
+        if let format = sniffedFormat(of: package) { return format }
+        switch ext {
+        case "dmg": return .diskImage
+        case "pkg", "mpkg": return .installerPackage
+        case "zip": return .zip
+        default: return nil
+        }
+    }
+
+    /// 按内容认出的格式，只认有明确标记的三种：
+    /// - 磁盘映像（UDIF，下载的 dmg 几乎都是）：最后 512 字节以 “koly” 开头；
+    /// - 安装包（xar）：开头是 “xar!”；
+    /// - zip：开头是 “PK”＋3、4（空的压缩包是 5、6）。
+    /// 不是普通文件、读不了、哪种都不是时返回 nil。也用来在安装器下载的东西里认出改了扩展名的安装包
+    /// （见 IsolatedSession.downloadedPackages）：那里的文件 App 改得到，所以打开时不等待（O_NONBLOCK，
+    /// 免得被一个永远没有数据的 FIFO 卡住），只读已经打开的这个文件
+    static func sniffedFormat(of file: URL) -> Format? {
+        let descriptor = open(file.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil }
+        func bytes(at offset: off_t, count: Int) -> [UInt8] {
+            var buffer = [UInt8](repeating: 0, count: count)
+            let read = pread(descriptor, &buffer, count, offset)
+            return read == count ? buffer : []
+        }
+        let head = bytes(at: 0, count: 4)
+        if head == Array("xar!".utf8) { return .installerPackage }
+        if head == [0x50, 0x4B, 0x03, 0x04] || head == [0x50, 0x4B, 0x05, 0x06] { return .zip }
+        if info.st_size >= 512, bytes(at: info.st_size - 512, count: 4) == Array("koly".utf8) { return .diskImage }
+        return nil
+    }
+
     /// 导入前的快速检查，不读文件内容：不支持的东西不必先整个复制进盒子才报错。
     /// 东西存在时还要类型对得上：.app 是文件夹（App 包），.dmg / .zip 是普通文件，
     /// .pkg / .mpkg 两种都行（旧式的安装包是文件夹）；符号链接按它指向的东西判断。
@@ -66,18 +111,18 @@ nonisolated enum PackageExtractor {
     private static let maxNesting = 2
 
     private static func extract(_ package: URL, into destination: URL, nesting: Int) async throws -> Extracted {
-        switch package.pathExtension.lowercased() {
-        case "app":
+        switch format(of: package) {
+        case .app:
             // 直接拖进来的 App 可能是指向别处的符号链接：复制它指向的真实 App，名字沿用看到的
             guard let app = resolved(package, inside: nil, directory: true) else { throw notAnApp(package.lastPathComponent) }
             return Extracted(app: try copyApp(app, named: package.lastPathComponent, into: destination))
-        case "dmg":
+        case .diskImage:
             return try await fromDiskImage(package, into: destination, nesting: nesting)
-        case "pkg", "mpkg":
+        case .installerPackage:
             return try await fromInstallerPackage(package, into: destination)
-        case "zip":
+        case .zip:
             return try await fromZip(package, into: destination, nesting: nesting)
-        default:
+        case nil:
             throw unsupported(package)
         }
     }

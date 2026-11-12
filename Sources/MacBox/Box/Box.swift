@@ -27,6 +27,10 @@ final class Box: Identifiable {
     private(set) var linkClaims: Launcher.Claims?
     var lastError: String?
     var notice: String?
+    /// 退出后没能重新锁上（见 AppLock）：macOS 不让 MacBox 改动有些 App 的包（实测迅雷、剪映运行过一次之后就这样），
+    /// 去掉执行权限的操作被系统拒绝，App 一直留着执行权限。MacBox 没开时它可能被别的途径直接启动，那时不在沙盒里。
+    /// 改变不了这件事，但不能不说：详情面板里列出来（见 BoxInspector）。每次运行结束、每次启动 MacBox 时重新看
+    private(set) var staysUnlocked = false
     /// 请求退出几秒后应用还在运行（在等你存储、你点了取消、没有响应）：界面上在「退出」旁边提供「强制退出」
     private(set) var offersForceQuit = false
     /// 刚请求过退出、还没到提供「强制退出」的时候：界面显示“正在退出…”，「退出」暂时不能再点
@@ -64,6 +68,8 @@ final class Box: Identifiable {
 
     /// 请求退出多久之后提供「强制退出」
     static let forceQuitDelay: Duration = .seconds(4)
+    /// 接手安装时，请安装器退出多久之后直接结束它（见 handOver）
+    static let handoverPatience: Duration = .seconds(3)
     /// 启动后这么快就以非 0 退出的，算启动失败（见 finish）
     static let quickExit: TimeInterval = 3
 
@@ -73,6 +79,8 @@ final class Box: Identifiable {
     @ObservationIgnored private var retired = false
     /// 已开始接手安装器下载的安装包（避免重复的拦截记录反复触发）
     @ObservationIgnored private var handingOver = false
+    /// 接手时保住的安装包（见 handOver）：copy 是 MacBox 克隆的那一份，original 是安装器下载到的位置
+    @ObservationIgnored private var securedPackage: (copy: URL, original: URL)?
     /// 这次运行里 MacBox 请求过退出（退出按钮、强制退出、退出 MacBox、接手安装）。启动期间收到的，启动后立即转达；
     /// 请求过退出的，很快退出不算启动失败，“重启以生效”也不再重新打开
     @ObservationIgnored private var quitRequested = false
@@ -211,6 +219,7 @@ final class Box: Identifiable {
         blocks.removeAll()
         report = RunReport(config: config)
         handingOver = false
+        securedPackage = nil
         quitRequested = false
         pendingOpen = nil
         offersForceQuit = false
@@ -300,18 +309,10 @@ final class Box: Identifiable {
     }
 
     func record(_ event: BlockEvent) {
-        // 安装器下载完了、正尝试挂载安装包：不必等它报错，请它退出，由 MacBox 完成安装
+        // 安装器下载完了、正尝试挂载安装包：不必等它报错，由 MacBox 完成安装
         if event.kind == .diskMount, config.isInstaller, let session, !handingOver {
             handingOver = true
-            Task {
-                guard !(await session.downloadedPackages()).isEmpty else {
-                    handingOver = false
-                    return
-                }
-                notice = String(localized: "安装包已下载完成，MacBox 正在接手安装…")
-                try? await Task.sleep(for: .seconds(1))
-                if self.session === session { quit() } // 不肯退出时，界面上照样提供「强制退出」
-            }
+            Task { await handOver(from: session) }
         }
         if let index = blocks.firstIndex(where: { $0.id == event.id }) {
             blocks[index].count += 1
@@ -319,6 +320,59 @@ final class Box: Identifiable {
         } else {
             blocks.insert(event, at: 0)
         }
+    }
+
+    /// 上锁之后看一眼锁上了没有（见 staysUnlocked）。App 不在、主程序读不出时不算
+    func noteLockState() async {
+        let app = appURL
+        staysUnlocked = await Background.run {
+            guard let executable = AppLock.mainExecutable(of: app), FileOps.exists(executable) else { return false }
+            return !AppLock.isLocked(app)
+        }
+    }
+
+    /// 接手安装器下载的安装包：先保住，再请安装器退出，退出后由 finish 取出里面的 App（见 adoptDownloadedPackage）。
+    ///
+    /// 先保住再请它退出：有的安装器收到退出请求会先问“确定取消下载吗”，一取消就把下载的东西删掉（剪映）；
+    /// 挂载失败后自己清理、从头重下的也有。克隆到 App 改不到的地方（见 BoxPaths.handover，克隆不占空间），
+    /// 之后它删也好、改也好，接手用的都是这一份。保不住的（下载的是一个 .app 文件夹）照旧用它原来的位置。
+    ///
+    /// 请它退出后几秒还没走的（停在那句询问上）直接结束：安装包已经在手，它没有什么要存的了。
+    /// 还在变大的不算下完：安装器为别的事碰磁盘映像服务时，下载可能才到一半
+    private func handOver(from session: IsolatedSession) async {
+        // 这次运行里新下载的优先；没有就看以前留下的（上次下完没接手成，这次安装器直接拿缓存去挂载）
+        var packages = await session.downloadedPackages()
+        if packages.isEmpty { packages = await session.downloadedPackages(anyAge: true) }
+        guard let package = packages.first else {
+            handingOver = false
+            return
+        }
+        let size = FileOps.allocatedSize(of: package)
+        try? await Task.sleep(for: .seconds(1))
+        guard self.session === session, FileOps.allocatedSize(of: package) == size else {
+            handingOver = false
+            return
+        }
+        let paths = paths
+        let copy = paths.handover.appending(path: package.lastPathComponent)
+        let secured = await Background.run {
+            do {
+                try FileOps.removeTree(paths.handover)
+                try AppPaths.ensure(paths.handover)
+                try FileOps.cloneRegularFile(package, inside: paths.url, to: copy)
+                return true
+            } catch {
+                try? FileOps.removeTree(paths.handover)
+                return false
+            }
+        }
+        guard self.session === session else { return }
+        if secured { securedPackage = (copy, package) }
+        notice = String(localized: "安装包已下载完成，MacBox 正在接手安装…")
+        quit() // 不肯退出时，界面上照样提供「强制退出」
+        guard secured else { return }
+        try? await Task.sleep(for: Self.handoverPatience)
+        if self.session === session { await forceQuit() }
     }
 
     /// 运行期间的记录。运行已经结束（晚到的连接、名字）的不再改动存好的报告
@@ -474,6 +528,7 @@ final class Box: Identifiable {
         let terminating = store?.isTerminating == true
         offersForceQuit = false
         await finishReport(outcome)
+        await noteLockState()
         var errors: [String] = []
         if let reason = outcome.preferencesReturnError {
             errors.append(String(localized: "无法收回偏好设置，这台 Mac 上这个应用的设置暂时还是盒子里的内容。下次打开它或重新打开 MacBox 时会再试。原因：\(reason)"))
@@ -481,8 +536,11 @@ final class Box: Identifiable {
         // 接手安装失败等途中设置的错误也保留，一起显示
         defer { if !errors.isEmpty { lastError = ([lastError].compactMap { $0 } + errors).joined(separator: "\n") } }
 
-        if config.isInstaller, let package = outcome.downloadedPackages.first, !terminating {
-            await adoptDownloadedPackage(package)
+        // 接手时保住的那一份优先：安装器退出时可能已经把自己下载的删掉了
+        let secured = securedPackage.flatMap { FileOps.exists($0.copy) ? $0 : nil }
+        securedPackage = nil
+        if config.isInstaller, let package = secured?.copy ?? outcome.downloadedPackages.first, !terminating {
+            await adoptDownloadedPackage(package, original: secured?.original)
             // 接手前会先收回（见 adoptDownloadedPackage）：收回了，“无法收回”就不用再说；没收回时不接手，两条一起显示
             if !PreferenceLease(box: paths, prefixes: config.preferencePrefixes).isOutstanding { errors.removeAll() }
             return
@@ -513,10 +571,15 @@ final class Box: Identifiable {
         let acknowledged = Set(config.acknowledgedBlocks ?? [])
         let severe = blocks.filter { $0.kind.suggestsVirtualMac && !acknowledged.contains($0.id) }
         if !severe.isEmpty {
-            store?.suggestVirtualMac(for: self, reasons: severe.map {
-                String(localized: "\($0.kind.title)：\($0.targetText)")
-            }, blocks: severe.map(\.id))
+            store?.suggestVirtualMac(for: self, reasons: severe.map(Self.virtualMacReason), blocks: severe.map(\.id))
         }
+    }
+
+    /// 建议改用虚拟 Mac 时说的理由。自带的后台服务单独说清楚：界面照常、功能却用不了，光给一个路径看不出是怎么回事
+    nonisolated static func virtualMacReason(_ block: BlockEvent) -> String {
+        guard block.kind == .bundledService else { return String(localized: "\(block.kind.title)：\(block.targetText)") }
+        let name = (block.target as NSString).lastPathComponent
+        return String(localized: "它自带的后台服务「\(name)」由系统在沙盒外启动，MacBox 结束了它，依赖这个服务的功能在本机隔离里用不了。")
     }
 
     /// 启动后很快就以非 0 退出：多半是缺少系统里没有的组件、在沙盒里无法运行。不说的话用户看到的是“点了没反应”
@@ -546,7 +609,7 @@ final class Box: Identifiable {
     ]
 
     /// 在线安装器下载完整安装包后，由 MacBox 取出真正的 App 替换安装器，然后打开（和导入时一样，需要虚拟 Mac 的先问）
-    private func adoptDownloadedPackage(_ package: URL) async {
+    private func adoptDownloadedPackage(_ package: URL, original: URL? = nil) async {
         activity = .maintenance
         notice = String(localized: "安装器已下载「\(package.lastPathComponent)」，正在完成安装…")
         let paths = paths
@@ -568,7 +631,10 @@ final class Box: Identifiable {
                 // 先锁好再换上去（见 AppLock）；换的过程任何时刻崩溃，盒子里都是完整的旧 App 或新 App（见 FileOps.replace）
                 try AppLock.lock(extracted.app)
                 try FileOps.replace(paths.appDirectory, withStaged: staging)
-                try? FileOps.removeTree(package) // 安装包已用完，不再占空间。在盒子里，App 改得到：不跟随链接
+                // 安装包已用完，不再占空间：保住的那一份，和安装器下载到的原件。在盒子里，App 改得到：不跟随链接
+                try? FileOps.removeTree(package)
+                try? FileOps.removeTree(paths.handover)
+                if let original { try? FileOps.removeTree(original) }
             }
 
             var updated = config
@@ -584,8 +650,9 @@ final class Box: Identifiable {
             config = updated // 名称、安装器标记变化会自动重建启动器
             icon = AppIcon.load(appURL)
             // 安装器尝试写入「应用程序」被拦截是预期内的，安装已由 MacBox 完成
-            blocks.removeAll { [.systemInstall, .escapedLaunch, .diskMount].contains($0.kind) }
+            blocks.removeAll { [.systemInstall, .escapedLaunch, .bundledService, .diskMount].contains($0.kind) }
             notice = String(localized: "「\(config.name)」已安装到 MacBox。")
+            await noteLockState() // 换了 App：刚锁上的
             // 和导入时一样：需要虚拟 Mac 的先问，不直接在本机隔离里打开
             if store?.reviewCompatibility(of: self) ?? true { pendingOpen = .user }
             activity = .idle // 空闲后打开（见 becameIdle）

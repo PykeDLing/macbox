@@ -235,6 +235,18 @@ struct BoxInspector: View {
             ForEach(box.config.issues) { issue in
                 IssueRow(issue: issue)
             }
+            // 运行着的时候本来就是解了锁的，不算
+            if box.staysUnlocked, box.config.runtime == .isolated, !box.isLive {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("退出后没能锁上").font(.callout)
+                        Text("macOS 不让 MacBox 改动这个 App 的包，没能去掉它的执行权限。MacBox 没打开时，它可能被聚焦、程序坞或登录时的“重新打开窗口”直接启动，那时不在沙盒里。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "lock.open.fill").foregroundStyle(.orange)
+                }
+            }
 
             if box.config.runtime == .isolated {
                 Button(Self.virtualMacLinkTitle(box)) { box.config.runtime = .virtualMac }

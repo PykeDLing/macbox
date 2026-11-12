@@ -600,8 +600,28 @@
         }
       }
     },
+    "GitHub 返回了 %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GitHub returned %@"
+          }
+        }
+      }
+    },
     "MacBox" : {
       "shouldTranslate" : false
+    },
+    "MacBox %@ 是目前最新的版本。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MacBox %@ is currently the newest version."
+          }
+        }
+      }
     },
     "MacBox 上次没有正常退出，%@借出的偏好设置没能收回，这台 Mac 上这个应用的设置暂时还是盒子里的内容。详情见它的详情面板；下次打开它或重新打开 MacBox 时会再试。" : {
       "localizations" : {
@@ -639,6 +659,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "MacBox uses the file below to make sure only one MacBox manages the boxes at a time, but the file can’t be opened (%@). To avoid conflicting with another MacBox that may be running, this one won’t manage the boxes. Delete the file, then open MacBox again."
+          }
+        }
+      }
+    },
+    "MacBox 网站" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MacBox Website"
           }
         }
       }
@@ -690,6 +720,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "hdiutil failed: %@"
+          }
+        }
+      }
+    },
+    "macOS 不让 MacBox 改动这个 App 的包，没能去掉它的执行权限。MacBox 没打开时，它可能被聚焦、程序坞或登录时的“重新打开窗口”直接启动，那时不在沙盒里。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS doesn’t let MacBox change this app’s bundle, so its permission to run couldn’t be removed. While MacBox isn’t open, Spotlight, the Dock or “reopen windows” at login may start it directly, outside the sandbox."
           }
         }
       }
@@ -1346,6 +1386,16 @@
         }
       }
     },
+    "下载 %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download %@"
+          }
+        }
+      }
+    },
     "下载失败：服务器返回 %@" : {
       "localizations" : {
         "en" : {
@@ -1546,6 +1596,16 @@
         }
       }
     },
+    "以后再说" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not Now"
+          }
+        }
+      }
+    },
     "会以 root 身份在系统里安装常驻服务，本机隔离无法容纳。" : {
       "localizations" : {
         "en" : {
@@ -1592,6 +1652,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Allowed by you in System Settings"
+          }
+        }
+      }
+    },
+    "你现在用的是 %@。新版本要在发布页下载，退出 MacBox 后替换「应用程序」里的那一份；盒子和里面的数据都会保留。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You’re using %@. Download the new version from the release page, quit MacBox and replace the copy in Applications. Your boxes and their data are kept."
           }
         }
       }
@@ -2344,6 +2414,16 @@
         }
       }
     },
+    "前往下载" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Go to Download"
+          }
+        }
+      }
+    },
     "前往设置虚拟 Mac…" : {
       "localizations" : {
         "en" : {
@@ -2658,12 +2738,32 @@
         }
       }
     },
+    "启动自带的后台服务" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start its own background service"
+          }
+        }
+      }
+    },
     "哪一次" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Run"
+          }
+        }
+      }
+    },
+    "哪些应用能用（兼容清单）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Which Apps Work (Compatibility List)"
           }
         }
       }
@@ -2770,6 +2870,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Launch a program outside the sandbox"
+          }
+        }
+      }
+    },
+    "在浏览器里打开发布页" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open the release page in your browser"
           }
         }
       }
@@ -3034,12 +3144,32 @@
         }
       }
     },
+    "它用一个要管理员权限的辅助程序给自己更新，本机隔离里装不上。应用照常使用，只是这种方式的自动更新可能不可用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It updates itself with a helper that needs administrator rights, which can’t be installed in native isolation. The app works as usual, but updating this way may not be available."
+          }
+        }
+      }
+    },
     "它的文件夹会移到废纸篓，需要时可以从废纸篓里找回。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Its folder will be moved to the Trash, where you can recover it if needed."
+          }
+        }
+      }
+    },
+    "它自带的后台服务「%@」由系统在沙盒外启动，MacBox 结束了它，依赖这个服务的功能在本机隔离里用不了。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The system started its own background service “%@” outside the sandbox, so MacBox ended it. Features that depend on this service don’t work in native isolation."
           }
         }
       }
@@ -3280,6 +3410,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Paused"
+          }
+        }
+      }
+    },
+    "已经是最新版本" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You’re Up to Date"
           }
         }
       }
@@ -3657,6 +3797,16 @@
         }
       }
     },
+    "打开 MacBox 时检查，每天最多一次：只向 GitHub 询问最新的版本号，不上传任何信息，也不会自动下载、安装。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checks when MacBox opens, at most once a day. It only asks GitHub for the newest version number. Nothing is uploaded, and nothing is downloaded or installed automatically."
+          }
+        }
+      }
+    },
     "打开「传出」文件夹" : {
       "localizations" : {
         "en" : {
@@ -3773,6 +3923,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Move This Setting Into the Box?"
+          }
+        }
+      }
+    },
+    "报告某个应用能不能用…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report How an App Works…"
+          }
+        }
+      }
+    },
+    "报告问题…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report a Problem…"
           }
         }
       }
@@ -4453,6 +4623,16 @@
         }
       }
     },
+    "无法检查更新" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can’t Check for Updates"
+          }
+        }
+      }
+    },
     "无法添加" : {
       "localizations" : {
         "en" : {
@@ -4703,6 +4883,26 @@
         }
       }
     },
+    "有新版本 %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Version %@ Available"
+          }
+        }
+      }
+    },
+    "有新版本：MacBox %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Version: MacBox %@"
+          }
+        }
+      }
+    },
     "有链接或文件没能交给「%@」：它没有及时启动好。等它打开后再试一次。" : {
       "localizations" : {
         "en" : {
@@ -4901,6 +5101,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Queries Gatekeeper settings"
+          }
+        }
+      }
+    },
+    "检查更新…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check for Updates…"
           }
         }
       }
@@ -5339,6 +5549,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn’t be counted."
+          }
+        }
+      }
+    },
+    "没能连上 GitHub：%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t reach GitHub: %@"
           }
         }
       }
@@ -5884,6 +6104,26 @@
         }
       }
     },
+    "自动更新的辅助程序" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Helper for automatic updates"
+          }
+        }
+      }
+    },
+    "自动检查更新" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check for updates automatically"
+          }
+        }
+      }
+    },
     "自动还原失败：%@" : {
       "localizations" : {
         "en" : {
@@ -6360,6 +6600,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Check the spelling or try a new search."
+          }
+        }
+      }
+    },
+    "读不懂 GitHub 返回的内容" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GitHub’s answer couldn’t be read"
           }
         }
       }
@@ -7113,6 +7363,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Quit"
+          }
+        }
+      }
+    },
+    "退出后没能锁上" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t be locked after quitting"
           }
         }
       }

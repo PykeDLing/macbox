@@ -5,6 +5,10 @@ import Synchronization
 nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
     nonisolated enum Kind: String, Codable, Sendable {
         case autostart, backgroundService, systemInstall, escapedLaunch, diskMount, personalFiles, privacyRead, notification, appleEvent
+        /// App 包里自带的服务（XPC 服务）：系统替 App 启动它，不在沙盒里，被守卫结束（见 BoxStore.handleEscape）。
+        /// 和 escapedLaunch 分开记：那一类多半无关紧要（重启自己、附带的小工具），这一类往往是 App 的主要功能
+        /// （迅雷的下载都在 DownloadService 里），结束之后界面还在、功能却用不了
+        case bundledService
         /// 不许联网时的连接、域名解析（见 SandboxProfile.offlineRules）
         case network
         case other
@@ -12,6 +16,7 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
         var title: String {
             switch self {
             case .escapedLaunch: String(localized: "在沙盒外启动程序")
+            case .bundledService: String(localized: "启动自带的后台服务")
             case .diskMount: String(localized: "挂载磁盘映像")
             case .autostart: String(localized: "注册开机自启动")
             case .backgroundService: String(localized: "注册后台服务")
@@ -27,7 +32,7 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
 
         /// 这类行为被挡住后，软件的功能可能不完整，建议改用虚拟 Mac
         /// 开机自启被挡只是“不再自启”，不影响使用，所以不算
-        var suggestsVirtualMac: Bool { [.backgroundService, .systemInstall].contains(self) }
+        var suggestsVirtualMac: Bool { [.backgroundService, .systemInstall, .bundledService].contains(self) }
     }
 
     /// 不是路径、地址的拦截对象。target 里存它的代码（见 code），显示时才按当前语言生成文字

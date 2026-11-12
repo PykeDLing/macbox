@@ -14,6 +14,7 @@ struct MacBoxApp: App {
         }
         .environment(store)
         .environment(virtualMac)
+        .environment(UpdateChecker.shared)
         .defaultSize(width: 1120, height: 720)
         .commands { MacBoxCommands(store: store) }
         // 模型请求打开窗口（从聚焦打开虚拟 Mac 应用、⌘, 等）：在场景层处理，窗口全关着时也有效
@@ -45,6 +46,21 @@ private struct MacBoxCommands: Commands {
             Button("添加应用…") { importApps?() }
                 .keyboardShortcut("o")
                 .disabled(importApps == nil)
+        }
+        // 结果在主窗口里说（见 MainView），窗口关着时先打开
+        CommandGroup(after: .appInfo) {
+            Button("检查更新…") {
+                store.show(store.destination)
+                Task { await UpdateChecker.shared.check(userInitiated: true) }
+            }
+        }
+        // 帮助菜单：都在浏览器里打开。反馈的表单替你填好 MacBox 和 macOS 的版本（见 Links.report）
+        CommandGroup(replacing: .help) {
+            Button("MacBox 网站") { NSWorkspace.shared.open(Links.website) }
+            Button("哪些应用能用（兼容清单）") { NSWorkspace.shared.open(Links.compatibility) }
+            Divider()
+            Button("报告问题…") { NSWorkspace.shared.open(Links.report(.bug)) }
+            Button("报告某个应用能不能用…") { NSWorkspace.shared.open(Links.report(.compatibility)) }
         }
     }
 }
@@ -82,6 +98,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        // 另一个 MacBox 管着盒子时，这一个只是来转交打开请求的，不检查
+        if BoxStore.shared.managesBoxes { UpdateChecker.shared.checkAutomaticallyIfDue() }
     }
 
     /// 不管理盒子时（见 Ownership），关掉说明窗口就退出：留着也什么都做不了

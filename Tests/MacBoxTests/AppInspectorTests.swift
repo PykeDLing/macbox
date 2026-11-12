@@ -109,6 +109,40 @@ final class AppInspectorTests {
         return AppInfo(url: url, name: name, bundleIdentifier: id, version: nil, executable: url.appending(path: "Contents/MacOS/main"))
     }
 
+    @Test("管理员权限的辅助程序：只管自动更新的（Chrome、Edge）记成功能受限，别的照旧建议虚拟 Mac")
+    func privilegedHelpers() async throws {
+        func codes(_ app: URL) async -> [CompatibilityIssue.Code] { await AppInspector.scan(app).compactMap(\.code) }
+        let folder = try directory("helpers")
+        // Chrome：登记在 Info.plist 里，程序放在 Library/LaunchServices
+        let chrome = try makeApp(folder.appending(path: "Chrome.app"), id: "dev.macboxtest.chrome", info: [
+            "SMPrivilegedExecutables": ["com.google.Chrome.UpdaterPrivilegedHelper": "identifier x"],
+        ])
+        try writeText("x", chrome.appending(path: "Contents/Library/LaunchServices/com.google.Chrome.UpdaterPrivilegedHelper"))
+        #expect(await codes(chrome) == [.updateHelper])
+        let edge = try makeApp(folder.appending(path: "Edge.app"), id: "dev.macboxtest.edge", info: [
+            "SMPrivilegedExecutables": ["com.microsoft.EdgeUpdater.helper": "identifier x"],
+        ])
+        #expect(await codes(edge) == [.updateHelper])
+        // 代理、加速器：辅助程序就是主要功能
+        let proxy = try makeApp(folder.appending(path: "Proxy.app"), id: "dev.macboxtest.proxy", info: [
+            "SMPrivilegedExecutables": ["com.example.ProxyConfigHelper": "identifier x"],
+        ])
+        #expect(await codes(proxy) == [.privilegedHelper])
+        // 更新的和别的都有：按别的算
+        let mixed = try makeApp(folder.appending(path: "Mixed.app"), id: "dev.macboxtest.mixed", info: [
+            "SMPrivilegedExecutables": ["com.example.updater": "x", "com.example.vmnetd": "x"],
+        ])
+        #expect(await codes(mixed) == [.privilegedHelper])
+        // 只在文件夹里、没登记的
+        let unlisted = try makeApp(folder.appending(path: "Unlisted.app"), id: "dev.macboxtest.unlisted")
+        try writeText("x", unlisted.appending(path: "Contents/Library/LaunchServices/com.example.helper"))
+        #expect(await codes(unlisted) == [.privilegedHelper])
+        #expect(await codes(try makeApp(folder.appending(path: "Plain.app"), id: "dev.macboxtest.plain")).isEmpty)
+        #expect(CompatibilityIssue(.updateHelper).severity == .limited)
+        #expect(CompatibilityIssue(.privilegedHelper).severity == .needsVirtualMac)
+        #expect(!AppInspector.isUpdaterOnly([]))
+    }
+
     @Test("在线安装器：按完整的词认，卸载程序、普通的下载工具不算",
           arguments: [
             ("Install Spotify", nil, "dev.macboxtest.spotify", true),

@@ -97,13 +97,16 @@ nonisolated enum ProcessTable {
     /// 解释器运行的脚本：`/bin/bash /盒子/…/MacOS/启动脚本`、`python3 -u 脚本`。
     /// 主程序是脚本的 App 运行时，进程的可执行文件是解释器，脚本路径只出现在参数里
     /// （内核执行 #! 脚本时把参数改成“解释器 [#! 行的参数] 脚本路径 原参数…”）。
-    /// 只认常见的脚本解释器、跳过选项后的第一个参数；`sh -c 命令`、`python3 -c 代码` 这类没有脚本文件。
+    /// 只认常见的脚本解释器、跳过选项后的第一个参数；`sh -c 命令`、`python3 -c 代码`、`python3 - 参数` 这类没有脚本文件。
     /// 返回参数原样（绝对路径），不解析符号链接：解析要逐级访问路径，路径在没响应的网络卷上时会卡住，
     /// 由调用方决定要不要、在哪里解析
     static func scriptArgument(of pid: pid_t, executable: String) -> String? {
         guard isInterpreter(executable), let arguments = arguments(of: pid) else { return nil }
         let isShell = shells.contains((executable as NSString).lastPathComponent.lowercased())
         for argument in arguments.dropFirst() {
+            // 单独一个 "-"：shell 里只是“选项到此为止”，后面还是脚本；其他解释器是“脚本从标准输入来”，没有脚本文件，
+            // 后面的参数是给脚本的（`python3 - 盒子里的某个路径` 不是在运行盒子里的脚本）
+            if argument == "-", !isShell { return nil }
             if argument.hasPrefix("-") {
                 let inline = isShell ? !argument.hasPrefix("--") && argument.contains("c")
                                      : ["-c", "-e", "-E", "-m", "-r"].contains(argument)

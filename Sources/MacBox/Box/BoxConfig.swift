@@ -28,6 +28,8 @@ nonisolated struct CompatibilityIssue: Codable, Hashable, Identifiable, Sendable
     nonisolated enum Code: String, Codable, Sendable {
         case privilegedHelper, systemService, systemExtension, driver, loginItem, finderIntegration, networkExtension,
              appSandbox, notarized, notNotarized, installerScriptsSkipped
+        /// 只管自动更新的管理员辅助程序（Chrome、Edge）：装不上不影响使用，不为它建议改用虚拟 Mac（见 AppInspector.scan）
+        case updateHelper
     }
 
     var severity: Severity
@@ -59,7 +61,7 @@ nonisolated extension CompatibilityIssue.Code {
     var severity: CompatibilityIssue.Severity {
         switch self {
         case .privilegedHelper, .systemService, .systemExtension, .driver, .networkExtension, .appSandbox: .needsVirtualMac
-        case .loginItem, .finderIntegration, .notNotarized, .installerScriptsSkipped: .limited
+        case .loginItem, .finderIntegration, .notNotarized, .installerScriptsSkipped, .updateHelper: .limited
         case .notarized: .info
         }
     }
@@ -78,6 +80,7 @@ nonisolated extension CompatibilityIssue.Code {
         case .notarized: String(localized: "已通过 Apple 公证检查", bundle: bundle)
         case .notNotarized: String(localized: "未通过 Apple 公证检查", bundle: bundle)
         case .installerScriptsSkipped: String(localized: "安装脚本已跳过", bundle: bundle)
+        case .updateHelper: String(localized: "自动更新的辅助程序", bundle: bundle)
         }
     }
 
@@ -98,6 +101,7 @@ nonisolated extension CompatibilityIssue.Code {
         case .notarized: known ?? source ?? String(localized: "来源已验证", bundle: bundle)
         case .notNotarized: String(localized: "\(rejection)。打开时 macOS 会询问你是否信任它，请确认来源可靠。", bundle: bundle)
         case .installerScriptsSkipped: String(localized: "安装包带有安装脚本（通常用于安装后台服务或驱动），MacBox 没有执行它们。功能异常时请改用虚拟 Mac。", bundle: bundle)
+        case .updateHelper: String(localized: "它用一个要管理员权限的辅助程序给自己更新，本机隔离里装不上。应用照常使用，只是这种方式的自动更新可能不可用。", bundle: bundle)
         }
     }
 
@@ -223,6 +227,7 @@ extension BoxConfig {
 ///       Prefs/             收回的偏好设置（运行时临时放回系统，退出后收回）
 ///       RestorePoint/      还原点（APFS 克隆）
 ///       Reports/           运行报告
+///       Handover/          在线安装器下载好的安装包（只在接手安装期间）
 ///       tmp/
 nonisolated struct BoxPaths: Hashable, Sendable {
     let url: URL
@@ -247,6 +252,9 @@ nonisolated struct BoxPaths: Hashable, Sendable {
     var restorePointStaging: URL { url.appending(path: "RestorePoint.tmp", directoryHint: .isDirectory) }
     /// 安装器下载的安装包里取出的 App：取出、检查完才整体换上去
     var appStaging: URL { url.appending(path: "App.new", directoryHint: .isDirectory) }
+    /// 在线安装器下载好的安装包：安装器尝试挂载它的那一刻克隆到这里（见 Box.handOver），之后安装器退出时
+    /// 把自己下载的东西删掉也不要紧。只在接手安装期间存在
+    var handover: URL { url.appending(path: "Handover", directoryHint: .isDirectory) }
     /// 最近一次运行用的沙盒规则（见 SandboxProfile），便于排查
     var sandboxProfile: URL { url.appending(path: "sandbox.sb") }
 
@@ -269,8 +277,8 @@ nonisolated struct BoxPaths: Hashable, Sendable {
     /// 以及运行报告（记着它以前每次运行写了什么、连了哪里，不该由它来读）
     var privateItems: [URL] { [prefs, restorePoint, reports, keychainPassword] }
     /// App 只能读、不能改的：MacBox 自己的记录和拖进来的原始文件。MacBox 在沙盒外照着它们做事，
-    /// App 改了它们，MacBox 就会照着改过的内容替它删改沙盒外的文件。正在建的还原点、正在取出的新 App 只在维护期间（App 没在运行）出现
-    var readOnlyItems: [URL] { [config, sourceDirectory, sandboxProfile, unfinishedMarker, restorePointStaging, appStaging] }
+    /// App 改了它们，MacBox 就会照着改过的内容替它删改沙盒外的文件。正在建的还原点、正在取出的新 App 只在维护期间（App 没在运行）出现；保住的安装包在安装器还没退出时就在了，所以也不能让它改
+    var readOnlyItems: [URL] { [config, sourceDirectory, sandboxProfile, unfinishedMarker, restorePointStaging, appStaging, handover] }
 
     /// 骨架：MacBox 在沙盒外会顺着走的文件夹，文件夹本身不能删除、改名、换成符号链接（只有里面可写）。
     /// 可写的那几处的 subpath 也包括它自己：App 可以清空 App 文件夹后 rmdir，再在原处放一个指向 /Applications 的链接，
