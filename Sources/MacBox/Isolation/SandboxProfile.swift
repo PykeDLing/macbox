@@ -6,6 +6,7 @@ import Foundation
 /// - 系统服务：禁止注册登录项/后台服务、发送通知、用 Apple 事件遥控其他 App
 /// - 网络：默认放行，可以按应用关掉（见 offlineRules）
 /// - 启动程序、写共享的「下载」和你选的文件夹：放行，但每次都在系统日志里记一笔，运行报告据此列出它启动了哪些程序、在盒子外写了什么
+/// - 在系统共用的临时、缓存目录里新建东西：同样放行、记一笔，应用退出后 MacBox 照着清理（见 SharedTemporary）
 ///
 /// Seatbelt 按规则先后匹配，后面的规则覆盖前面的（同一个操作名之间）
 nonisolated enum SandboxProfile {
@@ -38,6 +39,10 @@ nonisolated enum SandboxProfile {
         let blockedServices = [
             "com.apple.backgroundtaskmanagement.agent", "com.apple.backgroundtaskmanagementagent",
             "com.apple.xpc.smd",
+            // App Group 的共享文件夹（~/Library/Group Containers/<组>）不是 App 自己建的，是它请这个服务建的，建在你真实的主目录里，
+            // 沙盒的写入规则管不到；建好之后 macOS 还把它保护起来，MacBox 删不掉。找不到这个服务，文件夹就建不出来。
+            // 盒子里的 App 都不带苹果沙盒（带的装不进来，见 IsolatedSession.refuseAppSandbox），它们的数据不靠这个服务安置
+            Self.containerManager,
         ]
 
         return """
@@ -49,6 +54,15 @@ nonisolated enum SandboxProfile {
         (deny file-write*)
         (allow file-write*
         \(systemWritable.map { "  (subpath \(quote($0)))" }.joined(separator: "\n")))
+        ; 系统共用的临时、缓存目录照常可写，只是每新建一项（文件、文件夹、链接、套接字）都在系统日志里记一笔：
+        ; 应用退出后 MacBox 照着把它留在临时目录里的删掉（见 SharedTemporary）。只记新建，改写、删除不记，日志少一半。
+        ; 盒子就在这些目录下面时（测试）不记盒子里的
+        (allow file-write-create
+          (require-all
+            (require-any
+        \(SharedTemporary.reportedRoots.map { "      (subpath \(quote($0)))" }.joined(separator: "\n")))
+            (require-not (subpath \(quote(boxRoot)))))
+          (with report))
         \(downloadsRule)
         \(folderRules.joined(separator: "\n"))
         ; 选的文件夹和盒子重叠时（检查过，不该有）也以盒子自己的规则为准：它们在后面。
@@ -90,6 +104,9 @@ nonisolated enum SandboxProfile {
         \(config.allowsNetwork ? "" : offlineRules)
         """
     }
+
+    /// 替 App 建 App Group 共享文件夹的系统服务。规则和拦截记录（见 ViolationMonitor.categorize）共用
+    static let containerManager = "com.apple.containermanagerd"
 
     /// 系统的 ssh-agent 的套接字（SSH_AUTH_SOCK）：launchd 按需启动它，放在 /var/run（以前是 /tmp）下 launchd 的临时目录里。
     /// 规则和拦截记录（见 ViolationMonitor.networkEvent）共用

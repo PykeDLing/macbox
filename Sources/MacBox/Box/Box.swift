@@ -387,7 +387,7 @@ final class Box: Identifiable {
         case .launched(let path): report?.noteLaunch(tidier(path))
         case .connected(let contact): report?.note(contact)
         case .named(let address, let name): report?.name(address, name)
-        case .wroteShared: break // 会话自己汇总（见 IsolatedSession.run）
+        case .wroteOutside: break // 会话自己汇总（见 IsolatedSession.run）
         }
     }
 
@@ -423,6 +423,7 @@ final class Box: Identifiable {
             !others.contains { PreferenceLease.overlaps([stray.domain], $0) }
         }
         report.blocks = blocks.map(tidier.callAsFunction)
+        report.temporaryCleanup = outcome.temporaryCleanup
         self.report = report
         do {
             try await RunReport.save(report, in: paths)
@@ -726,7 +727,18 @@ final class Box: Identifiable {
         try await performMaintenance {
             let paths = paths
             try await Background.run { try Self.clear(paths) }
+            await removeSharedCaches()
         }
+    }
+
+    /// 删掉系统的缓存、临时文件夹里按这个应用的标识符起名的那几个（见 SharedTemporary.removeNamedFolders）。
+    /// 清除数据、删除盒子时调用（应用不在运行）。和别的盒子、本机装着的 App 重叠的不动
+    func removeSharedCaches() async {
+        let prefixes = config.preferencePrefixes, others = otherBoxPrefixes
+        // 正在运行的也算“装着”：另一个 MacBox（测试用的那份）里的同一个应用，它的临时文件夹正在用
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        let installed = await Background.run { AppInspector.installedApplicationIdentifiers() }.union(running)
+        await SharedTemporary.removeNamedFolders(prefixes: prefixes, others: others, installed: installed)
     }
 
     /// 清除数据。每一项先挪开再删（见 FileOps.replace）：删到一半退出、崩溃时，留下的只是启动时会删掉的残骸，不是半个主目录。

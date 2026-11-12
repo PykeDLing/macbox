@@ -269,7 +269,7 @@ struct WritableFolderTests {
             let collecting = Task { () -> [(path: String, operation: String)] in
                 var written: [(path: String, operation: String)] = []
                 for await activity in events {
-                    guard case .wroteShared(let path, let operation) = activity else { continue }
+                    guard case .wroteOutside(let path, let operation, _) = activity else { continue }
                     written.append((path, operation))
                     if path.hasSuffix("/" + name) { break }
                 }

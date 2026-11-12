@@ -30,6 +30,8 @@ final class IsolatedSession {
         var preferencesReturnError: String?
         /// 这次写下的文件、改了的设置、写在盒子外的设置（对比运行前后，见 RunSnapshot）
         var changes: RunChanges?
+        /// 应用留在系统临时目录里、退出后由 MacBox 删掉的东西（见 SharedTemporary）
+        var temporaryCleanup: SharedTemporary.Cleanup?
     }
 
     /// 启动前在后台准备好的内容
@@ -73,10 +75,14 @@ final class IsolatedSession {
                                                   installer: config.isInstaller, session: sessionPID)
         // 写「下载」和你选的文件夹的记录留在这里，退出后和主目录的改动一起汇总
         let shared = SharedWrites(folders: WritableFolders.granted(config))
+        // 在系统共用的临时目录里新建的也留在这里，退出后照着清理。只认按进程身份认出来的：照着它是要去删东西的
+        let temporary = SharedTemporary.Created()
         let monitor = Task {
             for await activity in events {
-                if case .wroteShared(let path, let operation) = activity {
-                    shared.note(path, operation: operation)
+                if case .wroteOutside(let path, let operation, let certain) = activity {
+                    if !shared.note(path, operation: operation), certain, operation.hasPrefix("file-write-create") {
+                        temporary.note(path)
+                    }
                 } else {
                     onActivity(activity)
                 }
@@ -119,9 +125,12 @@ final class IsolatedSession {
         let changes = await before.changes(paths, config: config, preferencesReturned: preferencesError == nil,
                                            shared: shared.areas)
         await session.finishNameLookups(timeout: .seconds(2))
-        return Outcome(downloadedPackages: config.isInstaller ? await session.downloadedPackages() : [],
+        let packages = config.isInstaller ? await session.downloadedPackages() : []
+        // 放在最后：系统日志晚到一两秒，前面的收尾正好等它。在线安装器下载的安装包不会在这里面（它只在盒子里找）
+        let cleanup = await SharedTemporary.remove(temporary.paths, since: session.startedAt)
+        return Outcome(downloadedPackages: packages,
                        mainExitStatus: main.status, mainRanFor: main.ranFor, preferencesReturnError: preferencesError,
-                       changes: changes)
+                       changes: changes, temporaryCleanup: cleanup)
     }
 
     /// 主进程已退出（会话可能还在：辅助进程还在运行）

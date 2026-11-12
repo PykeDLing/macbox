@@ -1426,6 +1426,16 @@
         }
       }
     },
+    "下面这几处是应用新建的文件夹，里面还有别的东西（别的程序放的，或者系统日志漏记的），MacBox 没有动。系统重启时、或者三天没用之后会自己清理：" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The app created the folders below, and they still hold other items (put there by other programs, or missed by the system log), so MacBox left them alone. macOS clears them at restart, or after three days without use:"
+          }
+        }
+      }
+    },
     "不共享「下载」" : {
       "localizations" : {
         "en" : {
@@ -3364,6 +3374,16 @@
         }
       }
     },
+    "已删除" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Removed"
+          }
+        }
+      }
+    },
     "已取消设置" : {
       "localizations" : {
         "en" : {
@@ -3574,6 +3594,28 @@
         }
       }
     },
+    "应用在系统的临时文件夹里留下了 %lld 个文件（%@），退出后 MacBox 已经删除。这些文件夹所有程序共用，不在盒子里。" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "The app left %lld file (%@) in the system temporary folders, and MacBox removed it after the app quit. These folders are shared by all programs and aren’t in the box."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "The app left %lld files (%@) in the system temporary folders, and MacBox removed them after the app quit. These folders are shared by all programs and aren’t in the box."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "应用放在主目录里的程序（下载或解压出来的）" : {
       "localizations" : {
         "en" : {
@@ -3630,6 +3672,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The app can’t reach any server, not even a proxy on this Mac. Web pages it shows won’t load either, so parts built from web pages stay blank. Signing in, syncing and updates won’t work."
+          }
+        }
+      }
+    },
+    "应用退出后清理。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cleaned up after the app quits."
           }
         }
       }
@@ -5447,6 +5499,16 @@
         }
       }
     },
+    "没有发现。系统的临时文件夹（/private/tmp 和 /var/folders 里你的那一个）所有程序共用，不在盒子里；应用在里面新建的文件，退出后由 MacBox 删除。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "None found. The system temporary folders (/private/tmp and yours in /var/folders) are shared by all programs and aren’t in the box; MacBox removes the files the app creates there after it quits."
+          }
+        }
+      }
+    },
     "没有可用的签名" : {
       "localizations" : {
         "en" : {
@@ -5643,6 +5705,38 @@
         }
       }
     },
+    "清理 %lld 个临时文件" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld temporary file removed"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld temporary files removed"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "清理临时文件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Temporary files removed"
+          }
+        }
+      }
+    },
     "清除" : {
       "localizations" : {
         "en" : {
@@ -5793,6 +5887,16 @@
         }
       }
     },
+    "留在系统临时文件夹里的文件" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Files Left in System Temporary Folders"
+          }
+        }
+      }
+    },
     "登录状态、设置、缓存和钥匙串都会被清空。应用本身保留。" : {
       "localizations" : {
         "en" : {
@@ -5809,6 +5913,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Login items and background items"
+          }
+        }
+      }
+    },
+    "盒子外的共享文件夹（~/Library/Group Containers）" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A shared folder outside the box (~/Library/Group Containers)"
           }
         }
       }
@@ -6574,12 +6688,12 @@
         }
       }
     },
-    "说明：连接是定时看一眼得到的，很短的连接可能没看到；服务器名字来自反向解析，常常是云服务商的机器名；设置了代理时，经由代理的连接只显示为连到代理。启动的程序、被拦下的行为、在共享的「下载」和可以写入的文件夹里写的文件来自系统日志，系统繁忙时会漏记，这些文件也没有大小。系统共用的临时文件夹不在统计之内。" : {
+    "说明：连接是定时看一眼得到的，很短的连接可能没看到；服务器名字来自反向解析，常常是云服务商的机器名；设置了代理时，经由代理的连接只显示为连到代理。启动的程序、被拦下的行为、在共享的「下载」和可以写入的文件夹里写的文件来自系统日志，系统繁忙时会漏记，这些文件也没有大小。应用在系统临时文件夹里新建了哪些文件同样来自系统日志，漏记的不会被清理；系统的缓存文件夹里按应用起名的那几个，删除盒子、清除数据时一并删除。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Notes: connections are sampled periodically, so very short ones may be missed; server names come from reverse DNS and are often cloud providers’ machine names; with a proxy, connections through it only show up as connections to the proxy. Program launches, blocked attempts and files written to the shared Downloads folder or the folders it can write to come from the system log and can be missed when the system is busy, and those files have no sizes. Shared system temporary folders aren’t counted."
+            "value" : "Notes: connections are sampled periodically, so very short ones may be missed; server names come from reverse DNS and are often cloud providers’ machine names; with a proxy, connections through it only show up as connections to the proxy. Program launches, blocked attempts and files written to the shared Downloads folder or the folders it can write to come from the system log and can be missed when the system is busy, and those files have no sizes. Which files the app created in the system temporary folders also comes from the system log, and missed ones aren’t removed; the folders named after the app in the system cache folder are removed when you delete the box or clear its data."
           }
         }
       }
@@ -7111,6 +7225,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Restore Point (shares unchanged data with the disk)"
+          }
+        }
+      }
+    },
+    "还在" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Still there"
           }
         }
       }

@@ -381,7 +381,12 @@ struct LifecycleTests {
         #expect(lease.isOutstanding)
 
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.prefs.path)
+        // 系统缓存文件夹里按它的标识符起名的：删除盒子时一并删掉
+        let cached = URL(fileURLWithPath: try #require(SharedTemporary.userCache) + domain + ".helper.GPU", isDirectory: true)
+        try AppPaths.ensure(cached.appending(path: "com.apple.metal"))
+        defer { try? FileManager.default.removeItem(at: cached) }
         let trashed = try #require(try await store.delete(box))
+        #expect(!FileOps.exists(cached), "盒子外按标识符起名的缓存文件夹没有删掉")
         // 设置了 MACBOX_DATA_ROOT 时不往真正的废纸篓里放（那里测试读不了也清不掉），放在数据目录里，结束时一起删掉
         #expect(trashed.path.hasPrefix(AppPaths.root.appending(path: "Trash").path + "/"), "测试的盒子进了真正的废纸篓：\(trashed.path)")
         #expect(FileOps.exists(trashed.appending(path: "box.json")))
