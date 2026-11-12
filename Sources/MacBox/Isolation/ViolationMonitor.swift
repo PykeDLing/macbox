@@ -50,6 +50,8 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
         case listen(port: Int?)
         /// 系统的 ssh-agent（里面是你的 SSH 钥匙）
         case sshAgent
+        /// App Group 的共享文件夹（~/Library/Group Containers 里的，由系统服务代建，见 SandboxProfile.containerManager）
+        case groupContainer
 
         var code: String {
             switch self {
@@ -59,6 +61,7 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
             case .installerPackage: "installer-package"
             case .loginItems: "login-items"
             case .sshAgent: "ssh-agent"
+            case .groupContainer: "group-container"
             case .connect(let port): "connect:\(port.map(String.init) ?? "*")"
             case .listen(let port): "listen:\(port.map(String.init) ?? "*")"
             }
@@ -72,6 +75,7 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
             case "installer-package": self = .installerPackage
             case "login-items": self = .loginItems
             case "ssh-agent": self = .sshAgent
+            case "group-container": self = .groupContainer
             default:
                 guard let match = code.wholeMatch(of: /(connect|listen):(\*|\d+)/) else { return nil }
                 let port = Int(match.2)
@@ -87,6 +91,7 @@ nonisolated struct BlockEvent: Identifiable, Hashable, Codable, Sendable {
             case .installerPackage: String(localized: "安装器自己下载的安装包")
             case .loginItems: String(localized: "登录项与后台项")
             case .sshAgent: String(localized: "SSH 代理（ssh-agent）里你的钥匙")
+            case .groupContainer: String(localized: "盒子外的共享文件夹（~/Library/Group Containers）")
             case .connect(nil): String(localized: "block.subject.connect", defaultValue: "连接服务器", comment: "被挡住的动作：连接任意端口的服务器")
             // 端口是编号，按字符串插进去：整数插值会按本地习惯加千位分隔符（8,080）
             case .connect(let port?): String(localized: "连接服务器的 \(String(port)) 端口")
@@ -325,12 +330,16 @@ nonisolated enum ViolationMonitor {
         /// 这条记录对本盒子意味着什么：被挡住的行为、启动了程序、在盒子外放行的地方写了东西；不是本盒子的、不关心的为 nil
         func activity(from message: Message) -> RunActivity? {
             guard message.allowed else { return event(from: message).map(RunActivity.blocked) }
-            // 带 report 的规则只有启动程序、写「下载」和你选的文件夹。启动程序记下的是启动后的程序，进程名是启动它的那个（exec 前的名字）
+            // 带 report 的规则只有启动程序、写「下载」和你选的文件夹、在系统共用的临时目录里新建。
+            // 启动程序记下的是启动后的程序，进程名是启动它的那个（exec 前的名字）
             let launch = message.operation.hasPrefix("process-exec"), write = message.operation.hasPrefix("file-write")
-            guard launch || write, message.target.hasPrefix("/"),
-                  Self.belongs(Identity.of(message.pid), main: session.pid, boxPrefix: boxPrefix,
-                               loggedName: message.process, processNames: processNames) else { return nil }
-            return launch ? .launched(message.target) : .wroteShared(path: message.target, operation: message.operation)
+            guard launch || write, message.target.hasPrefix("/") else { return nil }
+            let identity = Identity.of(message.pid)
+            let certain = Self.belongs(identity, main: session.pid, boxPrefix: boxPrefix, loggedName: message.process, processNames: [])
+            guard certain || Self.belongs(identity, main: session.pid, boxPrefix: boxPrefix,
+                                          loggedName: message.process, processNames: processNames) else { return nil }
+            return launch ? .launched(message.target)
+                          : .wroteOutside(path: message.target, operation: message.operation, certain: certain)
         }
 
         /// 拒绝记录对应的拦截；放行的记录、不是本盒子的为 nil
@@ -417,6 +426,10 @@ nonisolated enum ViolationMonitor {
                 }
                 if target.contains("DiskArbitration") || target.contains("diskarbitrationd") {
                     return BlockEvent(kind: .diskMount, subject: .installerPackage)
+                }
+                // 请系统在你真实的主目录里建 App Group 的共享文件夹
+                if target == SandboxProfile.containerManager {
+                    return BlockEvent(kind: .personalFiles, subject: .groupContainer)
                 }
                 // SMAppService 登录项 / 后台项注册
                 if target.contains("smd") || target.contains("backgroundtaskmanagement") {

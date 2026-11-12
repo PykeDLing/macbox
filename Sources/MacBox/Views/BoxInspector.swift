@@ -292,6 +292,11 @@ struct BoxInspector: View {
                          ?? (report.isRunning ? String(localized: "退出后统计") : String(localized: "没能统计")))
                 }
                 if let strays = report.strayPreferences, !strays.isEmpty { strayRows(strays) }
+                if let cleanup = report.temporaryCleanup, cleanup.removed > 0 {
+                    LabeledContent("清理临时文件") {
+                        Text("\(cleanup.removed) 个 · \(FileOps.formatBytes(cleanup.bytes))")
+                    }
+                }
                 LabeledContent("连接服务器") {
                     Text(report.networkBlocked ? String(localized: "不联网") : String(localized: "\(report.servers.count) 个"))
                 }

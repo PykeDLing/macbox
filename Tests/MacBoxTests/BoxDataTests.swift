@@ -24,6 +24,21 @@ struct BoxDataTests {
 
     func read(_ url: URL) -> String? { try? String(contentsOf: url, encoding: .utf8) }
 
+    @Test("清除数据时一并删掉系统缓存文件夹里按这个应用的标识符起名的那几个，别的不动")
+    func clearDataRemovesNamedCaches() async throws {
+        let cache = try #require(SharedTemporary.userCache)
+        let box = try makeBox()
+        let prefix = box.config.preferencePrefixes[0]
+        let mine = URL(fileURLWithPath: cache + prefix + ".app.helper.GPU", isDirectory: true)
+        let other = URL(fileURLWithPath: cache + "dev.macboxtest.other-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        defer { for folder in [mine, other] { try? FileManager.default.removeItem(at: folder) } }
+        try write("x", to: mine.appending(path: "com.apple.metal/functions.data"))
+        try write("x", to: other.appending(path: "com.apple.metal/functions.data"))
+        try await box.clearData()
+        #expect(!FileOps.exists(mine))
+        #expect(FileOps.exists(other))
+    }
+
     @Test("还原点连同钥匙串密码一起保存：清除数据后还原，钥匙串和密码仍然配套")
     func restorePointKeepsKeychainPassword() async throws {
         let box = try makeBox()

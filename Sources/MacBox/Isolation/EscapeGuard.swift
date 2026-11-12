@@ -329,8 +329,14 @@ nonisolated final class EscapeGuard: Sendable {
     /// 每个新出现的解释器进程都要查，`python3 /Volumes/NAS/x.py` 这样的路径在网络卷没响应时，解析会卡住很久。
     /// 盒子的真实路径在主目录下（测试时在 /private/tmp 下），能经由符号链接通到那里的只有
     /// /Users、/tmp、/var、/private 下的路径（还有盒子挂载的卷）
-    private static func scriptInBox(_ pid: pid_t, executable: String, roots: [String], volumes: [String: String]) -> Escape? {
-        guard let argument = ProcessTable.scriptArgument(of: pid, executable: executable) else { return nil }
+    ///
+    /// executable 是早先读到的可执行文件路径，参数是现在才读的。这之间进程可能已经 exec 成别的程序：shell 派生的子进程
+    /// 先是 shell 的样子，一转眼变成 `ls /盒子/…`，拿 shell 的身份去读 ls 的参数，就把“列一下盒子里的文件夹”当成了
+    /// “在沙盒外运行盒子里的脚本”，把 ls 结束掉、还记一条逃逸。所以读完参数再确认一次它还是原来那个解释器；
+    /// 不是了就不算，下次检查按新的程序重新看
+    static func scriptInBox(_ pid: pid_t, executable: String, roots: [String], volumes: [String: String]) -> Escape? {
+        guard let argument = ProcessTable.scriptArgument(of: pid, executable: executable),
+              ProcessTable.path(of: pid) == executable else { return nil }
         let candidates = roots + Array(volumes.keys) + ["/Users/", "/tmp/", "/var/", "/private/"]
         guard candidates.contains(where: { argument.hasPrefix($0) }), let resolved = realpath(argument, nil) else { return nil }
         defer { free(resolved) }

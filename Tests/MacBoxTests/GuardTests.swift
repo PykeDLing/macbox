@@ -147,6 +147,26 @@ final class GuardTests {
         #expect(await eventually { escapes.all.contains(FileOps.realPath(script)) })
     }
 
+    @Test("shell 派生的子进程变成了别的程序（ls 盒子里的文件夹）：不拿 shell 的身份去读它的参数，不当作运行盒子里的脚本")
+    func staleInterpreterIsNotAScript() async throws {
+        let (paths, _, _) = try await makeBox()
+        let roots = [FileOps.realPath(boxes) + "/"]
+        // 现在是 /bin/sleep，参数是盒子里的路径；守卫早先看到它时还是 shell
+        let listing = try ChildProcess.spawn("/bin/sleep", [FileOps.realPath(paths.home), "5"])
+        defer { listing.signal(SIGKILL) }
+        #expect(await eventually { ProcessTable.path(of: listing.pid) == "/bin/sleep" })
+        #expect(EscapeGuard.scriptInBox(listing.pid, executable: "/bin/zsh", roots: roots, volumes: [:]) == nil)
+        // 真的是解释器在运行盒子里的脚本：照常认出来
+        let script = paths.appDirectory.appending(path: "T.app/Contents/MacOS/launch")
+        try AppPaths.ensure(script.deletingLastPathComponent())
+        try "#!/bin/sh\nsleep 5\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let running = try ChildProcess.spawn(script.path, [])
+        defer { running.signal(SIGKILL) }
+        #expect(await eventually { ProcessTable.path(of: running.pid) == "/bin/sh" })
+        #expect(EscapeGuard.scriptInBox(running.pid, executable: "/bin/sh", roots: roots, volumes: [:])?.path == FileOps.realPath(script))
+    }
+
     @Test("开始守卫前就在运行的盒子进程：静默结束，不当作逃逸")
     func preexistingKilledSilently() async throws {
         let (_, stub, _) = try await makeBox()

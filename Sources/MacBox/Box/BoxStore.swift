@@ -595,7 +595,9 @@ final class BoxStore {
         let paths = box.paths, app = box.appURL
         let trashed = try await box.performMaintenance {
             await AppRegistration.unregister(app) // 不在登记里留下指向废纸篓的 App（文件夹移走后就撤销不了包里面的了）
-            return try await Background.run { try Self.moveToTrash(paths.url) }
+            let trashed = try await Background.run { try Self.moveToTrash(paths.url) }
+            await box.removeSharedCaches() // 盒子外、系统缓存文件夹里按它的标识符起名的那几个：盒子移走了才删，移不走就都不动
+            return trashed
         }
         box.retire()
         boxes.removeAll { $0.id == box.id }

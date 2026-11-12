@@ -149,6 +149,7 @@ private struct ReportContent: View {
             filesSection
             preferencesSection
             straysSection
+            temporarySection
             serversSection
             programsSection
             blocksSection
@@ -253,6 +254,33 @@ private struct ReportContent: View {
             } else {
                 Placeholder(report.isRunning ? String(localized: "应用退出后统计。")
                                              : String(localized: "旧版 MacBox 的报告没有这一项。"))
+            }
+        }
+    }
+
+    // MARK: 系统临时文件夹
+
+    /// 旧版 MacBox 的报告没有这一项，整栏不显示
+    @ViewBuilder
+    private var temporarySection: some View {
+        if report.temporaryCleanup != nil || report.isRunning {
+            ReportSection(title: RunReport.temporaryTitle, systemImage: "clock.arrow.circlepath") {
+                if let cleanup = report.temporaryCleanup {
+                    Text(report.temporarySummary(cleanup))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(cleanup.places, id: \.self) { ReportRow(title: $0, trailing: String(localized: "已删除")) }
+                    if !cleanup.remaining.isEmpty {
+                        Text(RunReport.temporaryRemainingExplanation)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(cleanup.remaining, id: \.self) { ReportRow(title: $0, trailing: String(localized: "还在"), tint: .orange) }
+                    }
+                } else {
+                    Placeholder(String(localized: "应用退出后清理。"))
+                }
             }
         }
     }

@@ -11,8 +11,11 @@ nonisolated enum RunActivity: Sendable {
     case connected(ServerContact)
     /// 服务器的地址反向解析出了名字
     case named(address: String, name: String)
-    /// 在盒子外放行的地方（共享的「下载」、可以写入的文件夹）写了东西（路径原样，操作是沙盒的操作名：file-write-create、file-write-unlink……）
-    case wroteShared(path: String, operation: String)
+    /// 在盒子外放行的地方写了东西：共享的「下载」、可以写入的文件夹，以及系统共用的临时、缓存目录（只记新建）。
+    /// 路径原样，操作是沙盒的操作名（file-write-create、file-write-unlink……）。
+    /// certain：按进程身份认出是这个盒子的；false 是进程已经退出、只按名字认的（同名的程序在另一个盒子里也可能有）。
+    /// 只用来显示的不在乎，照着去删东西的只认 certain（见 SharedTemporary）
+    case wroteOutside(path: String, operation: String, certain: Bool)
 }
 
 /// 一次本机隔离运行的报告：写了哪些文件、改了哪些设置、连了哪些服务器、启动了哪些程序、哪些行为被拦下。
@@ -44,6 +47,8 @@ nonisolated struct RunReport: Codable, Identifiable, Sendable {
     var blocks: [BlockEvent] = []
     /// 可能属于这个应用、却写在了盒子外的设置（见 StrayPreference）。nil：还在运行，或者是旧版 MacBox 的报告
     var strayPreferences: [StrayPreference]?
+    /// 应用留在系统临时文件夹里、退出后由 MacBox 删掉的东西（见 SharedTemporary）。nil：还在运行，或者是旧版 MacBox 的报告
+    var temporaryCleanup: SharedTemporary.Cleanup?
 
     /// 一份报告最多列出多少处文件位置
     static let maxAreas = 200
@@ -618,13 +623,15 @@ final class SharedWrites {
         places = ([downloads] + chosen).sorted { $0.prefix.count > $1.prefix.count }
     }
 
-    /// 记下一条写入；不在这些地方里的不管
-    func note(_ path: String, operation: String) {
-        guard let place = places.first(where: { path.hasPrefix($0.prefix) }) else { return }
+    /// 记下一条写入；不在这些地方里的不管，返回 false
+    @discardableResult
+    func note(_ path: String, operation: String) -> Bool {
+        guard let place = places.first(where: { path.hasPrefix($0.prefix) }) else { return false }
         let relative = String(path.dropFirst(place.prefix.count))
-        guard !relative.isEmpty else { return }
+        guard !relative.isEmpty else { return true }
         if operations[place.prefix]?[relative] == nil { order.append((place.prefix, relative)) }
         operations[place.prefix, default: [:]][relative, default: []].append(operation)
+        return true
     }
 
     /// 按每处的顶层项目汇总
@@ -709,6 +716,7 @@ extension RunReport {
         if let totals = fileTotals { parts.append(String(localized: "写入 \(totals.count) 个文件")) }
         if let keys = preferenceKeyCount { parts.append(String(localized: "改了 \(keys) 项设置")) }
         if let strays = strayPreferences, !strays.isEmpty { parts.append(String(localized: "\(strays.count) 个设置文件写在盒子外")) }
+        if let cleanup = temporaryCleanup, cleanup.removed > 0 { parts.append(String(localized: "清理 \(cleanup.removed) 个临时文件")) }
         parts.append(networkBlocked ? String(localized: "已断网") : String(localized: "连接 \(servers.count) 个服务器"))
         parts.append(String(localized: "启动 \(programs.count) 个程序"))
         parts.append(String(localized: "拦下 \(blockCount) 次"))
@@ -798,6 +806,22 @@ extension RunReport {
         }
 
         lines.append("")
+        lines.append("## " + Self.temporaryTitle)
+        lines.append("")
+        if let cleanup = temporaryCleanup {
+            lines.append(temporarySummary(cleanup))
+            for place in cleanup.places { lines.append("- `\(place)`") }
+            if !cleanup.remaining.isEmpty {
+                lines.append("")
+                lines.append(Self.temporaryRemainingExplanation)
+                for place in cleanup.remaining { lines.append("- `\(place)`") }
+            }
+        } else {
+            lines.append(isRunning ? String(localized: "应用退出后清理。")
+                                   : String(localized: "旧版 MacBox 的报告没有这一项。"))
+        }
+
+        lines.append("")
         lines.append(String(localized: "## 连接的服务器"))
         lines.append("")
         if networkBlocked {
@@ -850,9 +874,25 @@ extension RunReport {
         String(localized: "这次运行期间，你真实的偏好设置目录（~/Library/Preferences）里新出现了这些设置，它们不在 MacBox 借出、收回的范围里，删除盒子后仍然留在这台 Mac 上。偏好设置由系统服务替所有程序代写，分不出是谁写的，同一时间别的程序新建的也会列进来。只记设置项的名字，不记内容。")
     }
 
+    /// 系统临时文件夹那一栏的标题和说明，报告页和导出的文字共用
+    static var temporaryTitle: String {
+        String(localized: "留在系统临时文件夹里的文件")
+    }
+
+    func temporarySummary(_ cleanup: SharedTemporary.Cleanup) -> String {
+        if cleanup.removed == 0 {
+            return String(localized: "没有发现。系统的临时文件夹（/private/tmp 和 /var/folders 里你的那一个）所有程序共用，不在盒子里；应用在里面新建的文件，退出后由 MacBox 删除。")
+        }
+        return String(localized: "应用在系统的临时文件夹里留下了 \(cleanup.removed) 个文件（\(FileOps.formatBytes(cleanup.bytes))），退出后 MacBox 已经删除。这些文件夹所有程序共用，不在盒子里。")
+    }
+
+    static var temporaryRemainingExplanation: String {
+        String(localized: "下面这几处是应用新建的文件夹，里面还有别的东西（别的程序放的，或者系统日志漏记的），MacBox 没有动。系统重启时、或者三天没用之后会自己清理：")
+    }
+
     /// 报告记不全的地方，报告页和导出的文字都附上
     static var caveats: String {
-        String(localized: "说明：连接是定时看一眼得到的，很短的连接可能没看到；服务器名字来自反向解析，常常是云服务商的机器名；设置了代理时，经由代理的连接只显示为连到代理。启动的程序、被拦下的行为、在共享的「下载」和可以写入的文件夹里写的文件来自系统日志，系统繁忙时会漏记，这些文件也没有大小。系统共用的临时文件夹不在统计之内。")
+        String(localized: "说明：连接是定时看一眼得到的，很短的连接可能没看到；服务器名字来自反向解析，常常是云服务商的机器名；设置了代理时，经由代理的连接只显示为连到代理。启动的程序、被拦下的行为、在共享的「下载」和可以写入的文件夹里写的文件来自系统日志，系统繁忙时会漏记，这些文件也没有大小。应用在系统临时文件夹里新建了哪些文件同样来自系统日志，漏记的不会被清理；系统的缓存文件夹里按应用起名的那几个，删除盒子、清除数据时一并删除。")
     }
 
     private func keyList(_ keys: [String]) -> String {
