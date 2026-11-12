@@ -186,10 +186,13 @@ final class IsolatedSession {
         for pid in await Self.members(boxRoot: boxRoot, group: mainPID) where !exited { kill(pid, SIGKILL) }
     }
 
-    /// 本次运行期间在盒子主目录里新出现的安装包（排除「下载」文件夹里用户自己的文件）
-    func downloadedPackages() async -> [URL] {
+    /// 本次运行期间在盒子主目录里新出现的安装包（排除「下载」文件夹里用户自己的文件），大的在前。
+    /// 认扩展名，也认内容：有的安装器把磁盘映像存成别的扩展名（见 PackageExtractor.format）。
+    /// anyAge：以前的运行留下的也算。安装器正在挂载安装包、而这次运行里没有新下载的时候用：
+    /// 上次已经下完（没来得及接手、MacBox 中途退出），这次它直接拿缓存里的那一份去挂载
+    func downloadedPackages(anyAge: Bool = false) async -> [URL] {
         await Self.findPackages(in: [paths.home, paths.tmp], skipping: FileOps.realPath(paths.downloads),
-                                since: startedAt.addingTimeInterval(-2))
+                                since: anyAge ? .distantPast : startedAt.addingTimeInterval(-2))
     }
 
     // MARK: - 连接
@@ -362,10 +365,14 @@ final class IsolatedSession {
                     continue
                 }
                 if item.pathExtension == "app" { enumerator?.skipDescendants() }
-                guard PackageExtractor.supportedExtensions.contains(item.pathExtension.lowercased()),
-                      let created = FileOps.creationDate(of: item), created >= since else { continue }
+                guard let created = FileOps.creationDate(of: item), created >= since else { continue }
+                let named = PackageExtractor.supportedExtensions.contains(item.pathExtension.lowercased())
                 let size = FileOps.allocatedSize(of: item)
-                if size > 1 << 20 { found.append((item, size)) }
+                guard size > 1 << 20 else { continue }
+                // 扩展名不对的只认磁盘映像和安装包：它们有明确的标记，而内容是 zip 的文件太多了（文档、插件、资源包）
+                if named || [.diskImage, .installerPackage].contains(PackageExtractor.sniffedFormat(of: item)) {
+                    found.append((item, size))
+                }
             }
         }
         return found.sorted { $0.size > $1.size }.map(\.url)

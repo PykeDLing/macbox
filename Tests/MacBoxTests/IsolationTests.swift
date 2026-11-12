@@ -82,6 +82,22 @@ struct IsolationTests {
         #expect(!FileManager.default.fileExists(atPath: target))
     }
 
+    @Test("问盒子里可写的文件夹“可不可写”要答可以：有的 App 启动时这样检查主目录、临时目录（剪映），查不过就不往下走",
+          arguments: ["App", "Home", "tmp", "Home/Library", "Home/Library/Keychains"])
+    func boxSkeletonAnswersWritable(folder: String) async throws {
+        let (paths, config) = try makeBox()
+        let target = paths.url.appending(path: folder).path
+        // [ -w ] 问的就是 access(W_OK)，和 isWritableFileAtPath、Qt 的 isWritable 一样
+        let output = try await sandboxed(paths, config, """
+        [ -w '\(target)' ] && echo writable
+        : > '\(target)/probe' && rm '\(target)/probe' && echo created
+        chmod 700 '\(target)' 2>/dev/null && echo chmod
+        """)
+        #expect(output == "writable\ncreated", "\(folder)：文件夹本身的权限还是改不了")
+        // MacBox 自己的记录照旧答不可写
+        #expect(try await sandboxed(paths, config, "[ -w '\(paths.url.path)' ] && echo writable || echo no") == "no")
+    }
+
     @Test("读取：其他盒子、密钥和凭证、其他 App 的数据都读不到")
     func reads() async throws {
         let (paths, config) = try makeBox()
@@ -345,6 +361,15 @@ struct IsolationTests {
         #expect(ProcessTable.scriptArgument(of: file.pid, executable: "/bin/sh") == unresolved)
         #expect(ProcessTable.scriptArgument(of: inline.pid, executable: "/bin/sh") == nil)
         #expect(ProcessTable.scriptArgument(of: file.pid, executable: "/bin/sleep") == nil, "不是解释器")
+        // 单独一个 "-"：shell 里后面还是脚本；别的解释器是从标准输入读脚本，后面的路径是给脚本的参数，不是脚本
+        let dashed = try ChildProcess.spawn("/bin/sh", ["-", unresolved])
+        var fromStdin = ChildProcess.Options()
+        fromStdin.input = .data(Data("sleep 3;\n".utf8))
+        let stdin = try ChildProcess.spawn("/usr/bin/perl", ["-", unresolved], options: fromStdin)
+        defer { [dashed, stdin].forEach { $0.signal(SIGKILL) } }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(ProcessTable.scriptArgument(of: dashed.pid, executable: "/bin/sh") == unresolved)
+        #expect(ProcessTable.scriptArgument(of: stdin.pid, executable: "/usr/bin/perl") == nil)
     }
 
     @Test("系统日志：几毫秒就结束的系统工具（touch）的拒绝记录也归盒子", .enabled(if: AppPaths.override != nil, "需要 MACBOX_DATA_ROOT"))

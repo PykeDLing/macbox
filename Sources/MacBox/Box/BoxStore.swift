@@ -292,7 +292,7 @@ final class BoxStore {
                 usleep(100_000)
             }
         }
-        // 2. 替换做到一半的改回原件、删掉残骸；还原点、安装器接手的临时目录，导入到一半的盒子都删掉
+        // 2. 替换做到一半的改回原件、删掉残骸；还原点、安装器接手的临时目录和保住的安装包，导入到一半的盒子都删掉
         for box in boxes {
             let paths = box.paths
             do {
@@ -300,6 +300,7 @@ final class BoxStore {
                     try FileOps.recoverReplacements(in: paths.url, items: paths.replaceableItems)
                     try FileOps.removeTree(paths.restorePointStaging)
                     try FileOps.removeTree(paths.appStaging)
+                    try FileOps.removeTree(paths.handover)
                 }
             } catch {
                 box.lastError = String(localized: "上次没有做完的还原、清除数据没能收拾好：\(error.localizedDescription)")
@@ -654,7 +655,7 @@ final class BoxStore {
     /// 或者 App 经由系统重新启动了自己），改为在隔离中打开
     func handleEscape(_ escape: EscapeGuard.Escape) {
         guard let box = boxes.first(where: { escape.owner.hasPrefix(FileOps.realPath($0.paths.url) + "/") }) else { return }
-        let event = BlockEvent(kind: .escapedLaunch, target: escape.path)
+        let event = BlockEvent(kind: Self.isBundledService(escape.path) ? .bundledService : .escapedLaunch, target: escape.path)
         let mainExecutable = (try? AppInspector.info(of: box.appURL)).map { FileOps.realPath($0.executable) }
         guard escape.path == mainExecutable, !isTerminating else {
             box.record(event)
@@ -682,6 +683,17 @@ final class BoxStore {
             box.relaunchWhenIdle(event)
             box.session?.activate()
         }
+    }
+
+    /// 被结束的是 App 自己的 XPC 服务（X.app/Contents/XPCServices/名字.xpc/Contents/MacOS/程序）。系统只从这里启动它们，
+    /// 改不了它们的启动方式：往 App 包里加东西、改 Info.plist，macOS 就判定 App “已损坏”，不再让它打开（实测）。
+    /// 框架里带的不算（Sparkle 的更新服务）：那是附带的功能，照旧记成“在沙盒外启动程序”，不为它建议改用虚拟 Mac
+    nonisolated static func isBundledService(_ path: String) -> Bool {
+        let parts = path.split(separator: "/")
+        let count = parts.count
+        guard count >= 7, parts[count - 2] == "MacOS", parts[count - 3] == "Contents", parts[count - 4].hasSuffix(".xpc"),
+              parts[count - 5] == "XPCServices", parts[count - 6] == "Contents" else { return false }
+        return parts[count - 7].hasSuffix(".app")
     }
 
     /// 在隔离中重新打开的频率限制：两次之间至少 3 秒，一分钟最多 3 次，免得一个反复重启自己的 App 一直被拉起来

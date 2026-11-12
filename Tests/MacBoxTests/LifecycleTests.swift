@@ -73,6 +73,21 @@ func runs(_ box: Box) -> Int {
         .split(separator: "\n").count
 }
 
+/// 把文件夹做成磁盘映像。映像服务正忙时（刚有别的映像在挂载、卸载）hdiutil 会报“资源暂时不可用”，稍等重试
+func makeDiskImage(of folder: URL, at image: URL) async throws -> URL {
+    for attempt in 1... {
+        do {
+            try await Shell.run("/usr/bin/hdiutil", ["create", "-quiet", "-fs", "APFS", "-srcfolder", folder.path, image.path])
+            return image
+        } catch {
+            guard attempt < 4 else { throw error }
+            try? FileManager.default.removeItem(at: image)
+            try await Task.sleep(for: .seconds(attempt))
+        }
+    }
+    fatalError()
+}
+
 /// Box / BoxStore 的生命周期：打开、退出、收尾、维护、删除、启动时的收尾、兼容性询问、启动器。
 /// 要启动真实的隔离会话、用 MacBox 的数据目录、启动守卫，只在设置了 MACBOX_DATA_ROOT 时运行
 @Suite("生命周期", .serialized, .enabled(if: AppPaths.override != nil, "需要 MACBOX_DATA_ROOT"))
@@ -826,6 +841,103 @@ extension LifecycleTests {
         await box.open()
         // 主目录在第二次还原时又换成了还原点里的（runs 文件跟着没了），所以又从 1 开始
         #expect(await eventually(.seconds(10)) { runs(box) == 1 && box.activity == .idle }, "去掉标记之后照常打开")
+    }
+
+    /// 剪映的在线安装器：下载的磁盘映像存成 .zip，自己去挂载（被挡）；请它退出时先问“确定取消下载吗”，
+    /// 不走，一取消就把下载的东西删掉
+    @Test("在线安装器去挂载下载好的安装包时就接手：先保住安装包再请它退出，它删掉下载的、赖着不走也照样装好；扩展名不对的按内容认",
+          .timeLimit(.minutes(3)))
+    func handOverSecuresThePackage() async throws {
+        let fixture = LifecycleFixture()
+        defer { await fixture.cleanup() }
+        let appID = "dev.macboxtest.lifecycle-handover-\(UUID().uuidString.prefix(8).lowercased()).app"
+        let root = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appending(path: "payload/Real.app")
+        try makeFakeApp(at: real, identifier: appID, script: "#!/bin/sh\necho run >> \"$HOME/runs\"\nexit 0\n")
+        // 安装器下载的安装包要大于 1 MB 才认（见 IsolatedSession.downloadedPackages）
+        var padding = [UInt8](repeating: 0, count: 2 << 20)
+        arc4random_buf(&padding, padding.count) // 随机内容压缩不了，做成映像后照样大于 1 MB
+        try AppPaths.ensure(real.appending(path: "Contents/Resources"))
+        try Data(padding).write(to: real.appending(path: "Contents/Resources/padding"))
+        let image = try await makeDiskImage(of: root.appending(path: "payload"), at: root.appending(path: "Real.dmg"))
+
+        let paths = try await fixture.makeBox("Installer", script: """
+        mkdir -p "$HOME/Library/cache"
+        cp "\(image.path)" "$HOME/Library/cache/app_package.zip"
+        trap 'rm -f "$HOME/Library/cache/app_package.zip"; touch "$HOME/asked"' TERM
+        touch "$HOME/ready"
+        while :; do sleep 0.1; done
+        """) { $0.isInstaller = true }
+        let store = await fixture.start()
+        let box = try #require(store.box(id: try paths.loadConfig().id))
+        let package = paths.home.appending(path: "Library/cache/app_package.zip")
+
+        await box.open()
+        #expect(await eventually(.seconds(10)) { FileOps.exists(paths.home.appending(path: "ready")) })
+        // 系统日志里那条“挂载被挡”的记录到了（记录本身见 IsolationTests）
+        box.record(BlockEvent(kind: .diskMount, subject: .installerPackage))
+        #expect(await eventually(.seconds(10)) { FileOps.exists(paths.handover.appending(path: "app_package.zip")) }, "没有保住安装包")
+        #expect(await eventually(.seconds(10)) { FileOps.exists(paths.home.appending(path: "asked")) }, "没有请安装器退出")
+        #expect(!FileOps.exists(package), "安装器把自己下载的删掉了")
+        #expect(await eventually(.seconds(60)) { runs(box) == 1 && box.activity == .idle }, "没有完成安装、打开")
+        #expect(!box.config.isInstaller)
+        #expect(box.config.bundleIdentifier == appID)
+        #expect(box.config.appFolderName == "Real.app")
+        #expect(!FileOps.exists(paths.handover), "接手完不留着安装包")
+        #expect(box.lastError == nil)
+    }
+
+    @Test("在线安装器拿上次下好的安装包去挂载：这次运行里没有新下载的，以前留下的也接手", .timeLimit(.minutes(3)))
+    func handOverUsesEarlierDownload() async throws {
+        let fixture = LifecycleFixture()
+        defer { await fixture.cleanup() }
+        let appID = "dev.macboxtest.lifecycle-earlier-\(UUID().uuidString.prefix(8).lowercased()).app"
+        let root = FileManager.default.temporaryDirectory.appending(path: "MacBoxTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appending(path: "payload/Real.app")
+        try makeFakeApp(at: real, identifier: appID, script: "#!/bin/sh\necho run >> \"$HOME/runs\"\nexit 0\n")
+        var padding = [UInt8](repeating: 0, count: 2 << 20)
+        arc4random_buf(&padding, padding.count)
+        try AppPaths.ensure(real.appending(path: "Contents/Resources"))
+        try Data(padding).write(to: real.appending(path: "Contents/Resources/padding"))
+        let image = try await makeDiskImage(of: root.appending(path: "payload"), at: root.appending(path: "Real.dmg"))
+
+        let paths = try await fixture.makeBox("Installer", script: """
+        touch "$HOME/ready"
+        while :; do sleep 0.1; done
+        """) { $0.isInstaller = true }
+        // 上一次运行留下的：比这次运行早
+        let package = paths.home.appending(path: "Library/cache/app_package.zip")
+        try AppPaths.ensure(package.deletingLastPathComponent())
+        try FileManager.default.copyItem(at: image, to: package)
+        try FileManager.default.setAttributes([.creationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: package.path)
+        let store = await fixture.start()
+        let box = try #require(store.box(id: try paths.loadConfig().id))
+
+        await box.open()
+        #expect(await eventually(.seconds(10)) { FileOps.exists(paths.home.appending(path: "ready")) })
+        box.record(BlockEvent(kind: .diskMount, subject: .installerPackage))
+        #expect(await eventually(.seconds(60)) { runs(box) == 1 && box.activity == .idle }, "没有完成安装、打开")
+        #expect(!box.config.isInstaller && box.config.bundleIdentifier == appID)
+        #expect(!FileOps.exists(package), "用完的安装包不再占空间")
+    }
+
+    @Test("App 自己的 XPC 服务被守卫结束：单独记一类，这次运行结束后建议改用虚拟 Mac，说清楚是哪个服务")
+    func bundledServiceSuggestsVirtualMac() {
+        let service = "/b/1.box/App/Thunder.app/Contents/XPCServices/DownloadService.xpc/Contents/MacOS/DownloadService"
+        #expect(BoxStore.isBundledService(service))
+        #expect(!BoxStore.isBundledService("/b/1.box/App/A.app/Contents/Frameworks/S.framework/Versions/B/XPCServices/I.xpc/Contents/MacOS/I"),
+                "框架里带的（Sparkle 的更新服务）是附带功能，不为它建议改用虚拟 Mac")
+        #expect(!BoxStore.isBundledService("/b/1.box/App/A.app/Contents/MacOS/A"))
+        #expect(!BoxStore.isBundledService("/b/1.box/App/A.app/Contents/Helpers/H.app/Contents/MacOS/H"))
+        #expect(!BoxStore.isBundledService("/b/1.box/Home/x.xpc/Contents/MacOS/x"), "不在 XPCServices 里的不是系统替它启动的服务")
+        #expect(BlockEvent.Kind.bundledService.suggestsVirtualMac)
+        #expect(!BlockEvent.Kind.escapedLaunch.suggestsVirtualMac)
+        let reason = Box.virtualMacReason(BlockEvent(kind: .bundledService, target: service))
+        #expect(reason.contains("DownloadService") && !reason.contains("/b/1.box"))
+        let other = Box.virtualMacReason(BlockEvent(kind: .systemInstall, target: "/Library/x"))
+        #expect(other.hasSuffix("/Library/x"))
     }
 
     @Test("在线安装器接手前先收回借出的偏好设置：收不回就不接手、前缀不变；本机同一个 App 的设置不会被收进盒子、删掉",

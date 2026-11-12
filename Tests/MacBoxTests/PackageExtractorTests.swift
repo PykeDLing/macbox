@@ -177,6 +177,50 @@ final class PackageExtractorTests {
         #expect(await noImagesAttached())
     }
 
+    @Test("改了扩展名的安装包按内容认：存成 .zip 的磁盘映像、存成 .dmg 的压缩包都能取出 App，用完卸载")
+    func mislabelledPackages() async throws {
+        let source = try makeSource()
+        // 剪映的在线安装器就是这样：下载的是磁盘映像，文件名是 app_package_….zip
+        let dmg = try await makeDmg(of: source)
+        let dmgAsZip = try directory("mislabelled").appending(path: "app_package_1.zip")
+        try FileManager.default.copyItem(at: dmg, to: dmgAsZip)
+        #expect(PackageExtractor.format(of: dmgAsZip) == .diskImage)
+        let fromImage = try await PackageExtractor.extractApp(from: dmgAsZip, into: output())
+        #expect(fromImage.app.lastPathComponent == "Demo.app")
+        #expect(await noImagesAttached())
+
+        let zip = try await makeZip(of: source.appending(path: "Demo.app"))
+        let zipAsDmg = try directory("mislabelled").appending(path: "Demo.dmg")
+        try FileManager.default.copyItem(at: zip, to: zipAsDmg)
+        #expect(PackageExtractor.format(of: zipAsDmg) == .zip)
+        let fromZip = try await PackageExtractor.extractApp(from: zipAsDmg, into: output())
+        #expect(fromZip.app.lastPathComponent == "Demo.app")
+    }
+
+    @Test("按内容认格式：只认有明确标记的磁盘映像、安装包、压缩包；文件夹、别的文件、读不了的认不出，退回看扩展名")
+    func sniffing() async throws {
+        let source = try makeSource()
+        let folder = try directory("sniff")
+        let dmg = try await makeDmg(of: source)
+        let pkg = try await makeAppPkg("Sniff", app: "PkgApp", in: folder)
+        let zip = try await makeZip(of: source.appending(path: "Demo.app"))
+        #expect(PackageExtractor.sniffedFormat(of: dmg) == .diskImage)
+        #expect(PackageExtractor.sniffedFormat(of: pkg) == .installerPackage)
+        #expect(PackageExtractor.sniffedFormat(of: zip) == .zip)
+        let text = folder.appending(path: "notes.dmg")
+        try String(repeating: "not an image\n", count: 100).write(to: text, atomically: true, encoding: .utf8)
+        #expect(PackageExtractor.sniffedFormat(of: text) == nil)
+        #expect(PackageExtractor.format(of: text) == .diskImage, "认不出内容时看扩展名")
+        #expect(PackageExtractor.sniffedFormat(of: source) == nil, "文件夹")
+        #expect(PackageExtractor.format(of: source.appending(path: "Demo.app")) == .app)
+        #expect(PackageExtractor.sniffedFormat(of: folder.appending(path: "missing.zip")) == nil)
+        #expect(PackageExtractor.format(of: folder.appending(path: "notes.txt")) == nil)
+        // 一个永远没有数据的 FIFO：不能卡住
+        let fifo = folder.appending(path: "pipe.zip")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        #expect(PackageExtractor.sniffedFormat(of: fifo) == nil)
+    }
+
     @Test("不支持的类型报错")
     func unsupported() async {
         await #expect(throws: MacBoxError.self) {

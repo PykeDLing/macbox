@@ -2658,6 +2658,16 @@
         }
       }
     },
+    "启动自带的后台服务" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start its own background service"
+          }
+        }
+      }
+    },
     "哪一次" : {
       "localizations" : {
         "en" : {
@@ -3040,6 +3050,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Its folder will be moved to the Trash, where you can recover it if needed."
+          }
+        }
+      }
+    },
+    "它自带的后台服务「%@」由系统在沙盒外启动，MacBox 结束了它，依赖这个服务的功能在本机隔离里用不了。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The system started its own background service “%@” outside the sandbox, so MacBox ended it. Features that depend on this service don’t work in native isolation."
           }
         }
       }

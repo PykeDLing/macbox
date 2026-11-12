@@ -223,6 +223,7 @@ extension BoxConfig {
 ///       Prefs/             收回的偏好设置（运行时临时放回系统，退出后收回）
 ///       RestorePoint/      还原点（APFS 克隆）
 ///       Reports/           运行报告
+///       Handover/          在线安装器下载好的安装包（只在接手安装期间）
 ///       tmp/
 nonisolated struct BoxPaths: Hashable, Sendable {
     let url: URL
@@ -247,6 +248,9 @@ nonisolated struct BoxPaths: Hashable, Sendable {
     var restorePointStaging: URL { url.appending(path: "RestorePoint.tmp", directoryHint: .isDirectory) }
     /// 安装器下载的安装包里取出的 App：取出、检查完才整体换上去
     var appStaging: URL { url.appending(path: "App.new", directoryHint: .isDirectory) }
+    /// 在线安装器下载好的安装包：安装器尝试挂载它的那一刻克隆到这里（见 Box.handOver），之后安装器退出时
+    /// 把自己下载的东西删掉也不要紧。只在接手安装期间存在
+    var handover: URL { url.appending(path: "Handover", directoryHint: .isDirectory) }
     /// 最近一次运行用的沙盒规则（见 SandboxProfile），便于排查
     var sandboxProfile: URL { url.appending(path: "sandbox.sb") }
 
@@ -269,8 +273,8 @@ nonisolated struct BoxPaths: Hashable, Sendable {
     /// 以及运行报告（记着它以前每次运行写了什么、连了哪里，不该由它来读）
     var privateItems: [URL] { [prefs, restorePoint, reports, keychainPassword] }
     /// App 只能读、不能改的：MacBox 自己的记录和拖进来的原始文件。MacBox 在沙盒外照着它们做事，
-    /// App 改了它们，MacBox 就会照着改过的内容替它删改沙盒外的文件。正在建的还原点、正在取出的新 App 只在维护期间（App 没在运行）出现
-    var readOnlyItems: [URL] { [config, sourceDirectory, sandboxProfile, unfinishedMarker, restorePointStaging, appStaging] }
+    /// App 改了它们，MacBox 就会照着改过的内容替它删改沙盒外的文件。正在建的还原点、正在取出的新 App 只在维护期间（App 没在运行）出现；保住的安装包在安装器还没退出时就在了，所以也不能让它改
+    var readOnlyItems: [URL] { [config, sourceDirectory, sandboxProfile, unfinishedMarker, restorePointStaging, appStaging, handover] }
 
     /// 骨架：MacBox 在沙盒外会顺着走的文件夹，文件夹本身不能删除、改名、换成符号链接（只有里面可写）。
     /// 可写的那几处的 subpath 也包括它自己：App 可以清空 App 文件夹后 rmdir，再在原处放一个指向 /Applications 的链接，
