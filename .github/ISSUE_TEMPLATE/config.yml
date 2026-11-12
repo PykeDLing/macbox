@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 兼容清单 / Compatibility list
+    url: https://github.com/PykeDLing/macbox/blob/main/docs/compatibility.md
+    about: 哪些应用实测能用、哪些要用虚拟 Mac
+  - name: 工作原理和限制 / How it works
+    url: https://github.com/PykeDLing/macbox/blob/main/docs/how-it-works.md
+    about: 本机隔离挡什么、不挡什么

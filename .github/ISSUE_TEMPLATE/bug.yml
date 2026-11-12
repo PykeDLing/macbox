@@ -1,0 +1,41 @@
+name: 报告问题 / Report a problem
+description: MacBox 自己出了问题：打不开、报错、界面不对、行为和说明不一样
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        某个应用放进 MacBox 之后能不能用，请用另一张表单「应用兼容情况」。
+        从 MacBox 的「帮助 › 报告问题…」打开时，下面两个版本号已经替你填好。
+  - type: input
+    id: macbox
+    attributes:
+      label: MacBox 版本
+      description: 设置页最下面，或者「MacBox › 关于 MacBox」
+      placeholder: 0.4.5
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS 版本
+      placeholder: 27.2 (26B123)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 你做了什么、看到了什么、本来以为会怎样。有报错的话把原文贴上来
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 怎么重现
+      description: 能稳定重现的步骤。和某个应用有关的话，写上应用的名字、版本和下载地址
+  - type: textarea
+    id: report
+    attributes:
+      label: 运行报告（可选）
+      description: 在应用的详情面板里「查看完整报告… › 导出」存成 Markdown 贴在这里。里面有它连过的服务器地址和写过的文件路径，贴之前请自己看一遍

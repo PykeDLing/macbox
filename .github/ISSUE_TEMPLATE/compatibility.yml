@@ -1,0 +1,61 @@
+name: 应用兼容情况 / App compatibility
+description: 某个应用放进 MacBox 之后能用、部分能用、还是用不了
+labels: [compatibility]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        已经测过的应用见[兼容清单](https://github.com/PykeDLing/macbox/blob/main/docs/compatibility.md)。能用的也欢迎报告，清单会照着补。
+  - type: input
+    id: app
+    attributes:
+      label: 应用和版本
+      placeholder: 百度网盘 8.10.1
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: 安装包从哪里下载的
+      description: 官网的下载页或下载地址
+  - type: dropdown
+    id: result
+    attributes:
+      label: 结果
+      options:
+        - 能用
+        - 部分能用（有功能不行）
+        - 用不了
+        - MacBox 提示要用虚拟 Mac
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: 运行环境
+      options:
+        - 本机隔离
+        - 虚拟 Mac
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: 具体情况
+      description: 哪些功能正常、哪些不行；运行报告里「被拦下的行为」有什么
+    validations:
+      required: true
+  - type: input
+    id: macbox
+    attributes:
+      label: MacBox 版本
+      placeholder: 0.4.5
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS 版本
+      placeholder: 27.2 (26B123)
+    validations:
+      required: true

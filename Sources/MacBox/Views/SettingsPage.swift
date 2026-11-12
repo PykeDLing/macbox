@@ -4,6 +4,8 @@ import SwiftUI
 /// 主窗口里的「设置」页
 struct SettingsPage: View {
     @Environment(BoxStore.self) private var store
+    @Environment(UpdateChecker.self) private var updates
+    @AppStorage(UpdateChecker.automaticKey) private var checksForUpdates = true
     @AppStorage(CompatibilityPolicy.key) private var policy = CompatibilityPolicy.ask.rawValue
     @AppStorage("defaultShowInLaunchpad") private var showInLaunchpad = true
     @State private var language = AppLanguage.selected
@@ -59,7 +61,23 @@ struct SettingsPage: View {
             }
 
             Section {
-                LabeledContent("版本", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+                LabeledContent("版本") {
+                    HStack(spacing: 10) {
+                        Text(UpdateChecker.currentVersion)
+                        if let release = updates.available {
+                            Button("下载 \(release.version)") { updates.openDownloadPage() }
+                        } else {
+                            Button("检查更新…") { Task { await updates.check(userInitiated: true) } }
+                                .disabled(updates.state == .checking)
+                        }
+                    }
+                }
+                Toggle("自动检查更新", isOn: $checksForUpdates)
+                Text("打开 MacBox 时检查，每天最多一次：只向 GitHub 询问最新的版本号，不上传任何信息，也不会自动下载、安装。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("更新")
             }
         }
         .formStyle(.grouped)

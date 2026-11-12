@@ -78,6 +78,7 @@ struct MainView: View {
         } message: { alert in
             Text(alert.message)
         }
+        .modifier(UpdateAnnouncementAlert())
         .alert("无法添加",
                isPresented: Binding(get: { store.importError != nil }, set: { if !$0 { store.importError = nil } }),
                presenting: store.importError) { _ in
@@ -87,6 +88,26 @@ struct MainView: View {
         }
     }
 
+}
+
+/// 你点了「检查更新…」之后的结果。自动检查查到新版只在侧边栏里留一行，不弹出来
+private struct UpdateAnnouncementAlert: ViewModifier {
+    @Environment(UpdateChecker.self) private var updates
+
+    func body(content: Content) -> some View {
+        content.alert(updates.announcement?.title ?? "",
+                      isPresented: Binding(get: { updates.announcement != nil }, set: { if !$0 { updates.announcement = nil } }),
+                      presenting: updates.announcement) { announcement in
+            if let page = announcement.page {
+                Button("前往下载") { updates.openDownloadPage(page) }
+                Button("以后再说", role: .cancel) {}
+            } else {
+                Button("好") {}
+            }
+        } message: { announcement in
+            Text(announcement.message)
+        }
+    }
 }
 
 /// 正在退出 MacBox：等应用退出、收尾、维护和添加做完
@@ -111,6 +132,7 @@ private struct QuittingBanner: View {
 private struct Sidebar: View {
     @Environment(BoxStore.self) private var store
     @Environment(VirtualMac.self) private var virtualMac
+    @Environment(UpdateChecker.self) private var updates
     @Environment(\.importApps) private var importApps
 
     var body: some View {
@@ -136,6 +158,17 @@ private struct Sidebar: View {
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 6) {
+                // 查到了新版本：留一行，点了去发布页。不弹窗、不打断
+                if let release = updates.available {
+                    Button { updates.openDownloadPage() } label: {
+                        Label("有新版本 \(release.version)", systemImage: "arrow.down.circle")
+                            .font(.callout)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.link)
+                    .help("在浏览器里打开发布页")
+                    .padding(.bottom, 4)
+                }
                 Button { importApps() } label: {
                     Label("添加应用", systemImage: "plus")
                         .font(.body.weight(.medium))
