@@ -348,8 +348,13 @@ nonisolated enum AppInspector {
             !FileOps.contents(of: contents.appending(path: relative)).isEmpty
         }
 
-        if has("Library/LaunchServices") || infoDictionary(of: app)?["SMPrivilegedExecutables"] != nil {
-            issues.append(CompatibilityIssue(.privilegedHelper))
+        // 要管理员权限的辅助程序：登记在 Info.plist 里，程序放在 Library/LaunchServices。
+        // 名字里都带 update 的只管自动更新（Chrome 的 UpdaterPrivilegedHelper、Edge 的 EdgeUpdater.helper），
+        // 装不上应用照常能用，记成功能受限，不建议改用虚拟 Mac；别的（代理、加速器、虚拟网卡）多半是主要功能
+        let registered = (infoDictionary(of: app)?["SMPrivilegedExecutables"] as? [String: Any]).map { Array($0.keys) }
+        let helpers = (registered ?? []) + FileOps.contents(of: contents.appending(path: "Library/LaunchServices")).map(\.lastPathComponent)
+        if !helpers.isEmpty || infoDictionary(of: app)?["SMPrivilegedExecutables"] != nil {
+            issues.append(CompatibilityIssue(isUpdaterOnly(helpers) ? .updateHelper : .privilegedHelper))
         }
         if has("Library/LaunchDaemons") {
             issues.append(CompatibilityIssue(.systemService))
@@ -379,6 +384,11 @@ nonisolated enum AppInspector {
             issues.append(CompatibilityIssue(.appSandbox))
         }
         return issues
+    }
+
+    /// 这些管理员辅助程序是不是都只管自动更新：每个名字里都带 update。一个也没有时不算
+    static func isUpdaterOnly(_ helpers: [String]) -> Bool {
+        !helpers.isEmpty && helpers.allSatisfy { $0.localizedCaseInsensitiveContains("update") }
     }
 
     /// App 主程序签名里的权限（entitlements）。经由 Security 框架直接读签名，不校验、不运行 codesign；

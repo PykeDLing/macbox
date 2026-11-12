@@ -28,6 +28,8 @@ nonisolated struct CompatibilityIssue: Codable, Hashable, Identifiable, Sendable
     nonisolated enum Code: String, Codable, Sendable {
         case privilegedHelper, systemService, systemExtension, driver, loginItem, finderIntegration, networkExtension,
              appSandbox, notarized, notNotarized, installerScriptsSkipped
+        /// 只管自动更新的管理员辅助程序（Chrome、Edge）：装不上不影响使用，不为它建议改用虚拟 Mac（见 AppInspector.scan）
+        case updateHelper
     }
 
     var severity: Severity
@@ -59,7 +61,7 @@ nonisolated extension CompatibilityIssue.Code {
     var severity: CompatibilityIssue.Severity {
         switch self {
         case .privilegedHelper, .systemService, .systemExtension, .driver, .networkExtension, .appSandbox: .needsVirtualMac
-        case .loginItem, .finderIntegration, .notNotarized, .installerScriptsSkipped: .limited
+        case .loginItem, .finderIntegration, .notNotarized, .installerScriptsSkipped, .updateHelper: .limited
         case .notarized: .info
         }
     }
@@ -78,6 +80,7 @@ nonisolated extension CompatibilityIssue.Code {
         case .notarized: String(localized: "已通过 Apple 公证检查", bundle: bundle)
         case .notNotarized: String(localized: "未通过 Apple 公证检查", bundle: bundle)
         case .installerScriptsSkipped: String(localized: "安装脚本已跳过", bundle: bundle)
+        case .updateHelper: String(localized: "自动更新的辅助程序", bundle: bundle)
         }
     }
 
@@ -98,6 +101,7 @@ nonisolated extension CompatibilityIssue.Code {
         case .notarized: known ?? source ?? String(localized: "来源已验证", bundle: bundle)
         case .notNotarized: String(localized: "\(rejection)。打开时 macOS 会询问你是否信任它，请确认来源可靠。", bundle: bundle)
         case .installerScriptsSkipped: String(localized: "安装包带有安装脚本（通常用于安装后台服务或驱动），MacBox 没有执行它们。功能异常时请改用虚拟 Mac。", bundle: bundle)
+        case .updateHelper: String(localized: "它用一个要管理员权限的辅助程序给自己更新，本机隔离里装不上。应用照常使用，只是这种方式的自动更新可能不可用。", bundle: bundle)
         }
     }
 

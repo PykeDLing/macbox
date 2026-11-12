@@ -356,6 +356,7 @@ final class BoxStore {
             } catch {
                 NSLog("MacBox: 无法锁上「\(box.config.name)」：\(error.localizedDescription)")
             }
+            await box.noteLockState()
         }
         // 8. 撤销系统对盒子里 App 的登记（旧版读图标时会登记，访达、聚焦、App 自己启动包里的辅助 App 也可能登记），
         // 连同包里嵌套的 App 和已经删掉的 App.new、App.old、盒子里的：见 AppRegistration。不影响打开，不必等

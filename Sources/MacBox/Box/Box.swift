@@ -27,6 +27,10 @@ final class Box: Identifiable {
     private(set) var linkClaims: Launcher.Claims?
     var lastError: String?
     var notice: String?
+    /// 退出后没能重新锁上（见 AppLock）：macOS 不让 MacBox 改动有些 App 的包（实测迅雷、剪映运行过一次之后就这样），
+    /// 去掉执行权限的操作被系统拒绝，App 一直留着执行权限。MacBox 没开时它可能被别的途径直接启动，那时不在沙盒里。
+    /// 改变不了这件事，但不能不说：详情面板里列出来（见 BoxInspector）。每次运行结束、每次启动 MacBox 时重新看
+    private(set) var staysUnlocked = false
     /// 请求退出几秒后应用还在运行（在等你存储、你点了取消、没有响应）：界面上在「退出」旁边提供「强制退出」
     private(set) var offersForceQuit = false
     /// 刚请求过退出、还没到提供「强制退出」的时候：界面显示“正在退出…”，「退出」暂时不能再点
@@ -318,6 +322,15 @@ final class Box: Identifiable {
         }
     }
 
+    /// 上锁之后看一眼锁上了没有（见 staysUnlocked）。App 不在、主程序读不出时不算
+    func noteLockState() async {
+        let app = appURL
+        staysUnlocked = await Background.run {
+            guard let executable = AppLock.mainExecutable(of: app), FileOps.exists(executable) else { return false }
+            return !AppLock.isLocked(app)
+        }
+    }
+
     /// 接手安装器下载的安装包：先保住，再请安装器退出，退出后由 finish 取出里面的 App（见 adoptDownloadedPackage）。
     ///
     /// 先保住再请它退出：有的安装器收到退出请求会先问“确定取消下载吗”，一取消就把下载的东西删掉（剪映）；
@@ -515,6 +528,7 @@ final class Box: Identifiable {
         let terminating = store?.isTerminating == true
         offersForceQuit = false
         await finishReport(outcome)
+        await noteLockState()
         var errors: [String] = []
         if let reason = outcome.preferencesReturnError {
             errors.append(String(localized: "无法收回偏好设置，这台 Mac 上这个应用的设置暂时还是盒子里的内容。下次打开它或重新打开 MacBox 时会再试。原因：\(reason)"))
@@ -638,6 +652,7 @@ final class Box: Identifiable {
             // 安装器尝试写入「应用程序」被拦截是预期内的，安装已由 MacBox 完成
             blocks.removeAll { [.systemInstall, .escapedLaunch, .bundledService, .diskMount].contains($0.kind) }
             notice = String(localized: "「\(config.name)」已安装到 MacBox。")
+            await noteLockState() // 换了 App：刚锁上的
             // 和导入时一样：需要虚拟 Mac 的先问，不直接在本机隔离里打开
             if store?.reviewCompatibility(of: self) ?? true { pendingOpen = .user }
             activity = .idle // 空闲后打开（见 becameIdle）

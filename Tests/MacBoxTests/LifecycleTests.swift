@@ -923,6 +923,26 @@ extension LifecycleTests {
         #expect(!FileOps.exists(package), "用完的安装包不再占空间")
     }
 
+    @Test("退出后没能锁上的 App 要看得出来：每次运行结束后看一眼主程序还有没有执行权限", .timeLimit(.minutes(1)))
+    func noticesAppThatStaysUnlocked() async throws {
+        let fixture = LifecycleFixture()
+        defer { await fixture.cleanup() }
+        let paths = try await fixture.makeBox(script: "exit 0\n")
+        let store = await fixture.start()
+        let box = try #require(store.box(id: try paths.loadConfig().id))
+        #expect(!box.staysUnlocked)
+        await box.open()
+        #expect(await eventually(.seconds(15)) { box.activity == .idle && box.report?.isRunning != true })
+        #expect(AppLock.isLocked(box.appURL) && !box.staysUnlocked, "正常情况：锁上了")
+        // macOS 拒绝 MacBox 改动 App 包时（迅雷、剪映运行过之后）锁不上：这里直接把执行权限加回去，效果一样
+        try AppLock.unlock(box.appURL)
+        await box.noteLockState()
+        #expect(box.staysUnlocked)
+        try AppLock.lock(box.appURL)
+        await box.noteLockState()
+        #expect(!box.staysUnlocked)
+    }
+
     @Test("App 自己的 XPC 服务被守卫结束：单独记一类，这次运行结束后建议改用虚拟 Mac，说清楚是哪个服务")
     func bundledServiceSuggestsVirtualMac() {
         let service = "/b/1.box/App/Thunder.app/Contents/XPCServices/DownloadService.xpc/Contents/MacOS/DownloadService"
