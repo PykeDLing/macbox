@@ -706,6 +706,7 @@ struct LifecycleTests {
         // 等它装好 TERM 的处理再请求退出（之前收到的话按默认处理，直接就退出了）
         #expect(await eventually(.seconds(10)) { FileOps.exists(stubborn.paths.home.appending(path: "ready")) })
 
+        let asked = ContinuousClock.now
         let quitting = Task { await store.quitAll(patience: .seconds(2)) }
         try await Task.sleep(for: .milliseconds(300))
         await late.open() // MacBox 正在退出：不再打开
@@ -721,9 +722,13 @@ struct LifecycleTests {
         #expect(stubborn.isQuitting && stubborn.offersForceQuit)
         #expect(await eventually { terms() == 2 })
 
+        // 强制退出后进程结束、收尾要一点时间：这期间不能又把它当成不肯退出的。
+        // 确认进程都退出了要连看两轮（约 1.5 秒，机器慢时更久），所以这里多等一些；
+        // 并且等到离第一次请求已经超过这个时间再强制退出：这样通过靠的是“从强制退出时重新计时”，不是请求还没到时间
+        let patience = Duration.seconds(5)
+        try await Task.sleep(until: asked + patience + .milliseconds(200), clock: .continuous)
         await stubborn.forceQuit()
-        // 强制退出后进程结束、收尾要一点时间：这期间不能又把它当成不肯退出的
-        #expect(await store.quitAll(patience: .seconds(2)).isEmpty)
+        #expect(await store.quitAll(patience: patience).isEmpty)
         #expect(store.liveBoxes.isEmpty)
         #expect(!PreferenceLease(box: stubborn.paths, prefixes: stubborn.config.preferencePrefixes).isOutstanding)
 
