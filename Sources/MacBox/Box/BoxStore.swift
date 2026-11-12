@@ -530,12 +530,21 @@ final class BoxStore {
     func openInVirtualMac(_ box: Box) async {
         let vm = VirtualMac.shared
         guard vm.config.installed else {
-            box.notice = String(localized: "需要先在「虚拟 Mac」页完成一次性设置，之后这个应用就会在虚拟 Mac 中运行。")
-            // 接下来显示的是虚拟 Mac 页，说明也要放在那里，否则只是突然换了一页
-            vm.notice = String(localized: "「\(box.config.name)」设为在虚拟 Mac 中运行，需要先完成下面的一次性设置。")
+            if vm.isInstalling {
+                // 已经在设置了：不能再说“需要先完成设置”，像是还要用户去做什么。
+                // 只在虚拟 Mac 页上说：留在应用上的话，设置几分钟后做完，那句“正在设置”还挂在那里
+                box.notice = nil
+                vm.notice = String(localized: "「\(box.config.name)」要在虚拟 Mac 中运行，等下面的设置完成后再打开它。")
+            } else {
+                box.notice = String(localized: "需要先在「虚拟 Mac」页完成一次性设置，之后这个应用就会在虚拟 Mac 中运行。")
+                // 接下来显示的是虚拟 Mac 页，说明也要放在那里，否则只是突然换了一页
+                vm.notice = String(localized: "「\(box.config.name)」设为在虚拟 Mac 中运行，需要先完成下面的一次性设置。")
+            }
             show(.virtualMac)
             return
         }
+        // 设置好了：之前留在这个应用上的“需要先完成设置”不再成立
+        box.notice = nil
         // 盒子里的两份平时都锁着（见 AppLock），放进去的那份要能运行
         await vm.sendToGuest([box.paths.source(box.config) ?? box.appURL], unlocking: true)
         showVirtualMacWindow()

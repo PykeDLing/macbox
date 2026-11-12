@@ -486,6 +486,55 @@ final class VirtualMacTests {
 
     // MARK: - 传入
 
+    @Test("放入的说明：新放进去的说“即可安装”；什么都没新放进去（装好后又点了打开）时说去虚拟 Mac 里打开它")
+    func sendNoticeWording() throws {
+        let install = "即可安装"
+        let added = try #require(VirtualMac.sendNotice(.init(added: ["WeChatMac.dmg"])))
+        #expect(added.contains(install))
+        let mixed = try #require(VirtualMac.sendNotice(.init(replaced: ["A.dmg"], unchanged: ["B.dmg"])))
+        #expect(mixed.contains(install))
+        let unchanged = try #require(VirtualMac.sendNotice(.init(unchanged: ["WeChatMac.dmg"])))
+        #expect(!unchanged.contains(install))
+        #expect(unchanged.contains("WeChatMac.dmg"))
+        #expect(unchanged.contains(String(localized: "已经装过的应用，直接在虚拟 Mac 里打开它；还没装的，在虚拟 Mac 的访达中打开 位置 › My Shared Files › 传入 安装。")))
+        #expect(VirtualMac.sendNotice(.init(failedNames: ["X.dmg"], firstError: "x")) == nil)
+    }
+
+    @Test("虚拟 Mac 停下来以后，放入的说明不再留着；别的说明、停着的时候新放入的照常显示")
+    func sendNoticeIsForgottenAfterStop() async throws {
+        let bundle = try makeBundle()
+        let vm = VirtualMac(bundle: bundle)
+        let file = root.appending(path: "a/Install.dmg")
+        try write("APP", to: file)
+
+        await vm.sendToGuest([file])
+        #expect(vm.notice != nil)
+        vm.forgetSendNotice() // 关机、睡眠时调用（见 didStop）
+        #expect(vm.notice == nil)
+
+        // 放入之后又有了别的说明：那一条不动
+        await vm.sendToGuest([file])
+        vm.notice = "别的说明"
+        vm.forgetSendNotice()
+        #expect(vm.notice == "别的说明")
+
+        // 停下来之后才放入的：显示着，直到下一次停下来
+        vm.notice = nil
+        await vm.sendToGuest([file])
+        #expect(vm.notice == VirtualMac.sendNotice(.init(unchanged: ["Install.dmg"])))
+        vm.forgetSendNotice()
+        #expect(vm.notice == nil)
+    }
+
+    @Test("设置页的说明：自动下载时说要下载约 25 GB；选了本地镜像时不说下载")
+    func setupDescriptionFollowsSource() {
+        let download = VirtualMac.setupDescription(for: .latest)
+        #expect(download.contains("25 GB"))
+        let local = VirtualMac.setupDescription(for: .file(URL(fileURLWithPath: "/tmp/macOS.ipsw")))
+        #expect(local != download)
+        #expect(!local.contains("25 GB"))
+    }
+
     @Test("放入同名项目：内容没变就跳过，变了就替换；提示说明实际做了什么；不留临时文件")
     func sendReplacesChangedAndSkipsIdentical() async throws {
         let bundle = try makeBundle()

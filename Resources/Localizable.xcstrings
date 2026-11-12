@@ -1106,6 +1106,16 @@
         }
       }
     },
+    "「%@」要在虚拟 Mac 中运行，等下面的设置完成后再打开它。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@” runs in Virtual Mac. Open it again once the setup below has finished."
+          }
+        }
+      }
+    },
     "「%@」设为在虚拟 Mac 中运行，需要先完成下面的一次性设置。" : {
       "localizations" : {
         "en" : {
@@ -3434,6 +3444,16 @@
         }
       }
     },
+    "已经装过的应用，直接在虚拟 Mac 里打开它；还没装的，在虚拟 Mac 的访达中打开 位置 › My Shared Files › 传入 安装。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If the app is already installed, open it inside the Virtual Mac. If not, install it from Locations › My Shared Files › 传入 in the Virtual Mac’s Finder."
+          }
+        }
+      }
+    },
     "已还原。" : {
       "localizations" : {
         "en" : {
@@ -3817,12 +3837,12 @@
         }
       }
     },
-    "打开后，原始安装文件会放进虚拟 Mac 的「传入」文件夹（访达 › 位置 › My Shared Files），在里面安装一次即可。" : {
+    "打开后，原始安装文件会放进虚拟 Mac 的「传入」文件夹（访达 › 位置 › My Shared Files），在里面安装一次。装好以后再点「打开」只会打开虚拟 Mac，应用要在虚拟 Mac 里启动。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "When you open it, the original installer is placed in the Virtual Mac’s “传入” (Incoming) folder (Finder › Locations › My Shared Files). Install it from there once."
+            "value" : "When you open it, the original installer is placed in the Virtual Mac’s “传入” (Incoming) folder (Finder › Locations › My Shared Files). Install it from there once. After that, Open only brings up the Virtual Mac; start the app inside it."
           }
         }
       }
@@ -5085,6 +5105,16 @@
         }
       }
     },
+    "查看设置进度…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Setup Progress…"
+          }
+        }
+      }
+    },
     "查看详情…" : {
       "localizations" : {
         "en" : {
@@ -5733,6 +5763,16 @@
         }
       }
     },
+    "用选中的这份镜像安装，不用下载。完成后虚拟 Mac 占用约 30 GB，安装通常只要几分钟。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS will be installed from the selected image, with nothing to download. The Virtual Mac uses about 30 GB when finished, and installing usually takes a few minutes."
+          }
+        }
+      }
+    },
     "由 MacBox 隔离运行并记录" : {
       "localizations" : {
         "en" : {
@@ -6250,6 +6290,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "The Virtual Mac is asleep, so its resources can’t be changed. Wake it and shut it down, or discard its sleep state first."
+          }
+        }
+      }
+    },
+    "虚拟 Mac 正在设置" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Virtual Mac Is Being Set Up"
+          }
+        }
+      }
+    },
+    "虚拟 Mac 正在设置，完成后就可以打开这个应用。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Virtual Mac is being set up. You can open this app once it has finished."
           }
         }
       }

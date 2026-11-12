@@ -49,6 +49,8 @@ final class VirtualMac: NSObject {
     private(set) var installProgress: Double?
     var lastError: String?
     var notice: String?
+    /// 最近一次「放入」留下的说明（见 forgetSendNotice）
+    @ObservationIgnored private var lastSendNotice: String?
     private(set) var isAsleep = false
     private(set) var restorePointDate: Date?
     /// 正在复制或排队等待复制到「传入」的批次数
@@ -276,6 +278,16 @@ final class VirtualMac: NSObject {
         return (ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled)
             || (ns.domain == NSCocoaErrorDomain && ns.code == NSUserCancelledError)
             || (ns.domain == VZErrorDomain && ns.code == VZError.Code.operationCancelled.rawValue)
+    }
+
+    /// 设置页开头的说明。选了本地的镜像就不用下载，也用不了那么久：不能还说“需要从 Apple 下载约 25 GB”
+    static func setupDescription(for source: InstallSource) -> String {
+        switch source {
+        case .latest:
+            String(localized: "需要从 Apple 下载约 25 GB 的 macOS 并安装，完成后占用约 30 GB（安装镜像可在完成后删除）。整个过程约 20–40 分钟。")
+        case .file:
+            String(localized: "用选中的这份镜像安装，不用下载。完成后虚拟 Mac 占用约 30 GB，安装通常只要几分钟。")
+        }
     }
 
     /// 镜像是否在 MacBox 的缓存里：只有那里的才能在「占用空间」里删除
@@ -530,6 +542,7 @@ final class VirtualMac: NSObject {
         virtualMachine = nil
         status = .stopped
         refreshFlags()
+        forgetSendNotice()
         // 停下来之后客体不会再写「传出」：停止监视，再完整检查一遍（监视期间可能有被合并、丢弃的事件）
         outgoingWatcher.stop()
         Task { await quarantineOutgoing() }
@@ -637,7 +650,10 @@ final class VirtualMac: NSObject {
                 return
             }
             let result = await Background.run { Self.copyIntoIncoming(urls, incoming: incoming, unlocking: unlocking) }
-            if let notice = Self.sendNotice(result) { self.notice = notice }
+            if let notice = Self.sendNotice(result) {
+                self.notice = notice
+                lastSendNotice = notice
+            }
             if let message = result.firstError {
                 lastError = String(localized: "\(quotedList(result.failedNames))放入虚拟 Mac 失败：\(message)")
             }
@@ -784,8 +800,21 @@ final class VirtualMac: NSObject {
             parts.append(String(localized: "「传入」里已有且没有变化，未重新复制：\(quotedList(result.unchanged))。"))
         }
         guard !parts.isEmpty else { return nil }
-        parts.append(String(localized: "在虚拟 Mac 的访达中打开 位置 › My Shared Files › 传入，即可安装。"))
+        if result.added.isEmpty, result.replaced.isEmpty {
+            // 什么都没有新放进去：多半是装好以后又点了「打开」，这时再说“即可安装”就不对了
+            parts.append(String(localized: "已经装过的应用，直接在虚拟 Mac 里打开它；还没装的，在虚拟 Mac 的访达中打开 位置 › My Shared Files › 传入 安装。"))
+        } else {
+            parts.append(String(localized: "在虚拟 Mac 的访达中打开 位置 › My Shared Files › 传入，即可安装。"))
+        }
         return parts.joined()
+    }
+
+    /// 虚拟 Mac 停下来（关机、睡眠）以后，「放入」的说明就过时了：它说的是“去虚拟 Mac 的访达里打开”，
+    /// 留在“虚拟 Mac 未运行”的页面上像是刚刚发生的事。别的说明（设置完成、唤醒失败）不动。
+    /// 停着的时候放入的，说明照常显示到下一次停下来
+    func forgetSendNotice() {
+        if let lastSendNotice, notice == lastSendNotice { notice = nil }
+        lastSendNotice = nil
     }
 
     /// 给「传出」里现有的全部内容打上隔离标记（后台线程）。有标不上的项目时提醒用户，并返回它们（相对「传出」的路径）
