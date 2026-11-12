@@ -253,13 +253,17 @@ struct BoxInspector: View {
                     .buttonStyle(.link)
                     .disabled(box.isRunning || box.isBusy)
             } else {
-                if !virtualMac.config.installed {
+                if virtualMac.isInstalling {
+                    Label("虚拟 Mac 正在设置，完成后就可以打开这个应用。", systemImage: "info.circle")
+                        .font(.caption)
+                    Button("查看设置进度…") { store.show(.virtualMac) }
+                } else if !virtualMac.config.installed {
                     Label("虚拟 Mac 还没有设置。第一次需要下载约 25 GB 的 macOS 并安装，之后所有需要它的应用共用一台。",
                           systemImage: "info.circle")
                         .font(.caption)
                     Button("前往设置虚拟 Mac…") { store.show(.virtualMac) }
                 } else {
-                    Text("打开后，原始安装文件会放进虚拟 Mac 的「传入」文件夹（访达 › 位置 › My Shared Files），在里面安装一次即可。")
+                    Text("打开后，原始安装文件会放进虚拟 Mac 的「传入」文件夹（访达 › 位置 › My Shared Files），在里面安装一次。装好以后再点「打开」只会打开虚拟 Mac，应用要在虚拟 Mac 里启动。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

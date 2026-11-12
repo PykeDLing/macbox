@@ -28,7 +28,8 @@ struct VirtualMacWindow: View {
             } else {
                 ContentUnavailableView {
                     Label(vm.config.installed ? String(localized: "虚拟 Mac 未运行")
-                                              : String(localized: "虚拟 Mac 还没有设置"),
+                              : vm.isInstalling ? String(localized: "虚拟 Mac 正在设置")
+                              : String(localized: "虚拟 Mac 还没有设置"),
                           systemImage: "desktopcomputer")
                 } description: {
                     Text(vm.lastError ?? vm.notice ?? "")
@@ -38,6 +39,8 @@ struct VirtualMacWindow: View {
                             .buttonStyle(.borderedProminent)
                     } else if vm.status == .notSetUp {
                         Button("前往设置虚拟 Mac…") { store.show(.virtualMac) }
+                    } else if vm.isInstalling {
+                        Button("查看设置进度…") { store.show(.virtualMac) }
                     } else if case .unreadable = vm.status {
                         Button("查看详情…") { store.show(.virtualMac) }
                     }

@@ -110,7 +110,7 @@ struct VirtualMacPage: View {
     private var setupSection: some View {
         @Bindable var vm = vm
         Section("设置虚拟 Mac") {
-            Text("需要从 Apple 下载约 25 GB 的 macOS 并安装，完成后占用约 30 GB（安装镜像可在完成后删除）。整个过程约 20–40 分钟。")
+            Text(VirtualMac.setupDescription(for: source))
                 .font(.callout)
             InstallSourcePicker(source: $source)
             ResourceSteppers(cpuCount: $vm.config.cpuCount, memoryGB: $vm.config.memoryGB)
