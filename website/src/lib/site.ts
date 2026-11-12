@@ -7,6 +7,8 @@ export const licensePage = `${repository}/blob/main/LICENSE`;
 export const howItWorks = `${repository}/blob/main/docs/how-it-works.md`;
 // docs/how-it-works.md 里的“限制”一节（README 只列主要的几条）
 export const isolationDetails = `${howItWorks}#${encodeURIComponent('限制')}`;
+// 实测过的应用：哪些能用、哪些要用虚拟 Mac
+export const compatibilityList = `${repository}/blob/main/docs/compatibility.md`;
 export const appVersion = `v${import.meta.env.APP_VERSION}`;
 
 /** 站内资源地址，带上部署路径前缀 */

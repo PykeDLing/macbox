@@ -11,6 +11,7 @@ import { homePath, translate, type Locale, type Pair } from '../lib/i18n';
 import { rememberLanguage } from '../lib/language';
 import { describeDmg, useLatestRelease } from '../lib/release';
 import {
+  compatibilityList,
   href,
   howItWorks,
   isolationDetails,
@@ -952,10 +953,13 @@ export default function Home({ locale }: { locale: Locale }) {
                   <li>
                     {t(
                       <>
-                        把下载的 <code>.dmg</code> 拖进 MacBox，开始使用。
+                        把下载的 <code>.dmg</code> 拖进 MacBox，开始使用。哪些应用实测能用，见
+                        <a href={compatibilityList}>兼容清单</a>。
                       </>,
                       <>
-                        Drag a downloaded <code>.dmg</code> into MacBox and you’re set.
+                        Drag a downloaded <code>.dmg</code> into MacBox and you’re set. See the{' '}
+                        <a href={compatibilityList}>compatibility list</a> (in Chinese) for apps
+                        that have been tested.
                       </>,
                     )}
                   </li>
